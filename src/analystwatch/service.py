@@ -6,11 +6,14 @@ from uuid import uuid4
 import httpx
 
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
+from .incidents import latest_incident, notification_candidate
 from .ingest import ingest_source
 from .models import (
     BaselineReview,
     Finding,
     HealthStatus,
+    IncidentSnapshot,
+    NotificationCandidate,
     Observation,
     ObservationReview,
     ObservationReviewState,
@@ -108,6 +111,21 @@ class MonitorService:
             )
         )
 
+    def incident(self, source_id: str) -> IncidentSnapshot | None:
+        if self.storage.get_source(source_id) is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        return latest_incident(self.storage.list_observations(source_id, limit=200))
+
+    def notification_candidates(
+        self,
+        source_id: str | None = None,
+        *,
+        limit: int = 100,
+    ) -> list[NotificationCandidate]:
+        if source_id is not None and self.storage.get_source(source_id) is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        return self.storage.list_notification_candidates(source_id, limit=limit)
+
     def baseline_review(
         self,
         source_id: str,
@@ -200,6 +218,7 @@ class MonitorService:
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=timezone.utc)
 
+        previous = self.storage.get_latest(source_id)
         baseline = self.storage.get_baseline(source_id)
         reference_observations = self.storage.list_reference_observations(
             source_id, limit=source.config.history_window_size
@@ -267,5 +286,10 @@ class MonitorService:
             error=result.error,
             is_baseline=baseline is None and result.available and profile is not None,
         )
-        self.storage.save_observation(observation, set_baseline=observation.is_baseline)
+        candidate = notification_candidate(previous, observation)
+        self.storage.save_observation(
+            observation,
+            set_baseline=observation.is_baseline,
+            notification_candidate=candidate,
+        )
         return observation
