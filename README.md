@@ -2,95 +2,61 @@
 
 **Reliability monitoring for analyst-owned data sources.**
 
-AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs: stale data, schema changes, unexpected row loss, null explosions, numerical scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
+AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs: stale data, schema changes, row loss, null explosions, scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
 
-## Core v0.10 status
+## Core v0.11 status
 
-Core v0.10 remains a Python modular monolith. It keeps all verified v0.9 monitoring, review, incident, delivery-attempt and persistence-integrity behavior, and adds the first explicit storage/workspace boundary without changing the hosted SQLite schema.
+Core v0.11 keeps the verified deterministic monitoring, review, incident, delivery-attempt and SQLite integrity behavior from earlier milestones and proves the runtime/storage boundary introduced in v0.10.
 
-It supports:
+New in v0.11:
 
-- deterministic reliability monitoring across CSV/XLSX/JSON/HTTP JSON sources
-- explicit baseline + recent Healthy-history context
-- safe source onboarding/editing and environment-backed API headers
-- Acknowledged / Reviewed workflow state separate from technical Health
-- derived Opened / Escalated / Recovered incidents
-- opt-in notification-transition policy
-- atomic SQLite dry-run attempt claims with idempotency/retry/reconciliation semantics
-- stable SQLite storage identity and verified snapshot/restore tooling
-- persisted delivery claim owner and reconciliation reviewer identity
-- structural `MonitoringStore` persistence protocol
-- backward-compatible source ownership via `workspace_id`, defaulting to `local`
-- `WorkspaceStore`, which hides foreign-workspace operational records and blocks foreign writes
-- `create_workspace_service(...)` for explicitly workspace-bound `MonitorService` instances
+- independent process-local `MemoryStore` implementing the `MonitoringStore` contract without inheriting or wrapping SQLite
+- shared service-level conformance coverage across SQLite `Storage` and `MemoryStore`
+- CLI monitoring commands bound to a selected workspace via `--workspace-id`
+- FastAPI bound to one workspace, defaulting to `local`
+- cross-workspace FastAPI source writes rejected before preflight/persistence
+- Pages rendered through the workspace-bound monitoring store
+- SQLite verify/backup/restore kept as raw implementation-specific maintenance operations
+- scheduler typed against the structural `MonitoringStore` protocol
 
-**Core v0.10 still has no real outbound notification provider.** The only delivery adapter remains local `dry-run`, with no external I/O or network request.
+**Core v0.11 still has no real outbound notification provider.** The only delivery adapter remains deterministic local `dry-run` and performs no external I/O.
 
-## Workspace guardrail
+## Runtime workspace binding
 
-Every `SourceDefinition` now has a workspace owner:
+The default workspace remains `local`, so existing source definitions and hosted jobs continue to operate without configuration changes.
 
-```json
-{
-  "id": "market-data",
-  "workspace_id": "local"
-}
+```bash
+analystwatch --workspace-id local list
+analystwatch --workspace-id team-a check market-data
+analystwatch --workspace-id team-a build-pages --output site
 ```
 
-The field defaults to `local`, so existing persisted source JSON from prior releases remains valid without rewriting stored records.
+FastAPI uses `ANALYSTWATCH_WORKSPACE_ID` or `local` when unset. `create_app(..., workspace_id="team-a")` can also bind explicitly for tests/embedding.
 
-A workspace-bound service can be created explicitly:
+`app.state.storage` remains the historical raw SQLite maintenance/test handle for compatibility. HTTP behavior and service operations use `app.state.workspace_storage`, which enforces the workspace boundary.
 
-```python
-from analystwatch.storage import Storage
-from analystwatch.workspace import create_workspace_service
+## Store conformance
 
-service = create_workspace_service(
-    Storage("instance/analystwatch.db"),
-    workspace_id="team-a",
-)
-```
+`MonitoringStore` is now exercised through two unrelated implementations:
 
-The bound store:
+- `Storage` — durable SQLite implementation used by the current hosted runtime
+- `MemoryStore` — independent process-local implementation used to prove service semantics are not SQLite-specific
 
-- lists/returns only sources owned by the bound workspace;
-- blocks source writes for a different workspace;
-- hides foreign observations, baselines, reviews and incident inputs;
-- hides foreign notification candidates and delivery attempts;
-- blocks foreign candidate claims, attempt updates/reconciliation and baseline promotion.
+The same service-level scenarios run against both stores: baseline/history, incident/candidate creation, idempotent attempts, retry timing, Prepared reconciliation, review state, baseline promotion and Pages output.
 
-This is an **ownership guardrail**, not multi-tenant persistence. The current SQLite schema still uses globally unique source IDs, so two workspaces cannot yet store the same source ID in one database.
+This is a contract proof, not a production-database migration. `MemoryStore` is intentionally non-durable.
 
-## Storage protocol
+## Persistence and workspace limits
 
-`MonitoringStore` defines the persistence surface required by monitoring/service/read operations. The current SQLite `Storage` implementation and `WorkspaceStore` both satisfy that structural protocol.
+The current SQLite schema still uses globally unique `source_id` values. `WorkspaceStore` prevents cross-workspace access but two workspaces cannot yet use the same source ID in one SQLite database. Composite `(workspace_id, source_id)` persistence remains a separate migration.
 
-Core service logic is unchanged in v0.10; the workspace boundary is opt-in through `WorkspaceStore` / `create_workspace_service(...)`. CLI/FastAPI runtime selection, authentication and composite workspace/source keys are intentionally deferred until the guard layer is proven.
-
-## Persistence integrity
-
-All v0.9 persistence protections remain:
+SQLite maintenance remains local and explicit:
 
 ```bash
 analystwatch --db instance/analystwatch.db verify-state
 analystwatch --db instance/analystwatch.db backup-state backups/analystwatch.db
 analystwatch restore-state backups/analystwatch.db restored/analystwatch.db
 ```
-
-Verification is read-only, snapshots use SQLite's backup API, and restore remains create-only into a new destination. Existing targets are never overwritten.
-
-## Delivery safety
-
-Existing rules remain unchanged:
-
-- monitoring never creates delivery attempts automatically;
-- only Eligible candidates can be attempted;
-- claim decisions use SQLite `BEGIN IMMEDIATE`;
-- same-key replay is idempotent;
-- different keys cannot both claim Prepared work;
-- optional retry delay is independent from monitoring cadence;
-- Prepared attempts require explicit reconciliation;
-- no generic send route or real provider exists.
 
 ## Verification
 
@@ -100,16 +66,15 @@ python -m compileall -q src tests scripts
 pytest -q
 ```
 
-The verified v0.10 functional checkpoint passed Ruff, compile, **92 tests**, and live-source smoke. Eight new regressions cover default-local compatibility, protocol conformance, workspace validation, source isolation, observation/baseline isolation, global source-ID collision behavior, and incident/candidate/dry-run attempt isolation.
+The verified v0.11 functional checkpoint passed Ruff, compile and **113 tests**. The live-source PR workflow did not run because its explicit path filter is limited to ingestion/model/profile/service changes; v0.11 changes runtime/store files instead. Hosted compatibility is therefore verified after merge by the normal `monitor-state` pipeline.
 
 ## Current limitations
 
-- workspace binding is opt-in and is not yet wired into the existing CLI/FastAPI runtime
-- current SQLite source IDs remain globally unique across workspaces
-- there is no authentication or remote authorization layer yet
-- `monitor-state` branch persistence is still test-only, not production storage
+- SQLite source IDs remain globally unique across workspaces
+- there is no authenticated remote user/session authorization layer
+- `MemoryStore` is test/runtime-only and not durable
+- `monitor-state` branch persistence remains test-only, not production storage
 - snapshots are local SQLite files, not managed backups
 - no real notification provider exists
-- more real incident/candidate history is required before introducing external side effects
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).

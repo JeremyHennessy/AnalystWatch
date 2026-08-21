@@ -1,90 +1,69 @@
-# AnalystWatch Core v0.10 Architecture
+# AnalystWatch Core v0.11 Architecture
 
 ## Decision
 
-Core v0.10 keeps the Python modular-monolith runtime and the existing SQLite schema, but adds the first explicit storage/workspace boundary. The objective is to separate ownership semantics from detector/service logic before selecting a production database or adding remote authentication.
+Core v0.11 proves that the workspace/storage boundary introduced in v0.10 is usable by the real runtime and is not coupled to SQLite.
 
-The deterministic monitoring engine remains authoritative. Review state, incident state, notification policy, delivery attempts, execution ownership and reconciliation attribution remain operational records and do not rewrite detector findings or Health.
+The deterministic monitoring engine remains unchanged. Detector Health, review state, incident transitions, notification policy and delivery-attempt semantics are not rewritten by this milestone.
 
-## MonitoringStore protocol
+## Runtime workspace boundary
 
-`src/analystwatch/store.py` defines the structural persistence contract required by monitoring/service/read surfaces. The protocol covers:
+CLI monitoring commands and FastAPI are now constructed through `WorkspaceStore` with a safe default workspace of `local`.
 
-- source persistence and lookup;
-- observations, baselines and reference history;
-- observation review state;
-- notification candidate state;
-- delivery attempt claim/update/list/reconciliation;
-- guarded baseline promotion.
+- CLI: global `--workspace-id` (or `ANALYSTWATCH_WORKSPACE_ID`)
+- FastAPI: `create_app(..., workspace_id=...)` or `ANALYSTWATCH_WORKSPACE_ID`
+- Pages: rendered from the already workspace-bound store supplied by CLI/service code
 
-The existing SQLite `Storage` class satisfies this protocol without schema changes.
+Cross-workspace FastAPI source writes are rejected before preflight and persistence. Read surfaces expose only sources/operational records visible to the bound workspace.
 
-The protocol intentionally excludes local SQLite maintenance operations such as verify/backup/restore because those are implementation-specific persistence tooling rather than the monitoring domain contract.
+SQLite maintenance commands (`verify-state`, `backup-state`, `restore-state`) remain intentionally raw implementation-specific operations rather than workspace-scoped monitoring operations.
 
-## Source workspace ownership
+For backward compatibility, `app.state.storage` remains the raw SQLite handle used by existing maintenance/test seams. `app.state.workspace_storage` and `app.state.service` are the guarded runtime path.
 
-`SourceDefinition.workspace_id` is introduced with a safe default of `local` and the same conservative identifier alphabet used for source IDs.
+## MonitoringStore conformance
 
-Persisted source JSON written before v0.10 omits the field. Pydantic therefore loads those definitions as `workspace_id="local"`; v0.10 does not need a destructive migration or rewrite.
+`MonitoringStore` is now exercised through two independent implementations:
 
-## WorkspaceStore
+### SQLite Storage
 
-`WorkspaceStore` is a workspace-bound view over a `MonitoringStore`.
+The existing durable local/test implementation with atomic attempt claiming, integrity metadata and snapshot/restore tooling.
 
-For reads it returns only records whose source belongs to the bound workspace. For writes it validates workspace ownership before delegating to the underlying store.
+### MemoryStore
 
-The boundary covers:
+A separate process-local implementation built with in-memory dictionaries and an `RLock`. It does not inherit from or wrap SQLite.
 
-- sources;
-- observations and baselines;
-- reviews;
-- notification candidates;
-- delivery attempts and claims;
-- Prepared reconciliation;
-- baseline promotion.
+The shared conformance suite covers:
 
-Foreign records are treated as unavailable to the bound service rather than exposing their existence.
+- source persistence and lookup
+- baseline establishment and observation history
+- incident derivation and notification-candidate persistence
+- idempotent delivery attempt replay
+- failed-attempt retry timing
+- Prepared attempt reconciliation and reviewer attribution
+- operational review state
+- guarded baseline promotion
+- Pages rendering
 
-## Service binding
+Passing the same service behaviors through two unrelated adapters is the evidence that the store abstraction is functional rather than a type-only façade.
 
-`create_workspace_service(storage, workspace_id, execution_owner=None)` creates an existing `MonitorService` over `WorkspaceStore`. Core monitoring and delivery state-machine code is therefore unchanged; ownership is enforced by the persistence boundary supplied to it.
+## Scheduler boundary
 
-This is deliberately opt-in in v0.10. Existing CLI/FastAPI construction continues to use the unbound SQLite store so the hosted/test runtime does not change in the same milestone that introduces the guard abstraction.
+The scheduler consumes the `MonitoringStore` protocol rather than the concrete SQLite class. Runtime behavior is unchanged.
 
 ## Important persistence limitation
 
-The current SQLite schema still has `sources.id` as a global primary key and downstream records still refer to `source_id` alone. Consequently:
+Workspace isolation is still implemented as a guard around the current schema. SQLite continues to key sources globally by `source_id`; therefore two workspaces cannot store the same source ID in one database.
 
-- two workspaces cannot store the same source ID in one database;
-- `WorkspaceStore` blocks a foreign workspace from reusing an existing source ID;
-- v0.10 is an ownership guardrail, not full multi-tenant persistence.
+A future persistent adapter must use composite workspace-aware identity (for example `(workspace_id, source_id)`) across sources and downstream operational records. That migration is intentionally separate from v0.11.
 
-Composite workspace/source keys or a deployment database must be introduced in a later, separately verified migration.
+## Verification
 
-## Existing v0.9 persistence safety
-
-All v0.9 behavior remains unchanged:
-
-- additive stable `storage_id` and schema metadata;
-- read-only SQLite integrity verification;
-- verified SQLite backup API snapshots;
-- create-only verified restore;
-- execution claim/reviewer attribution;
-- atomic delivery claim and explicit reconciliation semantics.
-
-## Public/runtime boundary
-
-Core v0.10 does not change GitHub Pages, the hosted source configuration, FastAPI routing, CLI behavior or notification delivery. This avoids silently changing the production/test entrypoint before the workspace guard itself has passed the full regression and live-source gates.
-
-## Verification boundary
-
-The verified v0.10 functional checkpoint passed Ruff, compile, **92 deterministic tests**, and live-source smoke against the existing configured sources.
+The verified v0.11 functional checkpoint passed Ruff, compile and **113 deterministic tests**. The PR live-source workflow is path-filtered to ingestion/model/profile/service changes and therefore does not run for this runtime/store-only diff. Post-merge hosted `monitor-state` persistence is the deployment compatibility gate.
 
 ## Limitations
 
-- workspace binding is opt-in rather than the default runtime path
-- no remote user/session authentication exists
-- no authorization policy beyond explicit workspace ownership is implemented
-- SQLite source IDs are still globally unique
-- branch-backed SQLite remains test persistence, not a production database
-- no real notification provider exists
+- no authenticated user/session authorization
+- no composite workspace/source persistence yet
+- `MemoryStore` is non-durable and test/runtime-only
+- current SQLite/branch-backed state remains a test deployment design
+- no real outbound notification provider exists

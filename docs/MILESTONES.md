@@ -30,7 +30,7 @@ Added opt-in notification-transition policy, safe-default suppression and immuta
 
 ## Core v0.7 — Dry-run delivery attempts — complete
 
-Added explicit Prepared/Succeeded/Failed dry-run attempts, caller idempotency, retry-after-failure semantics and aggregate read surfaces. Clean gate: 66 tests.
+Added Prepared/Succeeded/Failed dry-run attempts, caller idempotency, retry-after-failure semantics and aggregate read surfaces. Clean gate: 66 tests.
 
 ## Core v0.8 — Attempt reconciliation & claim safety — complete
 
@@ -40,47 +40,44 @@ Added atomic SQLite attempt claims, concurrent claim protection, independent ret
 
 Added stable storage identity/schema metadata, read-only integrity verification, verified SQLite snapshots, create-only restore, delivery claimant attribution and reconciliation reviewer attribution. Clean gate: 84 tests.
 
-## Core v0.10 — Storage protocol & workspace guardrails — current
+## Core v0.10 — Storage protocol & workspace guardrails — complete
 
-Goal: define and prove an ownership boundary without changing the hosted runtime or pretending the current SQLite schema is multi-tenant.
+Added structural `MonitoringStore`, backward-compatible default-local source ownership and `WorkspaceStore` isolation without changing the SQLite schema. Clean gate: 92 tests; hosted state verified after merge.
+
+## Core v0.11 — Runtime workspace binding & store conformance — current
 
 Implemented and verified on the functional checkpoint:
 
-- structural `MonitoringStore` persistence protocol
-- backward-compatible `SourceDefinition.workspace_id` with default `local`
-- strict workspace identifier validation
-- `WorkspaceStore` bound to one workspace
-- workspace-filtered source listing and lookup
-- foreign-workspace source writes blocked before SQLite
-- observations/baselines/reviews hidden across workspace boundaries
-- notification candidates and delivery attempts hidden across workspace boundaries
-- foreign candidate claims/attempt updates/reconciliation blocked
-- baseline promotion constrained to the bound workspace
-- `create_workspace_service(...)` composes existing `MonitorService` with the workspace store
-- existing v0.9 SQLite schema remains unchanged
-- existing persisted source JSON remains valid and resolves to workspace `local`
-- global source-ID collision is explicit: another workspace cannot reuse an existing ID yet
-- eight new regressions, including a real incident → Eligible candidate → dry-run attempt isolation path
-- clean functional checkpoint reached **92 passing tests**
-- live-source smoke remained green
+- independent `MemoryStore` implementation that does not inherit/wrap SQLite
+- shared persistence conformance scenarios across SQLite and MemoryStore
+- CLI global `--workspace-id`, default `local`
+- CLI monitoring/list/check/Pages paths use workspace-bound storage
+- SQLite verify/backup/restore remain raw maintenance paths
+- FastAPI bound to one workspace, default `local`
+- cross-workspace source writes blocked before preflight/persistence
+- raw `app.state.storage` compatibility handle retained while HTTP/service paths use `workspace_storage`
+- scheduler typed against `MonitoringStore`
+- 16 parametrized cross-store conformance cases
+- 5 workspace-runtime regression cases
+- clean functional checkpoint reached **113 passing tests**
 
-No detector, scheduler, hosted source configuration, notification-policy, retry/reconciliation state-machine, Pages/UI, secret, review, baseline, workflow or shared-CSS semantics changed.
+The live-source PR workflow is intentionally path-filtered to ingestion/model/profile/service changes, so it does not run for this runtime/store-only milestone. Hosted `monitor-state` advancement after merge is the deployment compatibility gate.
 
-## Candidate v0.11 — runtime workspace binding & storage conformance
+## Candidate v0.12 — workspace-aware persistent identity proof
 
-Before selecting a production database or adding authentication:
+Before selecting a production database:
 
-- run CLI/FastAPI/Pages through explicit workspace-bound construction
-- add a second independent `MonitoringStore` implementation or conformance harness
-- prove the full operational contract across both implementations
-- define composite workspace/source identity requirements for future persistent storage
-- keep legacy hosted SQLite as the default until migration behavior is independently verified
+- implement a separate persistent store schema keyed by workspace + source identity
+- prove two workspaces can use the same source ID without collisions
+- carry workspace identity through observations, reviews, candidates and attempts
+- add verified import from a legacy SQLite snapshot into one selected workspace
+- keep current hosted SQLite runtime unchanged until the new schema is independently proven
 
 ## Later
 
-- deployment-appropriate persistent database adapter
+- controlled runtime backend selection and migration rehearsal
+- deployment-appropriate production database adapter
 - authenticated workspace/user authorization
-- migration/import from verified SQLite snapshots
 - retention/audit policy for observations, candidates and attempts
 - first opt-in provider integration behind the proven attempt abstraction
 - production notification delivery

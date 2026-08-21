@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from .models import RunDecision, SourceDefinition
-from .storage import Storage
+from .store import MonitoringStore
 
 
 def run_decision(
-    storage: Storage,
+    storage: MonitoringStore,
     source: SourceDefinition,
     *,
     now: datetime | None = None,
