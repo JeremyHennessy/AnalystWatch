@@ -21,7 +21,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     storage = Storage(resolved_db)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.2.0")
+    app = FastAPI(title="AnalystWatch", version="0.3.0")
     app.state.storage = storage
     app.state.service = service
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -60,6 +60,18 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/sources/new", response_class=HTMLResponse)
+    def new_source(request: Request):
+        return templates.TemplateResponse(
+            request=request,
+            name="onboard.html",
+            context={
+                "static_css": str(request.url_for("static", path="/app.css")),
+                "onboard_css": str(request.url_for("static", path="/onboard.css")),
+                "home_href": "/",
+            },
+        )
+
     @app.get("/sources/{source_id}", response_class=HTMLResponse)
     def source_detail(request: Request, source_id: str):
         source = storage.get_source(source_id)
@@ -85,6 +97,17 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return RedirectResponse(url=f"/sources/{source_id}", status_code=303)
+
+    @app.post("/api/preflight")
+    def api_preflight(source: SourceDefinition):
+        return service.preflight_source(source)
+
+    @app.post("/api/onboard")
+    def api_onboard(source: SourceDefinition):
+        try:
+            return service.onboard_source(source)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/sources", response_model=SourceDefinition)
     def create_source(source: SourceDefinition):

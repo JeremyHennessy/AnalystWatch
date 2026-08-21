@@ -30,6 +30,18 @@
       </div>
     {% endif %}
 
+    <section class="panel">
+      <div class="section-title"><h2>Monitoring contract</h2><span>{{ source.id }}</span></div>
+      <dl class="contract-grid">
+        <div><dt>Check cadence</dt><dd>Every {{ source.config.monitor_interval_minutes }} min</dd></div>
+        <div><dt>Expected refresh</dt><dd>{% if source.config.expected_refresh_minutes %}Every {{ source.config.expected_refresh_minutes }} min{% else %}Not configured{% endif %}</dd></div>
+        <div><dt>Freshness field</dt><dd>{% if source.config.latest_date_field %}{{ source.config.latest_date_field }}{% elif source.config.infer_latest_date_field %}Conservative inference{% else %}Not configured{% endif %}</dd></div>
+        <div><dt>Record path / sheet</dt><dd>{{ source.config.json_record_path or source.config.sheet_name or 'Default' }}</dd></div>
+        <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
+        <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
+      </dl>
+    </section>
+
     {% if latest %}
       <section class="grid four">
         <div class="panel metric-card"><span>Last checked</span><strong>{{ latest.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
