@@ -474,7 +474,7 @@ class Storage:
         *,
         created_at: datetime,
         retry_minutes: int,
-        claim_owner: str,
+        claim_owner: str | None = None,
     ) -> tuple[DeliveryAttempt, bool]:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -585,7 +585,7 @@ class Storage:
         *,
         reconciled_at: datetime,
         note: str,
-        reconciled_by: str,
+        reconciled_by: str | None = None,
     ) -> DeliveryAttempt:
         if outcome not in {DeliveryAttemptState.SUCCEEDED, DeliveryAttemptState.FAILED}:
             raise ValueError("Prepared attempts can reconcile only to Succeeded or Failed")
