@@ -31,7 +31,7 @@ h2 { font-size: 1.05rem; letter-spacing: -0.01em; margin-bottom: 0; }
 .back { display: inline-block; margin-bottom: 24px; color: #4f5b66; text-decoration: none; }
 .detail-actions { display: flex; gap: 12px; align-items: center; }
 button { border: 0; border-radius: 9px; padding: 10px 14px; background: #17202a; color: white; font-weight: 700; cursor: pointer; }
-.grid { display: grid; gap: 14px; } .grid.two { grid-template-columns: repeat(2, 1fr); } .grid.three { grid-template-columns: repeat(3, 1fr); }
+.grid { display: grid; gap: 14px; } .grid.two { grid-template-columns: repeat(2, 1fr); } .grid.three { grid-template-columns: repeat(3, 1fr); } .grid.four { grid-template-columns: repeat(4, 1fr); }
 .metric-card { display: flex; flex-direction: column; gap: 6px; }
 .metric-card span { color: #75808a; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
 .metric-card strong { font-size: 1.05rem; }
@@ -49,13 +49,17 @@ dt { color: #77828c; font-size: .72rem; text-transform: uppercase; } dd { margin
 .history-list { display: grid; }
 .history-list > div { display: grid; grid-template-columns: 1fr 100px 90px; gap: 16px; padding: 10px 0; border-top: 1px solid #edf0f2; font-size: .86rem; }
 .text-healthy { color: #23834e; } .text-warning { color: #9b7000; } .text-critical { color: #b43232; }
+.deployment-note { display: flex; justify-content: space-between; gap: 16px; align-items: center; background: #eef4ff; border: 1px solid #d9e5fb; border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; color: #405167; font-size: .84rem; }
+.deployment-note.compact { justify-content: flex-start; }
+.deployment-note strong { color: #20344d; }
 .empty { padding: 26px; text-align: center; color: #66717d; }
 code { background: #f0f2f4; padding: 2px 5px; border-radius: 4px; }
 @media (max-width: 700px) {
   .shell { width: min(100% - 20px, 1040px); padding-top: 26px; }
   .page-header, .detail-header { align-items: flex-start; flex-direction: column; }
-  .grid.two, .grid.three { grid-template-columns: 1fr; }
+  .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
   .source-row { align-items: flex-start; }
+  .deployment-note { align-items: flex-start; flex-direction: column; }
   .source-meta { max-width: 55vw; }
   .history-list > div { grid-template-columns: 1fr 80px; } .history-list > div span:last-child { display: none; }
 }

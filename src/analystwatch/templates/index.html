@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AnalystWatch</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+  <link rel="stylesheet" href="{{ static_css }}">
 </head>
 <body>
   <main class="shell">
@@ -16,6 +16,13 @@
       </div>
     </header>
 
+    {% if static_mode %}
+      <div class="deployment-note">
+        <strong>Static test deployment</strong>
+        <span>Monitoring runs in GitHub Actions. Snapshot generated {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}.</span>
+      </div>
+    {% endif %}
+
     <section class="panel">
       <div class="section-title">
         <h2>My data</h2>
@@ -24,10 +31,10 @@
       {% if sources %}
         <div class="source-list">
           {% for item in sources %}
-          <a class="source-row" href="/sources/{{ item.source.id }}">
+          <a class="source-row" href="{{ item.href }}">
             <div>
               <strong>{{ item.source.name }}</strong>
-              <span class="source-meta">{{ item.source.source_type.value|upper }} · {{ item.source.location }}</span>
+              <span class="source-meta">{{ item.source.source_type.value|upper }} · every {{ item.source.config.monitor_interval_minutes }} min · {{ item.public_location }}</span>
             </div>
             <span class="status status-{{ item.health|lower|replace(' ', '-') }}">
               <span class="dot"></span>{{ item.health }}
@@ -38,7 +45,7 @@
       {% else %}
         <div class="empty">
           <h3>No monitored sources yet</h3>
-          <p>Add a source with the CLI or <code>POST /api/sources</code>, then run its first check to establish a baseline.</p>
+          <p>Add or sync a source, then run its first check to establish a baseline.</p>
         </div>
       {% endif %}
     </section>

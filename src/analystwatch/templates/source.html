@@ -4,28 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ source.name }} · AnalystWatch</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+  <link rel="stylesheet" href="{{ static_css }}">
 </head>
 <body>
   <main class="shell">
-    <a class="back" href="/">← All sources</a>
+    <a class="back" href="{{ home_href }}">← All sources</a>
     <header class="detail-header">
       <div>
         <p class="eyebrow">{{ source.source_type.value|upper }}</p>
         <h1>{{ source.name }}</h1>
-        <p class="muted mono">{{ source.location }}</p>
+        <p class="muted mono">{{ public_location }}</p>
       </div>
       <div class="detail-actions">
         <span class="status status-{{ health|lower|replace(' ', '-') }}"><span class="dot"></span>{{ health }}</span>
-        <form method="post" action="/sources/{{ source.id }}/check"><button type="submit">Run check</button></form>
+        {% if not static_mode %}
+          <form method="post" action="/sources/{{ source.id }}/check"><button type="submit">Run check</button></form>
+        {% endif %}
       </div>
     </header>
 
+    {% if static_mode %}
+      <div class="deployment-note compact">
+        <strong>Read-only Pages view</strong>
+        <span>Checks run on schedule in GitHub Actions; this page is regenerated after monitoring.</span>
+      </div>
+    {% endif %}
+
     {% if latest %}
-      <section class="grid three">
+      <section class="grid four">
         <div class="panel metric-card"><span>Last checked</span><strong>{{ latest.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
         <div class="panel metric-card"><span>Last successful update</span><strong>{% if last_successful %}{{ last_successful.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}No successful observation{% endif %}</strong></div>
         <div class="panel metric-card"><span>Baseline</span><strong>{% if baseline %}{{ baseline.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}Not established{% endif %}</strong></div>
+        <div class="panel metric-card"><span>Next scheduled check</span><strong>{% if schedule.next_check_at %}{{ schedule.next_check_at.strftime('%Y-%m-%d %H:%M UTC') }}{% elif schedule.due %}Due now{% else %}Disabled{% endif %}</strong></div>
       </section>
 
       <section class="panel">
@@ -38,16 +48,17 @@
               <h3>{{ finding.description }}</h3>
               <p>{{ finding.why_flagged }}</p>
               <dl>
-                <div><dt>Baseline</dt><dd>{{ finding.baseline_value }}</dd></div>
+                <div><dt>Reference</dt><dd>{{ finding.baseline_value }}</dd></div>
                 <div><dt>Current</dt><dd>{{ finding.current_value }}</dd></div>
               </dl>
+              {% if finding.confidence %}<p><b>Confidence:</b> {{ finding.confidence }}</p>{% endif %}
               {% if finding.likely_impact %}<p><b>Impact:</b> {{ finding.likely_impact }}</p>{% endif %}
               {% if finding.suggested_investigation %}<p><b>Investigate:</b> {{ finding.suggested_investigation }}</p>{% endif %}
             </article>
           {% endfor %}
           </div>
         {% else %}
-          <div class="healthy-note"><strong>No material reliability findings.</strong><p>The current observation is within configured thresholds relative to the baseline.</p></div>
+          <div class="healthy-note"><strong>No material reliability findings.</strong><p>The current observation is within configured thresholds relative to its baseline/recent healthy history.</p></div>
         {% endif %}
       </section>
 
@@ -57,13 +68,13 @@
         <div class="grid three">
           <div class="metric-card"><span>Rows</span><strong>{{ latest.profile.row_count }}</strong></div>
           <div class="metric-card"><span>Columns</span><strong>{{ latest.profile.column_count }}</strong></div>
-          <div class="metric-card"><span>Latest date</span><strong>{{ latest.profile.latest_date or 'Not configured' }}</strong></div>
+          <div class="metric-card"><span>Latest date</span><strong>{% if latest.profile.latest_date %}{{ latest.profile.latest_date }}{% if latest.profile.latest_date_field %} · {{ latest.profile.latest_date_field }}{% endif %}{% else %}Not established{% endif %}</strong></div>
         </div>
       </section>
       {% endif %}
 
       <section class="panel">
-        <div class="section-title"><h2>Recent history</h2><span>Current vs previous vs baseline</span></div>
+        <div class="section-title"><h2>Recent history</h2><span>Current vs recent vs baseline</span></div>
         <div class="history-list">
           {% for item in history %}
           <div><span>{{ item.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</span><strong class="text-{{ item.health.value|lower }}">{{ item.health.value }}</strong><span>{% if baseline and item.id == baseline.id %}Baseline{% endif %}</span></div>
@@ -71,7 +82,7 @@
         </div>
       </section>
     {% else %}
-      <section class="panel empty"><h2>Not checked yet</h2><p>Run the first check to profile this source and establish its baseline.</p></section>
+      <section class="panel empty"><h2>Not checked yet</h2><p>The next monitoring run will profile this source and establish its baseline.</p></section>
     {% endif %}
   </main>
 </body>

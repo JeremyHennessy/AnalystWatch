@@ -4,6 +4,7 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ class IngestionResult:
     http_status: int | None = None
     response_ms: float | None = None
     source_modified_at: datetime | None = None
+    response_etag: str | None = None
     error: str | None = None
 
 
@@ -117,11 +119,24 @@ def _ingest_api(
                 error=f"Response was not usable JSON: {exc}",
             )
         frame = _json_to_frame(payload, source.config.json_record_path)
+        modified = None
+        last_modified = response.headers.get("Last-Modified")
+        if last_modified:
+            try:
+                modified = parsedate_to_datetime(last_modified)
+                if modified.tzinfo is None:
+                    modified = modified.replace(tzinfo=timezone.utc)
+                else:
+                    modified = modified.astimezone(timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                modified = None
         return IngestionResult(
             available=True,
             dataframe=frame,
             http_status=response.status_code,
             response_ms=elapsed_ms,
+            source_modified_at=modified,
+            response_etag=response.headers.get("ETag"),
         )
     except httpx.HTTPError as exc:
         elapsed_ms = (time.perf_counter() - start) * 1000

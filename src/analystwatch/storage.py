@@ -131,6 +131,19 @@ class Storage:
                 return observation
         return None
 
+    def list_reference_observations(self, source_id: str, limit: int = 5) -> list[Observation]:
+        references: list[Observation] = []
+        for observation in self.list_observations(source_id, limit=max(limit * 4, 20)):
+            if (
+                observation.available
+                and observation.profile is not None
+                and observation.health.value == "Healthy"
+            ):
+                references.append(observation)
+            if len(references) >= limit:
+                break
+        return references
+
     def list_observations(self, source_id: str, limit: int = 20) -> list[Observation]:
         with self.connect() as db:
             rows = db.execute(

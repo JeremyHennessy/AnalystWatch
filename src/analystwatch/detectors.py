@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from statistics import median
 from typing import Iterable
 
 from .models import DatasetProfile, Finding, HealthStatus, MonitoringConfig
@@ -35,15 +36,35 @@ def detect_profile_changes(
     baseline: DatasetProfile,
     current: DatasetProfile,
     config: MonitoringConfig,
+    history: list[DatasetProfile] | None = None,
 ) -> list[Finding]:
+    history = (history or [])[: config.history_window_size]
     findings: list[Finding] = []
     findings.extend(_detect_schema(baseline, current))
-    findings.extend(_detect_row_count(baseline, current, config))
-    findings.extend(_detect_nulls(baseline, current, config))
-    findings.extend(_detect_numeric(baseline, current, config))
+    findings.extend(_detect_row_count(baseline, current, config, history))
+    findings.extend(_detect_nulls(baseline, current, config, history))
+    findings.extend(_detect_numeric(baseline, current, config, history))
     findings.extend(_detect_categories(baseline, current, config))
-    findings.extend(_detect_uniqueness(baseline, current, config))
+    findings.extend(_detect_uniqueness(baseline, current, config, history))
     return findings
+
+
+def _historical_reference(
+    values: list[float],
+    baseline_value: float,
+    config: MonitoringConfig,
+) -> tuple[float, object, bool]:
+    if len(values) < config.min_history_observations:
+        return baseline_value, baseline_value, False
+    reference = float(median(values))
+    evidence = {
+        "baseline": round(float(baseline_value), 6),
+        "historical_median": round(reference, 6),
+        "historical_min": round(float(min(values)), 6),
+        "historical_max": round(float(max(values)), 6),
+        "observations": len(values),
+    }
+    return reference, evidence, True
 
 
 def detect_freshness(
@@ -56,8 +77,16 @@ def detect_freshness(
     if config.expected_refresh_minutes is None:
         return []
 
-    evidence_time = profile.latest_date if config.latest_date_field else source_modified_at
-    evidence_label = config.latest_date_field or "source modification time"
+    content_date_enabled = bool(config.latest_date_field or config.infer_latest_date_field)
+    evidence_time = profile.latest_date if content_date_enabled else source_modified_at
+    if content_date_enabled and profile.latest_date_field:
+        evidence_label = f"content field '{profile.latest_date_field}'"
+    elif config.latest_date_field:
+        evidence_label = f"configured field '{config.latest_date_field}'"
+    elif config.infer_latest_date_field:
+        evidence_label = "inferred content date field"
+    else:
+        evidence_label = "source modification time / Last-Modified"
     if evidence_time is None:
         return [
             _finding(
@@ -160,8 +189,13 @@ def _detect_row_count(
     baseline: DatasetProfile,
     current: DatasetProfile,
     config: MonitoringConfig,
+    history: list[DatasetProfile],
 ) -> list[Finding]:
-    if baseline.row_count == 0:
+    history_values = [float(item.row_count) for item in history]
+    reference, evidence, history_active = _historical_reference(
+        history_values, float(baseline.row_count), config
+    )
+    if reference == 0:
         if current.row_count == 0:
             return []
         return [
@@ -170,11 +204,11 @@ def _detect_row_count(
                 "row_count",
                 "Row count changed from an empty baseline.",
                 current.row_count,
-                baseline.row_count,
-                "The baseline had zero rows, so percentage drift is undefined.",
+                evidence,
+                "The comparison reference had zero rows, so percentage drift is undefined.",
             )
         ]
-    change = abs(current.row_count - baseline.row_count) / baseline.row_count
+    change = abs(current.row_count - reference) / reference
     if change < config.warning_row_change_pct:
         return []
     severity = (
@@ -188,10 +222,15 @@ def _detect_row_count(
             "row_count",
             f"Row count changed by {change:.1%}.",
             current.row_count,
-            baseline.row_count,
+            evidence,
             (
                 f"Absolute row-count change {change:.1%} exceeds the "
-                f"{config.warning_row_change_pct:.1%} warning threshold."
+                f"{config.warning_row_change_pct:.1%} warning threshold "
+                + (
+                    "against the recent healthy-history median."
+                    if history_active
+                    else "against the baseline."
+                )
             ),
             impact="The source may be incomplete, truncated, or unexpectedly expanded.",
             investigation="Compare upstream extraction scope and date coverage.",
@@ -203,10 +242,17 @@ def _detect_nulls(
     baseline: DatasetProfile,
     current: DatasetProfile,
     config: MonitoringConfig,
+    history: list[DatasetProfile],
 ) -> list[Finding]:
     findings: list[Finding] = []
     for name in sorted(set(baseline.columns) & set(current.columns)):
-        before = baseline.columns[name].null_pct
+        baseline_value = baseline.columns[name].null_pct
+        history_values = [
+            item.columns[name].null_pct for item in history if name in item.columns
+        ]
+        before, evidence, history_active = _historical_reference(
+            history_values, baseline_value, config
+        )
         after = current.columns[name].null_pct
         increase = after - before
         if increase < config.warning_null_increase_pct:
@@ -222,10 +268,15 @@ def _detect_nulls(
                 "null_rate",
                 f"Null rate increased materially for '{name}'.",
                 round(after, 4),
-                round(before, 4),
+                evidence if history_active else round(before, 4),
                 (
                     f"Null rate increased by {increase:.1%}, above the "
-                    f"{config.warning_null_increase_pct:.1%} warning threshold."
+                    f"{config.warning_null_increase_pct:.1%} warning threshold "
+                    + (
+                        "against recent healthy history."
+                        if history_active
+                        else "against the baseline."
+                    )
                 ),
                 impact="Missing values may bias or break dependent analysis.",
                 investigation="Inspect upstream population logic for this field.",
@@ -238,6 +289,7 @@ def _detect_numeric(
     baseline: DatasetProfile,
     current: DatasetProfile,
     config: MonitoringConfig,
+    history: list[DatasetProfile],
 ) -> list[Finding]:
     findings: list[Finding] = []
     for name in sorted(set(baseline.columns) & set(current.columns)):
@@ -245,10 +297,20 @@ def _detect_numeric(
         after_stats = current.columns[name].numeric
         if not before_stats or not after_stats:
             continue
-        before = before_stats.median
+        baseline_median = before_stats.median
         after = after_stats.median
-        if before is None or after is None:
+        if baseline_median is None or after is None:
             continue
+        history_medians = [
+            item.columns[name].numeric.median
+            for item in history
+            if name in item.columns
+            and item.columns[name].numeric is not None
+            and item.columns[name].numeric.median is not None
+        ]
+        before, evidence, history_active = _historical_reference(
+            [float(value) for value in history_medians], float(baseline_median), config
+        )
 
         factor: float | None = None
         if abs(before) > 1e-12 and abs(after) > 1e-12 and before * after > 0:
@@ -265,8 +327,15 @@ def _detect_numeric(
                     "numeric_drift",
                     f"Significant numeric distribution change detected in '{name}'.",
                     round(after, 6),
-                    round(before, 6),
-                    f"Median magnitude changed by a factor of {factor:.2f}.",
+                    evidence if history_active else round(before, 6),
+                    (
+                        f"Median magnitude changed by a factor of {factor:.2f} "
+                        + (
+                        "against recent healthy history."
+                        if history_active
+                        else "against the baseline."
+                    )
+                    ),
                     confidence="high" if factor >= config.critical_numeric_factor else "medium",
                     impact="Possible scaling/unit change, partial data, or data corruption.",
                     investigation=(
@@ -277,7 +346,18 @@ def _detect_numeric(
             )
             continue
 
-        stddev = before_stats.stddev or 0.0
+        history_stddevs = [
+            item.columns[name].numeric.stddev
+            for item in history
+            if name in item.columns
+            and item.columns[name].numeric is not None
+            and item.columns[name].numeric.stddev is not None
+        ]
+        stddev = (
+            float(median(history_stddevs))
+            if history_active and history_stddevs
+            else (before_stats.stddev or 0.0)
+        )
         relative_shift = (abs(after - before) / abs(before)) if abs(before) > 1e-12 else None
         z_shift_is_material = relative_shift is None or relative_shift >= 0.20
         if stddev > 0 and z_shift_is_material:
@@ -290,8 +370,15 @@ def _detect_numeric(
                         "numeric_drift",
                         f"Median shifted materially for '{name}'.",
                         round(after, 6),
-                        round(before, 6),
-                        f"Median shift is {z_shift:.2f} baseline standard deviations.",
+                        evidence if history_active else round(before, 6),
+                        (
+                            f"Median shift is {z_shift:.2f} reference standard deviations "
+                            + (
+                        "against recent healthy history."
+                        if history_active
+                        else "against the baseline."
+                    )
+                        ),
                         confidence="medium",
                         impact="Numeric behaviour differs substantially from the baseline.",
                         investigation="Inspect the distribution and upstream transformation logic.",
@@ -362,12 +449,19 @@ def _detect_uniqueness(
     baseline: DatasetProfile,
     current: DatasetProfile,
     config: MonitoringConfig,
+    history: list[DatasetProfile],
 ) -> list[Finding]:
     findings: list[Finding] = []
     for name in config.unique_keys:
         if name not in baseline.columns or name not in current.columns:
             continue
-        before = baseline.columns[name].duplicate_pct
+        baseline_value = baseline.columns[name].duplicate_pct
+        history_values = [
+            item.columns[name].duplicate_pct for item in history if name in item.columns
+        ]
+        before, evidence, history_active = _historical_reference(
+            history_values, baseline_value, config
+        )
         after = current.columns[name].duplicate_pct
         increase = after - before
         if after < 0.02 or increase < 0.02:
@@ -379,8 +473,15 @@ def _detect_uniqueness(
                 "uniqueness",
                 f"Configured key '{name}' is no longer reliably unique.",
                 round(after, 4),
-                round(before, 4),
-                f"Duplicate rate increased by {increase:.1%} to {after:.1%}.",
+                evidence if history_active else round(before, 4),
+                (
+                    f"Duplicate rate increased by {increase:.1%} to {after:.1%} "
+                    + (
+                        "against recent healthy history."
+                        if history_active
+                        else "against the baseline."
+                    )
+                ),
                 impact="Joins or record-level assumptions may duplicate or overwrite data.",
                 investigation="Inspect duplicate key values and upstream record generation.",
             )
