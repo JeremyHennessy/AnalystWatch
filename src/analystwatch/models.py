@@ -28,6 +28,7 @@ class MonitoringConfig(BaseModel):
     sheet_name: str | int | None = None
     json_record_path: str | None = None
     unique_keys: list[str] = Field(default_factory=list)
+    numeric_fields: list[str] = Field(default_factory=list)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
 
     history_window_size: int = Field(default=5, ge=3, le=50)
