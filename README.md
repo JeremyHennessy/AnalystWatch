@@ -4,26 +4,69 @@
 
 AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs: stale data, schema changes, row loss, null explosions, scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
 
-## Core v0.11 status
+## Core v0.12 status
 
-Core v0.11 keeps the verified deterministic monitoring, review, incident, delivery-attempt and SQLite integrity behavior from earlier milestones and proves the runtime/storage boundary introduced in v0.10.
+Core v0.12 keeps the verified monitoring, review, incident, delivery-attempt, workspace-runtime and legacy SQLite behavior from v0.11, while adding a separately proven workspace-aware persistent schema.
 
-New in v0.11:
+New in v0.12:
 
-- independent process-local `MemoryStore` implementing the `MonitoringStore` contract without inheriting or wrapping SQLite
-- shared service-level conformance coverage across SQLite `Storage` and `MemoryStore`
-- CLI monitoring commands bound to a selected workspace via `--workspace-id`
-- FastAPI bound to one workspace, defaulting to `local`
-- cross-workspace FastAPI source writes rejected before preflight/persistence
-- Pages rendered through the workspace-bound monitoring store
-- SQLite verify/backup/restore kept as raw implementation-specific maintenance operations
-- scheduler typed against the structural `MonitoringStore` protocol
+- `NamespacedStorage`, a separate persistent SQLite adapter using schema version 2
+- composite workspace identity across sources, observations, reviews, candidates and attempts
+- workspace-local idempotency-key uniqueness
+- workspace-local candidate/adapter attempt numbering
+- safe reuse of the same source/candidate/attempt IDs in different workspaces in one database
+- read-only verified import from a legacy schema-v1 snapshot
+- selected-workspace import only, preserving baseline/review/candidate/attempt state
+- create-only import destinations with a new storage identity
 
-**Core v0.11 still has no real outbound notification provider.** The only delivery adapter remains deterministic local `dry-run` and performs no external I/O.
+**Core v0.12 does not switch the hosted runtime to the new schema.** CLI, FastAPI, Pages and `monitor-state` continue to use the verified legacy `Storage + WorkspaceStore` path by default.
 
-## Runtime workspace binding
+**Core v0.12 still has no real outbound notification provider.** The only delivery adapter remains deterministic local `dry-run` and performs no external I/O.
 
-The default workspace remains `local`, so existing source definitions and hosted jobs continue to operate without configuration changes.
+## Namespaced persistent identity
+
+`NamespacedStorage(path, workspace_id)` is bound to one workspace, but multiple bound instances can share the same SQLite file.
+
+Schema-v2 tables use workspace-aware keys such as:
+
+- `(workspace_id, source_id)`
+- `(workspace_id, observation_id)`
+- `(workspace_id, candidate_id)`
+- `(workspace_id, attempt_id)`
+- `(workspace_id, idempotency_key)`
+
+This allows `team-a` and `team-b` to both own a source called `market-data` and to reuse the same delivery idempotency value without collision.
+
+The existing `MonitoringStore` contract is unchanged and `NamespacedStorage` satisfies it.
+
+## Verified legacy import
+
+A verified legacy schema-v1 snapshot can be imported into a **new** schema-v2 database for one selected workspace:
+
+```python
+from analystwatch.namespaced_storage import NamespacedStorage
+
+result = NamespacedStorage.import_legacy_snapshot(
+    "backups/legacy.db",
+    "migrations/team-a.db",
+    workspace_id="team-a",
+)
+```
+
+Import behavior is intentionally conservative:
+
+- the source database is opened/verified read-only through the existing legacy verifier;
+- only sources whose `workspace_id` matches the selected workspace are copied;
+- observations, baselines, reviews, notification candidates and delivery attempts for those sources are preserved;
+- the destination must not already exist;
+- the destination is verified as schema-v2 after import;
+- the new database receives a new `storage_id` rather than impersonating the legacy snapshot.
+
+There is no automatic runtime switch after import.
+
+## Current runtime
+
+The verified runtime remains unchanged from v0.11:
 
 ```bash
 analystwatch --workspace-id local list
@@ -31,32 +74,7 @@ analystwatch --workspace-id team-a check market-data
 analystwatch --workspace-id team-a build-pages --output site
 ```
 
-FastAPI uses `ANALYSTWATCH_WORKSPACE_ID` or `local` when unset. `create_app(..., workspace_id="team-a")` can also bind explicitly for tests/embedding.
-
-`app.state.storage` remains the historical raw SQLite maintenance/test handle for compatibility. HTTP behavior and service operations use `app.state.workspace_storage`, which enforces the workspace boundary.
-
-## Store conformance
-
-`MonitoringStore` is now exercised through two unrelated implementations:
-
-- `Storage` — durable SQLite implementation used by the current hosted runtime
-- `MemoryStore` — independent process-local implementation used to prove service semantics are not SQLite-specific
-
-The same service-level scenarios run against both stores: baseline/history, incident/candidate creation, idempotent attempts, retry timing, Prepared reconciliation, review state, baseline promotion and Pages output.
-
-This is a contract proof, not a production-database migration. `MemoryStore` is intentionally non-durable.
-
-## Persistence and workspace limits
-
-The current SQLite schema still uses globally unique `source_id` values. `WorkspaceStore` prevents cross-workspace access but two workspaces cannot yet use the same source ID in one SQLite database. Composite `(workspace_id, source_id)` persistence remains a separate migration.
-
-SQLite maintenance remains local and explicit:
-
-```bash
-analystwatch --db instance/analystwatch.db verify-state
-analystwatch --db instance/analystwatch.db backup-state backups/analystwatch.db
-analystwatch restore-state backups/analystwatch.db restored/analystwatch.db
-```
+FastAPI remains workspace-bound through `WorkspaceStore`. Raw SQLite verify/backup/restore remain implementation-specific maintenance operations.
 
 ## Verification
 
@@ -66,15 +84,17 @@ python -m compileall -q src tests scripts
 pytest -q
 ```
 
-The verified v0.11 functional checkpoint passed Ruff, compile and **113 tests**. The live-source PR workflow did not run because its explicit path filter is limited to ingestion/model/profile/service changes; v0.11 changes runtime/store files instead. Hosted compatibility is therefore verified after merge by the normal `monitor-state` pipeline.
+The verified v0.12 functional checkpoint passed Ruff, compile and **121 tests**. Eight new regressions cover schema-v2 protocol conformance, duplicate IDs/idempotency across workspaces, isolation, foreign-write blocking, full selected-workspace legacy import, overwrite protection, schema-version rejection and corrupt-source rejection.
+
+The live-source PR workflow is path-filtered to ingestion/model/profile/service changes and does not run for this new-adapter-only diff. Hosted compatibility is verified after merge by the normal `monitor-state` pipeline, which remains on the legacy runtime.
 
 ## Current limitations
 
-- SQLite source IDs remain globally unique across workspaces
-- there is no authenticated remote user/session authorization layer
-- `MemoryStore` is test/runtime-only and not durable
-- `monitor-state` branch persistence remains test-only, not production storage
-- snapshots are local SQLite files, not managed backups
+- schema-v2 is not yet selectable by CLI/FastAPI runtime configuration
+- the hosted `monitor-state` deployment remains legacy SQLite test persistence
+- there is no authenticated user/session authorization layer
+- legacy import is currently a Python API, not a CLI migration command
+- snapshots remain local SQLite files, not managed backups
 - no real notification provider exists
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).
