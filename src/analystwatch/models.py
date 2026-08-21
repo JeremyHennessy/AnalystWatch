@@ -68,7 +68,7 @@ class MonitoringConfig(BaseModel):
     numeric_fields: list[str] = Field(default_factory=list)
     request_header_env: dict[str, str] = Field(default_factory=dict)
     notification_transitions: list[IncidentTransition] = Field(default_factory=list)
-    delivery_retry_minutes: int = Field(default=60, gt=0)
+    delivery_retry_minutes: int = Field(default=0, ge=0)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
 
     history_window_size: int = Field(default=5, ge=3, le=50)
