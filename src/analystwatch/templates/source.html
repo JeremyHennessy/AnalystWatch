@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ source.name }} · AnalystWatch</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <a class="back" href="/">← All sources</a>
+    <header class="detail-header">
+      <div>
+        <p class="eyebrow">{{ source.source_type.value|upper }}</p>
+        <h1>{{ source.name }}</h1>
+        <p class="muted mono">{{ source.location }}</p>
+      </div>
+      <div class="detail-actions">
+        <span class="status status-{{ health|lower|replace(' ', '-') }}"><span class="dot"></span>{{ health }}</span>
+        <form method="post" action="/sources/{{ source.id }}/check"><button type="submit">Run check</button></form>
+      </div>
+    </header>
+
+    {% if latest %}
+      <section class="grid three">
+        <div class="panel metric-card"><span>Last checked</span><strong>{{ latest.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
+        <div class="panel metric-card"><span>Last successful update</span><strong>{% if last_successful %}{{ last_successful.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}No successful observation{% endif %}</strong></div>
+        <div class="panel metric-card"><span>Baseline</span><strong>{% if baseline %}{{ baseline.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}Not established{% endif %}</strong></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><h2>Findings</h2><span>{{ latest.findings|length }}</span></div>
+        {% if latest.findings %}
+          <div class="finding-list">
+          {% for finding in latest.findings %}
+            <article class="finding finding-{{ finding.severity.value|lower }}">
+              <div class="finding-top"><strong>{{ finding.detector|replace('_', ' ')|title }}</strong><span>{{ finding.severity.value }}</span></div>
+              <h3>{{ finding.description }}</h3>
+              <p>{{ finding.why_flagged }}</p>
+              <dl>
+                <div><dt>Baseline</dt><dd>{{ finding.baseline_value }}</dd></div>
+                <div><dt>Current</dt><dd>{{ finding.current_value }}</dd></div>
+              </dl>
+              {% if finding.likely_impact %}<p><b>Impact:</b> {{ finding.likely_impact }}</p>{% endif %}
+              {% if finding.suggested_investigation %}<p><b>Investigate:</b> {{ finding.suggested_investigation }}</p>{% endif %}
+            </article>
+          {% endfor %}
+          </div>
+        {% else %}
+          <div class="healthy-note"><strong>No material reliability findings.</strong><p>The current observation is within configured thresholds relative to the baseline.</p></div>
+        {% endif %}
+      </section>
+
+      {% if latest.profile %}
+      <section class="panel">
+        <div class="section-title"><h2>Current profile</h2></div>
+        <div class="grid three">
+          <div class="metric-card"><span>Rows</span><strong>{{ latest.profile.row_count }}</strong></div>
+          <div class="metric-card"><span>Columns</span><strong>{{ latest.profile.column_count }}</strong></div>
+          <div class="metric-card"><span>Latest date</span><strong>{{ latest.profile.latest_date or 'Not configured' }}</strong></div>
+        </div>
+      </section>
+      {% endif %}
+
+      <section class="panel">
+        <div class="section-title"><h2>Recent history</h2><span>Current vs previous vs baseline</span></div>
+        <div class="history-list">
+          {% for item in history %}
+          <div><span>{{ item.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</span><strong class="text-{{ item.health.value|lower }}">{{ item.health.value }}</strong><span>{% if baseline and item.id == baseline.id %}Baseline{% endif %}</span></div>
+          {% endfor %}
+        </div>
+      </section>
+    {% else %}
+      <section class="panel empty"><h2>Not checked yet</h2><p>Run the first check to profile this source and establish its baseline.</p></section>
+    {% endif %}
+  </main>
+</body>
+</html>
