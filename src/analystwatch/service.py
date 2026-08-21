@@ -6,7 +6,11 @@ from uuid import uuid4
 import httpx
 
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
-from .incidents import latest_incident, notification_candidate
+from .incidents import (
+    evaluate_notification_candidate,
+    latest_incident,
+    notification_candidate,
+)
 from .ingest import ingest_source
 from .models import (
     BaselineReview,
@@ -14,6 +18,7 @@ from .models import (
     HealthStatus,
     IncidentSnapshot,
     NotificationCandidate,
+    NotificationCandidateState,
     Observation,
     ObservationReview,
     ObservationReviewState,
@@ -125,6 +130,30 @@ class MonitorService:
         if source_id is not None and self.storage.get_source(source_id) is None:
             raise KeyError(f"Unknown source: {source_id}")
         return self.storage.list_notification_candidates(source_id, limit=limit)
+
+    def evaluate_pending_notification_candidates(
+        self,
+        source_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> list[NotificationCandidate]:
+        source = self.storage.get_source(source_id)
+        if source is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        evaluated_at = now or datetime.now(timezone.utc)
+        if evaluated_at.tzinfo is None:
+            evaluated_at = evaluated_at.replace(tzinfo=timezone.utc)
+        updated: list[NotificationCandidate] = []
+        for candidate in self.storage.list_notification_candidates(source_id, limit=1000):
+            if candidate.state != NotificationCandidateState.PENDING:
+                continue
+            evaluated = evaluate_notification_candidate(
+                candidate,
+                source.config.notification_transitions,
+                evaluated_at=evaluated_at,
+            )
+            updated.append(self.storage.update_notification_candidate(evaluated))
+        return updated
 
     def baseline_review(
         self,
@@ -287,6 +316,12 @@ class MonitorService:
             is_baseline=baseline is None and result.available and profile is not None,
         )
         candidate = notification_candidate(previous, observation)
+        if candidate is not None:
+            candidate = evaluate_notification_candidate(
+                candidate,
+                source.config.notification_transitions,
+                evaluated_at=observed_at,
+            )
         self.storage.save_observation(
             observation,
             set_baseline=observation.is_baseline,
