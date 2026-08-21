@@ -40,6 +40,7 @@
         <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
         <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
         <div><dt>Notification policy</dt><dd>{% if source.config.notification_transitions %}Eligible transitions: {% for transition in source.config.notification_transitions %}{{ transition.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}No transitions enabled; candidates are suppressed{% endif %}</dd></div>
+        <div><dt>Delivery retry delay</dt><dd>{% if source.config.delivery_retry_minutes %}{{ source.config.delivery_retry_minutes }} min after Failed{% else %}Immediate after Failed{% endif %}</dd></div>
         <div><dt>Request headers</dt><dd>{% if source.config.request_header_env %}{% if static_mode %}{{ source.config.request_header_env|length }} environment-backed header{{ '' if source.config.request_header_env|length == 1 else 's' }} configured; values are not stored{% else %}{% for header, env_name in source.config.request_header_env.items() %}<code>{{ header }}</code> ← <code>{{ env_name }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}{% else %}None configured{% endif %}</dd></div>
       </dl>
     </section>
@@ -70,6 +71,7 @@
         <p class="muted">Dry-run attempts: {{ delivery_attempt_count }} total · {{ delivery_attempt_states.Succeeded }} Succeeded · {{ delivery_attempt_states.Failed }} Failed · {{ delivery_attempt_states.Prepared }} Prepared.</p>
         <p class="muted">Eligible means the transition matches the source policy only. Core v0.6 still does not send email, Slack, webhooks, or other outbound notifications.</p>
         <p class="muted">Core v0.7 dry-run attempts perform no external delivery or network request.</p>
+        <p class="muted">Core v0.8 keeps retry timing separate from monitoring and requires explicit review to reconcile an abandoned Prepared attempt.</p>
       </section>
       {% endif %}
 

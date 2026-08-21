@@ -2,7 +2,7 @@
 
 ## Core v0.1 — complete
 
-Deterministic monitoring foundation: ingestion, profiling, Health classification, baseline retention, CLI/API/dashboard, broken fixtures and CI.
+Deterministic monitoring foundation: ingestion, profiling, Health classification, baseline retention, CLI/API/dashboard, deliberately broken fixtures and CI.
 
 ## Core v0.2 — Scheduling & Signal Quality — complete
 
@@ -10,66 +10,68 @@ Added independent monitoring cadence, due-source scheduling, repository source s
 
 ## Core v0.2.1 — Initial real-source validation — complete
 
-Validated Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny from GitHub Actions and added explicit numeric-string contracts. No detector thresholds changed.
+Validated Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny through GitHub Actions and added explicit numeric-string contracts. No detector thresholds changed.
 
 ## Core v0.3 — Source onboarding & contract preflight — complete
 
-Added non-persistent source preflight, contract validation, safe local onboarding/API creation and duplicate-ID protection. Clean gate: 32 tests.
+Added non-persistent source preflight, contract validation, safe onboarding/API creation and duplicate-ID protection. Clean gate: 32 tests.
 
 ## Core v0.4 — Operational review & secure source configuration — complete
 
-Added environment-backed request headers, preflight-protected edits, Acknowledged/Reviewed state, guarded Healthy baseline promotion and public-output redaction. Clean gate: 41 tests.
+Added environment-backed request headers, preflight-protected edits, Acknowledged/Reviewed state, guarded Healthy baseline promotion, and public-output redaction. Clean gate: 41 tests.
 
 ## Core v0.5 — Incident transitions & notification readiness — complete
 
-Added derived Opened/Escalated/Recovered incident lifecycle, duplicate-noise suppression, and transition candidates persisted atomically with observations. Clean gate: 50 tests; live-source smoke green. No outbound delivery.
+Added derived Opened/Escalated/Recovered incidents and transition candidates with duplicate-noise suppression. Clean gate: 50 tests. No outbound delivery.
 
 ## Core v0.6 — Delivery policy sandbox — complete
 
-Added per-source opt-in transition policy, safe-default suppression, Eligible/Suppressed evaluation with immutable policy snapshots, and explicit idempotent evaluation of legacy Pending candidates. Clean gate: 58 tests; live-source smoke green. No outbound delivery.
+Added opt-in notification-transition policy, safe-default suppression, Eligible/Suppressed decisions, and immutable policy snapshots. Clean gate: 58 tests. No outbound delivery.
 
-## Core v0.7 — Dry-run delivery attempts — current
+## Core v0.7 — Dry-run delivery attempts — complete
 
-Goal: prove execution, idempotency and retry persistence semantics without connecting a real provider.
+Added explicit Prepared/Succeeded/Failed dry-run attempts, caller idempotency, sequential retry semantics, SQLite uniqueness constraints, and read-only attempt summaries. Clean gate: 66 tests. No real provider.
+
+## Core v0.8 — Attempt reconciliation & claim safety — current
+
+Goal: harden the dry-run execution model before introducing any real delivery side effect.
 
 Implemented and verified on the functional checkpoint:
 
-- separate `DeliveryAttempt` model; candidate policy state remains unchanged
-- states: `Prepared`, `Succeeded`, `Failed`
-- `dry-run` is the only delivery mode/adapter
-- adapter performs no network or external I/O
-- attempts are explicit only; monitoring never creates them automatically
-- only Eligible notification candidates can be attempted
-- caller-supplied idempotency key
-- same key replays the stored attempt without rerunning the adapter
-- idempotency-key reuse across a different candidate/adapter is rejected
-- successful attempt blocks another attempt for the same candidate/adapter
-- failed attempt may be retried with a new key and incremented attempt number
-- persisted Prepared attempt blocks blind retry
-- SQLite uniqueness on idempotency key and candidate/adapter/attempt number
-- CLI/API can inspect attempts and execute only the explicitly named dry-run path
-- Pages exposes aggregate attempt counts/state counts only and does not expose idempotency keys
-- approved `Notification candidates` label and v0.6 no-delivery copy preserved
-- clean functional checkpoint reached **66 passing tests**
+- atomic attempt claim under SQLite `BEGIN IMMEDIATE`
+- candidate eligibility, idempotency replay, latest-state validation, retry timing, attempt-number allocation and Prepared insert share one transaction
+- concurrent same-key claims resolve to one claim plus one replay
+- concurrent different-key claims allow only one Prepared attempt
+- `delivery_retry_minutes` is separate from monitoring cadence
+- retry-delay default is `0` to preserve v0.7 immediate-retry behavior
+- optional nonzero retry delays are enforced by both status reporting and the claim transaction
+- `DeliveryRetryDecision` exposes due state and next retry time
+- abandoned Prepared attempts require explicit reconciliation
+- reconciliation supports only Succeeded or Failed and requires a review note
+- reconciliation records timestamp + note
+- Failed reconciliation follows retry-delay rules
+- Succeeded reconciliation blocks future attempts
+- Pages exposes retry policy and aggregate counts only; notes/keys/actions are redacted
+- approved prior UI labels/copy remain preserved
+- clean functional checkpoint reached **75 passing tests**
 - live-source smoke remained green
 
-No detector, scheduler, hosted source configuration, notification-policy semantics, secret handling, review semantics, baseline semantics, Pages workflow or shared CSS changed.
+No detector, scheduler, hosted source configuration, notification-transition semantics, secret handling, review semantics, baseline semantics, Pages workflow, or shared CSS changed.
 
-## Candidate v0.8 — attempt reconciliation & persistence hardening
+## Candidate v0.9 — deployment persistence & execution ownership
 
-Before any real provider integration:
+Before any provider integration:
 
-- define explicit reconciliation for abandoned `Prepared` attempts
-- define claim/lease/concurrency semantics for multiple workers
-- define retry timing/backoff separately from monitoring cadence
-- make idempotency behavior robust under concurrent requests, not only sequential service calls
-- replace branch-backed SQLite test persistence with deployment-appropriate storage
-- define authentication/workspace ownership before remote delivery actions
-- accumulate real transition/candidate history and inspect policy noise
+- replace branch-backed test SQLite persistence with deployment-appropriate storage
+- define authentication/workspace ownership for remote operational actions
+- define execution ownership/lease semantics for multiple worker processes or nodes
+- define retention/audit rules for notification candidates and delivery attempts
+- accumulate real transition history and inspect candidate/policy noise
+- prove migration/back-up/restore behavior independently from provider delivery
 
 ## Later
 
-- first opt-in provider integration behind the proven attempt abstraction
+- first opt-in provider integration behind the proven delivery-attempt abstraction
 - production notification delivery
 - SourceGuard productization
 - ModelGuard

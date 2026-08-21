@@ -82,6 +82,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
                 "notification_transitions": [
                     item.value for item in source.config.notification_transitions
                 ],
+                "delivery_retry_minutes": source.config.delivery_retry_minutes,
                 "health": latest.health.value if latest else "Not checked",
                 "review_state": review.state.value if review else None,
                 "incident": incident.model_dump(mode="json") if incident else None,

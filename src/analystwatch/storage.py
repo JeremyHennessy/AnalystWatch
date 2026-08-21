@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import (
     DeliveryAttempt,
+    DeliveryAttemptState,
+    DeliveryMode,
     NotificationCandidate,
+    NotificationCandidateState,
     Observation,
     ObservationReview,
     SourceDefinition,
@@ -320,6 +323,98 @@ class Storage:
             )
         return attempt
 
+    def claim_delivery_attempt(
+        self,
+        candidate_id: str,
+        idempotency_key: str,
+        adapter: str,
+        *,
+        created_at: datetime,
+        retry_minutes: int,
+    ) -> tuple[DeliveryAttempt, bool]:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            candidate_row = db.execute(
+                "SELECT candidate_json FROM notification_candidates WHERE id = ?",
+                (candidate_id,),
+            ).fetchone()
+            if candidate_row is None:
+                raise KeyError(f"Unknown notification candidate: {candidate_id}")
+            candidate = NotificationCandidate.model_validate_json(candidate_row[0])
+            if candidate.state != NotificationCandidateState.ELIGIBLE:
+                raise ValueError("Only Eligible notification candidates can be attempted")
+
+            existing_row = db.execute(
+                "SELECT attempt_json FROM delivery_attempts WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing_row is not None:
+                existing = DeliveryAttempt.model_validate_json(existing_row[0])
+                if existing.candidate_id != candidate_id or existing.adapter != adapter:
+                    raise ValueError("Idempotency key belongs to a different delivery attempt")
+                return existing, True
+
+            latest_row = db.execute(
+                """
+                SELECT attempt_json
+                FROM delivery_attempts
+                WHERE candidate_id = ? AND adapter = ?
+                ORDER BY attempt_number DESC
+                LIMIT 1
+                """,
+                (candidate_id, adapter),
+            ).fetchone()
+            latest = DeliveryAttempt.model_validate_json(latest_row[0]) if latest_row else None
+
+            if latest is not None and latest.state == DeliveryAttemptState.SUCCEEDED:
+                raise ValueError("Candidate already has a successful dry-run delivery attempt")
+            if latest is not None and latest.state == DeliveryAttemptState.PREPARED:
+                raise ValueError("Candidate already has a Prepared dry-run delivery attempt")
+
+            attempt_number = 1
+            if latest is not None:
+                if latest.state != DeliveryAttemptState.FAILED:
+                    raise ValueError(
+                        "A new delivery attempt requires the previous attempt to have Failed"
+                    )
+                if latest.completed_at is None:
+                    raise ValueError("Failed delivery attempt is missing its completion timestamp")
+                next_retry_at = latest.completed_at + timedelta(minutes=retry_minutes)
+                if created_at < next_retry_at:
+                    raise ValueError(f"Delivery retry is not due until {next_retry_at.isoformat()}")
+                attempt_number = latest.attempt_number + 1
+
+            prepared = DeliveryAttempt(
+                id=f"{candidate.id}:{adapter}:{attempt_number}",
+                candidate_id=candidate.id,
+                source_id=candidate.source_id,
+                adapter=adapter,
+                mode=DeliveryMode.DRY_RUN,
+                idempotency_key=idempotency_key,
+                attempt_number=attempt_number,
+                state=DeliveryAttemptState.PREPARED,
+                created_at=created_at,
+            )
+            db.execute(
+                """
+                INSERT INTO delivery_attempts(
+                    id, candidate_id, source_id, adapter, attempt_number,
+                    idempotency_key, created_at, attempt_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    prepared.id,
+                    prepared.candidate_id,
+                    prepared.source_id,
+                    prepared.adapter,
+                    prepared.attempt_number,
+                    prepared.idempotency_key,
+                    prepared.created_at.isoformat(),
+                    prepared.model_dump_json(),
+                ),
+            )
+        return prepared, False
+
     def update_delivery_attempt(self, attempt: DeliveryAttempt) -> DeliveryAttempt:
         with self.connect() as db:
             cursor = db.execute(
@@ -329,6 +424,59 @@ class Storage:
             if cursor.rowcount != 1:
                 raise ValueError(f"Unknown delivery attempt: {attempt.id}")
         return attempt
+
+    def get_delivery_attempt(self, attempt_id: str) -> DeliveryAttempt | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT attempt_json FROM delivery_attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+        return DeliveryAttempt.model_validate_json(row[0]) if row else None
+
+    def reconcile_prepared_delivery_attempt(
+        self,
+        attempt_id: str,
+        outcome: DeliveryAttemptState,
+        *,
+        reconciled_at: datetime,
+        note: str,
+    ) -> DeliveryAttempt:
+        if outcome not in {DeliveryAttemptState.SUCCEEDED, DeliveryAttemptState.FAILED}:
+            raise ValueError("Prepared attempts can reconcile only to Succeeded or Failed")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT attempt_json FROM delivery_attempts WHERE id = ?",
+                (attempt_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown delivery attempt: {attempt_id}")
+            attempt = DeliveryAttempt.model_validate_json(row[0])
+            if attempt.state != DeliveryAttemptState.PREPARED:
+                raise ValueError("Only Prepared delivery attempts can be reconciled")
+            reconciled = attempt.model_copy(
+                update={
+                    "state": outcome,
+                    "completed_at": reconciled_at,
+                    "reconciled_at": reconciled_at,
+                    "reconciliation_note": note,
+                    "result_summary": (
+                        "Prepared attempt reconciled as successful after explicit review."
+                        if outcome == DeliveryAttemptState.SUCCEEDED
+                        else None
+                    ),
+                    "error": (
+                        "Prepared attempt reconciled as failed after explicit review."
+                        if outcome == DeliveryAttemptState.FAILED
+                        else None
+                    ),
+                }
+            )
+            db.execute(
+                "UPDATE delivery_attempts SET attempt_json = ? WHERE id = ?",
+                (reconciled.model_dump_json(), reconciled.id),
+            )
+        return reconciled
 
     def get_delivery_attempt_by_idempotency_key(
         self,

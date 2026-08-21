@@ -1,136 +1,124 @@
-# AnalystWatch Core v0.7 Architecture
+# AnalystWatch Core v0.8 Architecture
 
 ## Decision
 
-Core v0.7 remains a Python modular monolith. FastAPI is the interactive local/API surface; GitHub Pages is generated read-only test output. The deterministic monitoring engine remains authoritative. Review state, incident state, notification-policy decisions, and delivery attempts are downstream operational records and do not rewrite detector Health/findings.
+Core v0.8 remains a Python modular monolith. FastAPI is the local/API control surface; GitHub Pages is generated read-only test output. The monitoring engine remains authoritative. Review state, incident state, notification-policy decisions, and delivery attempts are downstream operational records and never rewrite detector findings or Health.
 
-SQLite persists source definitions, observations, review state, notification candidates, dry-run delivery attempts, profiles, and the selected baseline. The temporary GitHub-hosted environment retains this database on the public `monitor-state` branch, which must contain only non-secret test state.
+SQLite persists source definitions, observations, review state, notification candidates, delivery attempts, profiles, and baseline selection. `monitor-state` remains temporary public test persistence and must contain only non-secret state.
 
 ## Data flow
 
 ```text
-SourceDefinition
-  -> preflight for interactive create/edit
-  -> schedule -> ingest -> profile -> deterministic detectors
-  -> immutable Observation: Healthy / Warning / Critical
-       |
-       +-> review state: Acknowledged / Reviewed
-       +-> derive Incident: Opened / Escalated / Recovered
-              |
-              +-> NotificationCandidate
-                    |
-                    +-> source notification_transitions policy
-                         -> Eligible / Suppressed
-                         -> immutable policy snapshot
-                              |
-                              +-> EXPLICIT dry-run only
-                                   -> Prepared DeliveryAttempt
-                                   -> local DryRunDeliveryAdapter
-                                   -> Succeeded / Failed
-       +-> guarded baseline review/promotion
-  -> FastAPI/API inspection
-  -> read-only Pages summary
+source -> preflight/config -> schedule -> ingest -> profile -> detectors
+                                                |
+                                                v
+                                      immutable Observation
+                                          |      |      |
+                                       review incident baseline
+                                                |
+                                      transition candidate
+                                                |
+                                      notification policy
+                                  Pending / Eligible / Suppressed
+                                                |
+                                  explicit dry-run execution only
+                                                |
+                                 atomic SQLite attempt claim
+                                                |
+                                             Prepared
+                                                |
+                                      local dry-run adapter
+                                         /             \
+                                  Succeeded           Failed
+                                      |                 |
+                                      |           optional retry delay
+                                      |                 |
+                                      +------ explicit retry --------+
+
+abandoned Prepared -> explicit reconciliation review -> Succeeded / Failed
 ```
 
-No monitoring check automatically creates a DeliveryAttempt. There is no outbound provider integration in v0.7.
+No monitoring transaction automatically executes a delivery attempt.
 
-## Delivery-attempt model
+## Atomic claim safety
 
-`DeliveryAttempt` is separate from `NotificationCandidate`. A candidate says whether an incident transition matched policy; an attempt records an explicit execution against an adapter.
+v0.7 enforced idempotency sequentially in the service. v0.8 moves the concurrency-critical decision into `Storage.claim_delivery_attempt` under one SQLite `BEGIN IMMEDIATE` transaction.
 
-Fields include:
+The transaction covers:
 
-- candidate/source identifiers
-- adapter and mode
-- caller idempotency key
-- monotonic attempt number per candidate/adapter
-- state: `Prepared`, `Succeeded`, `Failed`
-- created/completed timestamps
-- result summary or error evidence
+1. candidate existence and Eligible state;
+2. caller idempotency-key lookup;
+3. latest candidate/adapter attempt state;
+4. configured retry timing;
+5. attempt-number allocation;
+6. Prepared insert.
 
-The candidate remains `Eligible` after a successful or failed dry run. Delivery history must not rewrite the historical policy decision.
+Same-key concurrent callers converge on the same persisted attempt. Different keys cannot create two Prepared attempts for the same candidate/adapter. SQLite also retains unique constraints on the idempotency key and `(candidate_id, adapter, attempt_number)`.
 
-## Dry-run adapter boundary
+This is adequate for the current single SQLite database. It is not a distributed lease/claim system for multiple database nodes.
 
-`DryRunDeliveryAdapter` is deterministic and contains no network client or provider SDK. It returns a local result only. Tests can inject a deterministic failure without external I/O.
+## Retry timing
 
-This adapter proves execution semantics independently from a real transport.
+`MonitoringConfig.delivery_retry_minutes` is independent from monitoring cadence. The default is `0`, preserving v0.7 immediate retry after a Failed attempt. Nonzero delay is opt-in.
 
-## Idempotency and retry semantics
+`DeliveryRetryDecision` reports whether a candidate is currently retryable and the next retry timestamp when applicable.
 
-The caller supplies a stable idempotency key.
+Rules:
 
-- if the key already exists for the same candidate/adapter, the stored attempt is returned without rerunning the adapter;
-- if that key belongs to another candidate/adapter, the operation is rejected;
-- after `Succeeded`, another key is rejected for the same candidate/adapter;
-- after `Failed`, a new key may create the next attempt number;
-- after `Prepared`, another key is blocked.
+- no attempt yet -> due;
+- Succeeded -> not due;
+- Prepared -> not due; explicit reconciliation required;
+- Failed with completion timestamp -> due at `completed_at + delivery_retry_minutes`;
+- non-Eligible candidate -> not due.
 
-SQLite enforces:
+The claim transaction enforces the same timing rule; retry-status is not merely advisory.
 
-- unique idempotency key;
-- unique `(candidate_id, adapter, attempt_number)`.
+## Prepared reconciliation
 
-The service also enforces the state-machine rules before insert.
+A process crash between Prepared persistence and completion can leave an ambiguous Prepared attempt. v0.8 does not infer an outcome or automatically retry it.
 
-## Prepared-before-execution persistence
+`reconcile_prepared_delivery_attempt` requires:
 
-The system persists `Prepared` before adapter invocation, then records `Succeeded` or `Failed` afterward. These are intentionally separate transactions.
+- an existing Prepared attempt;
+- explicit outcome `Succeeded` or `Failed`;
+- explicit review note;
+- reconciliation timestamp.
 
-If the process dies between them, the database retains a `Prepared` attempt. v0.7 refuses a blind retry because a future real provider might have received a side effect even when local completion was not recorded. Reconciliation/lease/timeout semantics are therefore a future milestone rather than being guessed in v0.7.
+The resulting attempt stores `reconciled_at` and `reconciliation_note`. A Failed reconciliation becomes eligible for retry according to the configured retry delay. A Succeeded reconciliation blocks later attempts.
 
-## Candidate eligibility boundary
+Reconciliation runs under `BEGIN IMMEDIATE` so two reviewers cannot independently reconcile the same Prepared state.
 
-Only `Eligible` notification candidates may be attempted. `Suppressed` and legacy `Pending` candidates are rejected. Candidate policy evaluation remains the v0.6 behavior and is not modified by attempt outcomes.
+## Dry-run boundary
 
-## Storage
+The only adapter remains `DryRunDeliveryAdapter`; it contains no network/client/provider dependency. Real delivery remains out of scope.
 
-`delivery_attempts` references both `notification_candidates` and `sources` with foreign keys and uses cascade deletion for test-state cleanup. Attempts are append-oriented audit records; only the JSON payload of an existing attempt is updated when its Prepared state completes.
+## CLI and API
 
-## CLI/API surfaces
+New local operations:
 
-Local CLI:
+- `delivery-retry-status <candidate-id>`
+- `reconcile-delivery-attempt <attempt-id> --outcome ... --note ...`
+- `GET /api/delivery-attempts/retry-status`
+- `POST /api/delivery-attempts/{attempt_id}/reconcile`
 
-- `delivery-attempts` — inspection
-- `dry-run-delivery` — explicit dry-run execution requiring an idempotency key
+Existing explicit dry-run operations remain. There is no generic send route, automatic retry loop, or automatic reconciliation loop.
 
-Local API:
+## Pages/public boundary
 
-- `GET /api/delivery-attempts`
-- `POST /api/delivery-attempts/dry-run`
+Pages remains read-only. Public state may include `delivery_retry_minutes` and aggregate attempt-state counts. It does not contain idempotency keys, reconciliation notes, attempt JSON, or reconciliation controls.
 
-There is no generic send route, automatic worker, destination configuration, or real adapter.
-
-## Pages/public output
-
-Pages remains read-only. It exposes only aggregate delivery-attempt counts and state counts. It does not export:
-
-- idempotency keys;
-- full delivery-attempt payloads;
-- any execution control;
-- request-header environment-variable names.
-
-The approved `Notification candidates` label and prior no-delivery wording are preserved.
-
-## Existing operational semantics
-
-Source preflight/editing, environment-backed headers, Acknowledged/Reviewed state, guarded Healthy-only baseline promotion, incident derivation, notification-transition policy, scheduling, and detector thresholds are unchanged in v0.7.
+Approved v0.6/v0.7 copy and the `Notification candidates` label remain preserved, with v0.8 wording added separately.
 
 ## Verification boundary
 
-The verified v0.7 functional checkpoint passed Ruff, compile, **66 deterministic tests**, and live-source smoke against the demo, Bank of Canada and U.S. Treasury sources.
+The verified v0.8 functional checkpoint passed Ruff, compile, **75 deterministic tests**, and live-source smoke against the existing configured sources. The new suite includes concurrent same-key and different-key SQLite claim tests.
 
-CI caught a UI-copy preservation regression during development. The prior v0.6 no-delivery sentence was restored exactly and v0.7 dry-run wording was added separately. No service/storage semantics were changed by that correction.
+## Limitations
 
-## Tradeoffs / current limitations
-
-- dry-run adapter only; no real provider exists
-- Prepared attempts require future explicit reconciliation semantics
-- production-grade concurrency claims/leases are not implemented
-- `monitor-state` is test-only branch-backed persistence
-- authentication/workspace ownership is not implemented
-- environment-backed headers are not a multi-user secret vault
-- GitHub scheduling is not real-time
-- Pages is read-only
-- incident derivation reads recent history into memory
-- more real transition history is required before provider integration
+- single SQLite database claim safety, not distributed leasing
+- manual Prepared reconciliation only
+- no automatic retry worker
+- no real provider integration
+- branch-backed hosted state remains test-only
+- no authentication/workspace ownership
+- more real incident/candidate history is required before introducing side effects

@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from .models import (
     DeliveryAttempt,
+    DeliveryReconciliationOutcome,
     NotificationCandidate,
     ObservationReviewState,
     SourceDefinition,
@@ -49,7 +50,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     storage = Storage(resolved_db)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.7.0")
+    app = FastAPI(title="AnalystWatch", version="0.8.0")
     app.state.storage = storage
     app.state.service = service
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -243,10 +244,30 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/delivery-attempts/retry-status")
+    def api_delivery_retry_status(candidate_id: str):
+        try:
+            return service.delivery_retry_decision(candidate_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/delivery-attempts/dry-run")
     def api_dry_run_delivery(candidate_id: str, idempotency_key: str):
         try:
             return service.dry_run_delivery(candidate_id, idempotency_key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/delivery-attempts/{attempt_id}/reconcile")
+    def api_reconcile_delivery_attempt(
+        attempt_id: str,
+        outcome: DeliveryReconciliationOutcome,
+        note: str,
+    ):
+        try:
+            return service.reconcile_delivery_attempt(attempt_id, outcome, note)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
