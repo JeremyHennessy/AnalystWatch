@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import Observation, ObservationReview, SourceDefinition
+from .models import NotificationCandidate, Observation, ObservationReview, SourceDefinition
 
 
 class Storage:
@@ -48,6 +48,19 @@ class Storage:
                     FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE CASCADE,
                     FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS notification_candidates (
+                    id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    observation_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    candidate_json TEXT NOT NULL,
+                    FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE CASCADE,
+                    FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_notification_candidates_source_time
+                ON notification_candidates(source_id, created_at DESC);
                 """
             )
 
@@ -75,7 +88,13 @@ class Storage:
             rows = db.execute("SELECT definition_json FROM sources ORDER BY id").fetchall()
         return [SourceDefinition.model_validate_json(row[0]) for row in rows]
 
-    def save_observation(self, observation: Observation, *, set_baseline: bool = False) -> None:
+    def save_observation(
+        self,
+        observation: Observation,
+        *,
+        set_baseline: bool = False,
+        notification_candidate: NotificationCandidate | None = None,
+    ) -> None:
         payload = observation.model_dump_json()
         with self.connect() as db:
             db.execute(
@@ -90,6 +109,21 @@ class Storage:
                     payload,
                 ),
             )
+            if notification_candidate is not None:
+                db.execute(
+                    """
+                    INSERT INTO notification_candidates(
+                        id, source_id, observation_id, created_at, candidate_json
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        notification_candidate.id,
+                        notification_candidate.source_id,
+                        notification_candidate.observation_id,
+                        notification_candidate.created_at.isoformat(),
+                        notification_candidate.model_dump_json(),
+                    ),
+                )
             if set_baseline:
                 db.execute(
                     "UPDATE sources SET baseline_observation_id = ? WHERE id = ?",
@@ -197,6 +231,24 @@ class Storage:
                 (observation_id,),
             ).fetchone()
         return ObservationReview.model_validate_json(row[0]) if row else None
+
+    def list_notification_candidates(
+        self,
+        source_id: str | None = None,
+        *,
+        limit: int = 100,
+    ) -> list[NotificationCandidate]:
+        query = "SELECT candidate_json FROM notification_candidates"
+        params: tuple[object, ...]
+        if source_id is None:
+            query += " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+            params = (limit,)
+        else:
+            query += " WHERE source_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?"
+            params = (source_id, limit)
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [NotificationCandidate.model_validate_json(row[0]) for row in rows]
 
     def promote_baseline(self, source_id: str, observation_id: str) -> Observation:
         observation = self._observation_by_id(observation_id)
