@@ -101,6 +101,7 @@ class MonitorService:
                 result.dataframe,
                 source.config.latest_date_field,
                 infer_latest_date_field=source.config.infer_latest_date_field,
+                numeric_fields=source.config.numeric_fields,
             )
             findings.extend(
                 detect_freshness(
