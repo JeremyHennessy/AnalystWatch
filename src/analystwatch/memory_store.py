@@ -69,7 +69,9 @@ class MemoryStore:
                 if notification_candidate.observation_id != observation.id:
                     raise ValueError("Notification candidate must belong to the saved observation")
                 if notification_candidate.id in self._candidates:
-                    raise ValueError(f"Notification candidate already exists: {notification_candidate.id}")
+                    raise ValueError(
+                        f"Notification candidate already exists: {notification_candidate.id}"
+                    )
                 if any(
                     item.observation_id == notification_candidate.observation_id
                     for item in self._candidates.values()
