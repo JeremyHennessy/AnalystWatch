@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import httpx
 
+from .delivery import DryRunDeliveryAdapter
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
 from .incidents import (
     evaluate_notification_candidate,
@@ -14,6 +15,9 @@ from .incidents import (
 from .ingest import ingest_source
 from .models import (
     BaselineReview,
+    DeliveryAttempt,
+    DeliveryAttemptState,
+    DeliveryMode,
     Finding,
     HealthStatus,
     IncidentSnapshot,
@@ -154,6 +158,107 @@ class MonitorService:
             )
             updated.append(self.storage.update_notification_candidate(evaluated))
         return updated
+
+    def delivery_attempts(
+        self,
+        *,
+        candidate_id: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[DeliveryAttempt]:
+        if candidate_id is not None:
+            candidate = self.storage.get_notification_candidate(candidate_id)
+            if candidate is None:
+                raise KeyError(f"Unknown notification candidate: {candidate_id}")
+        if source_id is not None and self.storage.get_source(source_id) is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        return self.storage.list_delivery_attempts(
+            candidate_id=candidate_id,
+            source_id=source_id,
+            limit=limit,
+        )
+
+    def dry_run_delivery(
+        self,
+        candidate_id: str,
+        idempotency_key: str,
+        *,
+        now: datetime | None = None,
+        adapter: DryRunDeliveryAdapter | None = None,
+    ) -> DeliveryAttempt:
+        candidate = self.storage.get_notification_candidate(candidate_id)
+        if candidate is None:
+            raise KeyError(f"Unknown notification candidate: {candidate_id}")
+        if candidate.state != NotificationCandidateState.ELIGIBLE:
+            raise ValueError("Only Eligible notification candidates can be dry-run attempted")
+        if not idempotency_key or idempotency_key != idempotency_key.strip():
+            raise ValueError("idempotency_key must be non-empty and trimmed")
+
+        delivery_adapter = adapter or DryRunDeliveryAdapter()
+        existing = self.storage.get_delivery_attempt_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            if existing.candidate_id != candidate_id or existing.adapter != delivery_adapter.name:
+                raise ValueError("Idempotency key belongs to a different delivery attempt")
+            return existing
+
+        attempts = [
+            item
+            for item in self.storage.list_delivery_attempts(candidate_id=candidate_id, limit=1000)
+            if item.adapter == delivery_adapter.name
+        ]
+        if any(item.state == DeliveryAttemptState.SUCCEEDED for item in attempts):
+            raise ValueError("Candidate already has a successful dry-run delivery attempt")
+        latest = max(attempts, key=lambda item: item.attempt_number, default=None)
+        if latest is not None and latest.state == DeliveryAttemptState.PREPARED:
+            raise ValueError("Candidate already has a Prepared dry-run delivery attempt")
+        if latest is not None and latest.state != DeliveryAttemptState.FAILED:
+            raise ValueError("A new dry-run attempt requires the previous attempt to have Failed")
+
+        created_at = now or datetime.now(timezone.utc)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        attempt_number = 1 if latest is None else latest.attempt_number + 1
+        prepared = DeliveryAttempt(
+            id=f"{candidate.id}:{delivery_adapter.name}:{attempt_number}",
+            candidate_id=candidate.id,
+            source_id=candidate.source_id,
+            adapter=delivery_adapter.name,
+            mode=DeliveryMode.DRY_RUN,
+            idempotency_key=idempotency_key,
+            attempt_number=attempt_number,
+            state=DeliveryAttemptState.PREPARED,
+            created_at=created_at,
+        )
+        self.storage.create_delivery_attempt(prepared)
+
+        try:
+            result = delivery_adapter.deliver(candidate)
+        except Exception as exc:
+            completed = prepared.model_copy(
+                update={
+                    "state": DeliveryAttemptState.FAILED,
+                    "completed_at": created_at,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+        else:
+            if result.success:
+                completed = prepared.model_copy(
+                    update={
+                        "state": DeliveryAttemptState.SUCCEEDED,
+                        "completed_at": created_at,
+                        "result_summary": result.summary,
+                    }
+                )
+            else:
+                completed = prepared.model_copy(
+                    update={
+                        "state": DeliveryAttemptState.FAILED,
+                        "completed_at": created_at,
+                        "error": result.error or "Dry-run adapter reported failure.",
+                    }
+                )
+        return self.storage.update_delivery_attempt(completed)
 
     def baseline_review(
         self,

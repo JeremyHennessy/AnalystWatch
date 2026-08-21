@@ -1,20 +1,17 @@
-# AnalystWatch Core v0.6 Architecture
+# AnalystWatch Core v0.7 Architecture
 
 ## Decision
 
-Core v0.6 remains a Python modular monolith. FastAPI is the interactive local/API surface; GitHub Pages is a generated read-only test surface. The deterministic monitoring engine remains authoritative. Review state, incident state, and delivery-policy decisions are downstream interpretations of immutable observation evidence and do not rewrite detector Health/findings.
+Core v0.7 remains a Python modular monolith. FastAPI is the interactive local/API surface; GitHub Pages is generated read-only test output. The deterministic monitoring engine remains authoritative. Review state, incident state, notification-policy decisions, and delivery attempts are downstream operational records and do not rewrite detector Health/findings.
 
-SQLite persists accepted source definitions, observations, review state, notification candidates, profiles, and the selected baseline. The temporary GitHub-hosted environment retains this database on the public `monitor-state` branch, which must contain only non-secret test state.
+SQLite persists source definitions, observations, review state, notification candidates, dry-run delivery attempts, profiles, and the selected baseline. The temporary GitHub-hosted environment retains this database on the public `monitor-state` branch, which must contain only non-secret test state.
 
 ## Data flow
 
 ```text
 SourceDefinition
   -> preflight for interactive create/edit
-  -> schedule
-  -> ingest
-  -> profile
-  -> deterministic detectors
+  -> schedule -> ingest -> profile -> deterministic detectors
   -> immutable Observation: Healthy / Warning / Critical
        |
        +-> review state: Acknowledged / Reviewed
@@ -22,122 +19,118 @@ SourceDefinition
               |
               +-> NotificationCandidate
                     |
-                    +-> evaluate source notification_transitions policy
-                           -> Eligible OR Suppressed
-                           -> snapshot policy + time + reason
+                    +-> source notification_transitions policy
+                         -> Eligible / Suppressed
+                         -> immutable policy snapshot
+                              |
+                              +-> EXPLICIT dry-run only
+                                   -> Prepared DeliveryAttempt
+                                   -> local DryRunDeliveryAdapter
+                                   -> Succeeded / Failed
        +-> guarded baseline review/promotion
-  -> FastAPI/API read surfaces
-  -> read-only Pages export
+  -> FastAPI/API inspection
+  -> read-only Pages summary
 ```
 
-There is no outbound delivery in v0.6.
+No monitoring check automatically creates a DeliveryAttempt. There is no outbound provider integration in v0.7.
 
-## Incident transitions
+## Delivery-attempt model
 
-Incident state is derived from observation history rather than maintained as an independent mutable truth.
+`DeliveryAttempt` is separate from `NotificationCandidate`. A candidate says whether an incident transition matched policy; an attempt records an explicit execution against an adapter.
 
-Transitions:
+Fields include:
 
-- `Opened`: current is Warning/Critical and previous is absent or Healthy
-- `Escalated`: previous Warning → current Critical
-- `Recovered`: previous Warning/Critical → current Healthy
-- all other adjacent pairs create no transition
+- candidate/source identifiers
+- adapter and mode
+- caller idempotency key
+- monotonic attempt number per candidate/adapter
+- state: `Prepared`, `Succeeded`, `Failed`
+- created/completed timestamps
+- result summary or error evidence
 
-Repeated unchanged-severity incident observations therefore create no candidate noise. The transition observation and its candidate are persisted in one SQLite transaction.
+The candidate remains `Eligible` after a successful or failed dry run. Delivery history must not rewrite the historical policy decision.
 
-## Delivery policy sandbox
+## Dry-run adapter boundary
 
-`MonitoringConfig.notification_transitions` is an opt-in list of `Opened`, `Escalated`, and/or `Recovered`.
+`DryRunDeliveryAdapter` is deterministic and contains no network client or provider SDK. It returns a local result only. Tests can inject a deterministic failure without external I/O.
 
-Safe default:
+This adapter proves execution semantics independently from a real transport.
 
-```json
-{
-  "notification_transitions": []
-}
-```
+## Idempotency and retry semantics
 
-A new transition candidate is immediately policy-evaluated:
+The caller supplies a stable idempotency key.
 
-- transition in enabled list → `Eligible`
-- transition not enabled / empty list → `Suppressed`
+- if the key already exists for the same candidate/adapter, the stored attempt is returned without rerunning the adapter;
+- if that key belongs to another candidate/adapter, the operation is rejected;
+- after `Succeeded`, another key is rejected for the same candidate/adapter;
+- after `Failed`, a new key may create the next attempt number;
+- after `Prepared`, another key is blocked.
 
-The candidate stores:
+SQLite enforces:
 
-- the transition
-- previous/current Health
-- state
-- evaluation timestamp
-- snapshot of enabled transitions
-- human-readable policy reason
+- unique idempotency key;
+- unique `(candidate_id, adapter, attempt_number)`.
 
-This makes the decision auditable and non-retroactive. Editing the source policy later does not rewrite existing candidates.
+The service also enforces the state-machine rules before insert.
 
-## Legacy Pending candidates
+## Prepared-before-execution persistence
 
-v0.5 candidates may exist with state `Pending`. They are not silently migrated at application startup. `evaluate_pending_notification_candidates` is an explicit operation that evaluates only Pending candidates against the current policy and persists the result.
+The system persists `Prepared` before adapter invocation, then records `Succeeded` or `Failed` afterward. These are intentionally separate transactions.
 
-Already Eligible/Suppressed candidates are skipped, making repeat evaluation idempotent.
+If the process dies between them, the database retains a `Prepared` attempt. v0.7 refuses a blind retry because a future real provider might have received a side effect even when local completion was not recorded. Reconciliation/lease/timeout semantics are therefore a future milestone rather than being guessed in v0.7.
 
-This legacy evaluation is intentionally separate from the monitoring transaction because historical policy did not exist when those candidates were created.
+## Candidate eligibility boundary
 
-## Delivery boundary
+Only `Eligible` notification candidates may be attempted. `Suppressed` and legacy `Pending` candidates are rejected. Candidate policy evaluation remains the v0.6 behavior and is not modified by attempt outcomes.
 
-Core v0.6 deliberately stops at policy eligibility. It has no:
+## Storage
 
-- email/Slack/Teams/webhook/SMS provider
-- send endpoint or UI control
-- destination configuration
-- delivery attempt table
-- retry/backoff worker
-- Delivered/Failed lifecycle
+`delivery_attempts` references both `notification_candidates` and `sources` with foreign keys and uses cascade deletion for test-state cleanup. Attempts are append-oriented audit records; only the JSON payload of an existing attempt is updated when its Prepared state completes.
 
-`Eligible` means only “this transition matched the source policy.” It does not mean a message was or can be sent.
+## CLI/API surfaces
 
-## Source contracts and secrets
+Local CLI:
 
-Interactive/API source creation and editing remain preflight-protected. `sync-sources` remains the code-reviewed hosted configuration path.
+- `delivery-attempts` — inspection
+- `dry-run-delivery` — explicit dry-run execution requiring an idempotency key
 
-`request_header_env` stores header → environment-variable-name references only; secret values are resolved at request time and never stored in source definitions, SQLite definition JSON, Git history, or Pages output.
+Local API:
 
-## Review and baseline semantics
+- `GET /api/delivery-attempts`
+- `POST /api/delivery-attempts/dry-run`
 
-Acknowledged/Reviewed is analyst workflow state only and does not resolve an incident or alter Health.
+There is no generic send route, automatic worker, destination configuration, or real adapter.
 
-Baseline promotion remains Healthy-only and guarded by the expected current baseline ID to prevent stale review from overwriting a newer approved baseline.
+## Pages/public output
 
-## Scheduling and detector behavior
+Pages remains read-only. It exposes only aggregate delivery-attempt counts and state counts. It does not export:
 
-`monitor_interval_minutes` controls check cadence; `expected_refresh_minutes` controls upstream freshness expectation. Detector algorithms and thresholds are unchanged in v0.6.
+- idempotency keys;
+- full delivery-attempt payloads;
+- any execution control;
+- request-header environment-variable names.
 
-## Pages and public state
+The approved `Notification candidates` label and prior no-delivery wording are preserved.
 
-Pages remains read-only. It can display:
+## Existing operational semantics
 
-- notification policy enabled transitions
-- incident summary
-- candidate totals
-- Pending / Eligible / Suppressed counts
-
-It exposes no delivery control. Existing redaction rules remain: displayed API locations omit query strings and Pages does not render request-header environment-variable names.
+Source preflight/editing, environment-backed headers, Acknowledged/Reviewed state, guarded Healthy-only baseline promotion, incident derivation, notification-transition policy, scheduling, and detector thresholds are unchanged in v0.7.
 
 ## Verification boundary
 
-The verified v0.6 functional head passed Ruff, compile, **58 deterministic tests**, and live-source smoke against the demo, Bank of Canada and U.S. Treasury sources.
+The verified v0.7 functional checkpoint passed Ruff, compile, **66 deterministic tests**, and live-source smoke against the demo, Bank of Canada and U.S. Treasury sources.
 
-CI caught one UI regression during development: the v0.5 metric label **“Notification candidates”** had been shortened. The change was reverted and the exact approved label restored before the functional head was accepted.
-
-No detector, scheduler, hosted source configuration, secret handling, review semantics, baseline semantics, Pages workflow, or shared CSS changed in v0.6.
+CI caught a UI-copy preservation regression during development. The prior v0.6 no-delivery sentence was restored exactly and v0.7 dry-run wording was added separately. No service/storage semantics were changed by that correction.
 
 ## Tradeoffs / current limitations
 
-- policy eligibility is not delivery
-- legacy Pending migration is explicit/manual
-- there is no production delivery attempt/retry/idempotency model yet
+- dry-run adapter only; no real provider exists
+- Prepared attempts require future explicit reconciliation semantics
+- production-grade concurrency claims/leases are not implemented
 - `monitor-state` is test-only branch-backed persistence
 - authentication/workspace ownership is not implemented
 - environment-backed headers are not a multi-user secret vault
 - GitHub scheduling is not real-time
 - Pages is read-only
-- incident derivation currently reads recent history into memory
-- more real transition history is required before any real provider integration
+- incident derivation reads recent history into memory
+- more real transition history is required before provider integration

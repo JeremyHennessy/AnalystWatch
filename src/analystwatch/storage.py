@@ -5,7 +5,13 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import NotificationCandidate, Observation, ObservationReview, SourceDefinition
+from .models import (
+    DeliveryAttempt,
+    NotificationCandidate,
+    Observation,
+    ObservationReview,
+    SourceDefinition,
+)
 
 
 class Storage:
@@ -61,6 +67,27 @@ class Storage:
 
                 CREATE INDEX IF NOT EXISTS idx_notification_candidates_source_time
                 ON notification_candidates(source_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS delivery_attempts (
+                    id TEXT PRIMARY KEY,
+                    candidate_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    adapter TEXT NOT NULL,
+                    attempt_number INTEGER NOT NULL,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    attempt_json TEXT NOT NULL,
+                    FOREIGN KEY(candidate_id)
+                        REFERENCES notification_candidates(id) ON DELETE CASCADE,
+                    FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE,
+                    UNIQUE(candidate_id, adapter, attempt_number)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_delivery_attempts_candidate_time
+                ON delivery_attempts(candidate_id, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_delivery_attempts_source_time
+                ON delivery_attempts(source_id, created_at DESC);
                 """
             )
 
@@ -232,6 +259,14 @@ class Storage:
             ).fetchone()
         return ObservationReview.model_validate_json(row[0]) if row else None
 
+    def get_notification_candidate(self, candidate_id: str) -> NotificationCandidate | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT candidate_json FROM notification_candidates WHERE id = ?",
+                (candidate_id,),
+            ).fetchone()
+        return NotificationCandidate.model_validate_json(row[0]) if row else None
+
     def list_notification_candidates(
         self,
         source_id: str | None = None,
@@ -262,6 +297,73 @@ class Storage:
             if cursor.rowcount != 1:
                 raise ValueError(f"Unknown notification candidate: {candidate.id}")
         return candidate
+
+    def create_delivery_attempt(self, attempt: DeliveryAttempt) -> DeliveryAttempt:
+        with self.connect() as db:
+            db.execute(
+                """
+                INSERT INTO delivery_attempts(
+                    id, candidate_id, source_id, adapter, attempt_number,
+                    idempotency_key, created_at, attempt_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt.id,
+                    attempt.candidate_id,
+                    attempt.source_id,
+                    attempt.adapter,
+                    attempt.attempt_number,
+                    attempt.idempotency_key,
+                    attempt.created_at.isoformat(),
+                    attempt.model_dump_json(),
+                ),
+            )
+        return attempt
+
+    def update_delivery_attempt(self, attempt: DeliveryAttempt) -> DeliveryAttempt:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE delivery_attempts SET attempt_json = ? WHERE id = ?",
+                (attempt.model_dump_json(), attempt.id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Unknown delivery attempt: {attempt.id}")
+        return attempt
+
+    def get_delivery_attempt_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> DeliveryAttempt | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT attempt_json FROM delivery_attempts WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        return DeliveryAttempt.model_validate_json(row[0]) if row else None
+
+    def list_delivery_attempts(
+        self,
+        *,
+        candidate_id: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[DeliveryAttempt]:
+        conditions: list[str] = []
+        params: list[object] = []
+        if candidate_id is not None:
+            conditions.append("candidate_id = ?")
+            params.append(candidate_id)
+        if source_id is not None:
+            conditions.append("source_id = ?")
+            params.append(source_id)
+        query = "SELECT attempt_json FROM delivery_attempts"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC, attempt_number DESC, rowid DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as db:
+            rows = db.execute(query, tuple(params)).fetchall()
+        return [DeliveryAttempt.model_validate_json(row[0]) for row in rows]
 
     def promote_baseline(self, source_id: str, observation_id: str) -> Observation:
         observation = self._observation_by_id(observation_id)
