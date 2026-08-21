@@ -46,7 +46,8 @@ class MonitorService:
     ) -> SourcePreflight:
         if self.storage.get_source(source.id) is not None:
             raise ValueError(
-                f"Source ID already exists: {source.id}. Editing existing sources is a separate workflow."
+                f"Source ID already exists: {source.id}. "
+                "Editing existing sources is a separate workflow."
             )
         preflight = self.preflight_source(source, client=client, now=now)
         if not preflight.ready:
