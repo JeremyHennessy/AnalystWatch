@@ -87,6 +87,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("source_id")
 
+    attempts = sub.add_parser(
+        "delivery-attempts",
+        help="List persisted delivery attempts; v0.7 supports dry-run attempts only",
+    )
+    attempts.add_argument("--candidate-id")
+    attempts.add_argument("--source-id")
+    attempts.add_argument("--limit", type=int, default=100)
+
+    dry_run = sub.add_parser(
+        "dry-run-delivery",
+        help="Execute a local dry-run attempt with no external delivery",
+    )
+    dry_run.add_argument("candidate_id")
+    dry_run.add_argument("--idempotency-key", required=True)
+
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
     baseline_review.add_argument("--observation-id")
@@ -205,6 +220,20 @@ def main(argv: list[str] | None = None) -> int:
         items = service.evaluate_pending_notification_candidates(args.source_id)
         print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
         return 0
+
+    if args.command == "delivery-attempts":
+        items = service.delivery_attempts(
+            candidate_id=args.candidate_id,
+            source_id=args.source_id,
+            limit=args.limit,
+        )
+        print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
+        return 0
+
+    if args.command == "dry-run-delivery":
+        attempt = service.dry_run_delivery(args.candidate_id, args.idempotency_key)
+        print(attempt.model_dump_json(indent=2))
+        return 0 if attempt.state.value == "Succeeded" else 2
 
     if args.command == "baseline-review":
         review = service.baseline_review(args.source_id, args.observation_id)
