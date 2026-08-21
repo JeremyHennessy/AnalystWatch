@@ -42,6 +42,16 @@ class NotificationCandidateState(str, Enum):
     SUPPRESSED = "Suppressed"
 
 
+class DeliveryAttemptState(str, Enum):
+    PREPARED = "Prepared"
+    SUCCEEDED = "Succeeded"
+    FAILED = "Failed"
+
+
+class DeliveryMode(str, Enum):
+    DRY_RUN = "dry-run"
+
+
 class MonitoringConfig(BaseModel):
     expected_refresh_minutes: int | None = Field(default=None, gt=0)
     monitor_interval_minutes: int = Field(default=60, gt=0)
@@ -209,3 +219,18 @@ class NotificationCandidate(BaseModel):
     evaluated_at: datetime | None = None
     policy_enabled_transitions: list[IncidentTransition] = Field(default_factory=list)
     policy_reason: str | None = None
+
+
+class DeliveryAttempt(BaseModel):
+    id: str
+    candidate_id: str
+    source_id: str
+    adapter: str = Field(min_length=1)
+    mode: DeliveryMode = DeliveryMode.DRY_RUN
+    idempotency_key: str = Field(min_length=1)
+    attempt_number: int = Field(ge=1)
+    state: DeliveryAttemptState
+    created_at: datetime
+    completed_at: datetime | None = None
+    result_summary: str | None = None
+    error: str | None = None
