@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from .models import (
     DeliveryAttempt,
@@ -14,7 +15,11 @@ from .models import (
     Observation,
     ObservationReview,
     SourceDefinition,
+    StorageSnapshotResult,
+    StorageVerification,
 )
+
+STORAGE_SCHEMA_VERSION = 1
 
 
 class Storage:
@@ -32,6 +37,11 @@ class Storage:
         with self.connect() as db:
             db.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS storage_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS sources (
                     id TEXT PRIMARY KEY,
                     definition_json TEXT NOT NULL,
@@ -93,6 +103,139 @@ class Storage:
                 ON delivery_attempts(source_id, created_at DESC);
                 """
             )
+            db.execute(
+                "INSERT OR IGNORE INTO storage_metadata(key, value) VALUES ('schema_version', ?)",
+                (str(STORAGE_SCHEMA_VERSION),),
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO storage_metadata(key, value) VALUES ('storage_id', ?)",
+                (str(uuid4()),),
+            )
+
+    @staticmethod
+    def _table_exists(db: sqlite3.Connection, table: str) -> bool:
+        row = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _table_count(db: sqlite3.Connection, table: str) -> int:
+        if not Storage._table_exists(db, table):
+            return 0
+        row = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+        return int(row[0]) if row else 0
+
+    @classmethod
+    def verify_database(cls, path: str | Path) -> StorageVerification:
+        database_path = Path(path)
+        if not database_path.exists():
+            raise FileNotFoundError(database_path)
+        uri = f"file:{database_path.resolve().as_posix()}?mode=ro"
+        try:
+            db = sqlite3.connect(uri, uri=True)
+            try:
+                integrity_rows = db.execute("PRAGMA integrity_check").fetchall()
+                messages = [str(row[0]) for row in integrity_rows]
+                integrity_ok = messages == ["ok"]
+                metadata: dict[str, str] = {}
+                if cls._table_exists(db, "storage_metadata"):
+                    metadata = {
+                        str(row[0]): str(row[1])
+                        for row in db.execute(
+                            "SELECT key, value FROM storage_metadata"
+                        ).fetchall()
+                    }
+                schema_value = metadata.get("schema_version")
+                schema_version = int(schema_value) if schema_value is not None else None
+                return StorageVerification(
+                    storage_id=metadata.get("storage_id"),
+                    schema_version=schema_version,
+                    integrity_ok=integrity_ok,
+                    integrity_message="; ".join(messages),
+                    source_count=cls._table_count(db, "sources"),
+                    observation_count=cls._table_count(db, "observations"),
+                    review_count=cls._table_count(db, "observation_reviews"),
+                    notification_candidate_count=cls._table_count(
+                        db, "notification_candidates"
+                    ),
+                    delivery_attempt_count=cls._table_count(db, "delivery_attempts"),
+                )
+            finally:
+                db.close()
+        except sqlite3.DatabaseError as exc:
+            return StorageVerification(
+                integrity_ok=False,
+                integrity_message=f"SQLite verification failed: {exc}",
+            )
+
+    def verify(self) -> StorageVerification:
+        return self.verify_database(self.path)
+
+    def backup_to(self, destination: str | Path) -> StorageSnapshotResult:
+        target = Path(destination)
+        if target.resolve() == self.path.resolve():
+            raise ValueError("Snapshot destination must differ from the active database")
+        if target.exists():
+            raise FileExistsError(target)
+        source_verification = self.verify()
+        if not source_verification.integrity_ok:
+            raise ValueError("Active database failed integrity verification")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self.connect() as source_db:
+                with sqlite3.connect(target) as target_db:
+                    source_db.backup(target_db)
+            verification = self.verify_database(target)
+            if not verification.integrity_ok:
+                raise ValueError("Snapshot failed integrity verification")
+            if verification != source_verification:
+                raise ValueError("Snapshot verification does not match the active database")
+            return StorageSnapshotResult(
+                snapshot_path=str(target),
+                verification=verification,
+            )
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+
+    @classmethod
+    def restore_snapshot(
+        cls,
+        snapshot: str | Path,
+        destination: str | Path,
+    ) -> StorageSnapshotResult:
+        source_path = Path(snapshot)
+        target = Path(destination)
+        if source_path.resolve() == target.resolve():
+            raise ValueError("Restore destination must differ from the snapshot")
+        if target.exists():
+            raise FileExistsError(target)
+        source_verification = cls.verify_database(source_path)
+        if not source_verification.integrity_ok:
+            raise ValueError("Snapshot failed integrity verification")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        uri = f"file:{source_path.resolve().as_posix()}?mode=ro"
+        try:
+            source_db = sqlite3.connect(uri, uri=True)
+            try:
+                with sqlite3.connect(target) as target_db:
+                    source_db.backup(target_db)
+            finally:
+                source_db.close()
+            verification = cls.verify_database(target)
+            if not verification.integrity_ok:
+                raise ValueError("Restored database failed integrity verification")
+            if verification != source_verification:
+                raise ValueError("Restored database does not match the verified snapshot")
+            return StorageSnapshotResult(
+                snapshot_path=str(target),
+                verification=verification,
+            )
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
 
     def upsert_source(self, source: SourceDefinition) -> None:
         payload = source.model_dump_json()
@@ -331,6 +474,7 @@ class Storage:
         *,
         created_at: datetime,
         retry_minutes: int,
+        claim_owner: str | None = None,
     ) -> tuple[DeliveryAttempt, bool]:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -394,6 +538,7 @@ class Storage:
                 attempt_number=attempt_number,
                 state=DeliveryAttemptState.PREPARED,
                 created_at=created_at,
+                claim_owner=claim_owner,
             )
             db.execute(
                 """
@@ -440,6 +585,7 @@ class Storage:
         *,
         reconciled_at: datetime,
         note: str,
+        reconciled_by: str | None = None,
     ) -> DeliveryAttempt:
         if outcome not in {DeliveryAttemptState.SUCCEEDED, DeliveryAttemptState.FAILED}:
             raise ValueError("Prepared attempts can reconcile only to Succeeded or Failed")
@@ -459,6 +605,7 @@ class Storage:
                     "state": outcome,
                     "completed_at": reconciled_at,
                     "reconciled_at": reconciled_at,
+                    "reconciled_by": reconciled_by,
                     "reconciliation_note": note,
                     "result_summary": (
                         "Prepared attempt reconciled as successful after explicit review."

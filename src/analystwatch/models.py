@@ -237,10 +237,12 @@ class DeliveryAttempt(BaseModel):
     attempt_number: int = Field(ge=1)
     state: DeliveryAttemptState
     created_at: datetime
+    claim_owner: str | None = None
     completed_at: datetime | None = None
     result_summary: str | None = None
     error: str | None = None
     reconciled_at: datetime | None = None
+    reconciled_by: str | None = None
     reconciliation_note: str | None = None
 
 
@@ -251,3 +253,20 @@ class DeliveryRetryDecision(BaseModel):
     last_attempt_id: str | None = None
     last_state: DeliveryAttemptState | None = None
     next_retry_at: datetime | None = None
+
+
+class StorageVerification(BaseModel):
+    storage_id: str | None = None
+    schema_version: int | None = None
+    integrity_ok: bool
+    integrity_message: str
+    source_count: int = 0
+    observation_count: int = 0
+    review_count: int = 0
+    notification_candidate_count: int = 0
+    delivery_attempt_count: int = 0
+
+
+class StorageSnapshotResult(BaseModel):
+    snapshot_path: str
+    verification: StorageVerification
