@@ -3,17 +3,25 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .models import SourceDefinition
+from .models import ObservationReviewState, SourceDefinition, SourceType
 from .service import MonitorService
 from .storage import Storage
 
 PACKAGE_DIR = Path(__file__).parent
+
+
+def _public_location(source: SourceDefinition) -> str:
+    if source.source_type != SourceType.API:
+        return source.location
+    parts = urlsplit(source.location)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
 def create_app(db_path: str | Path | None = None) -> FastAPI:
@@ -21,7 +29,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     storage = Storage(resolved_db)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.3.0")
+    app = FastAPI(title="AnalystWatch", version="0.4.0")
     app.state.storage = storage
     app.state.service = service
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -31,12 +39,16 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         latest = storage.get_latest(source.id)
         baseline = storage.get_baseline(source.id)
         last_successful = storage.get_last_successful(source.id)
+        latest_review = storage.get_review(latest.id) if latest else None
+        baseline_review = service.baseline_review(source.id) if latest and baseline else None
         return {
             "source": source,
-            "public_location": source.location,
+            "public_location": _public_location(source),
             "latest": latest,
             "baseline": baseline,
             "last_successful": last_successful,
+            "latest_review": latest_review,
+            "baseline_review": baseline_review,
             "health": latest.health.value if latest else "Not checked",
             "schedule": service.get_run_decision(source.id),
             "href": f"/sources/{source.id}",
@@ -98,6 +110,33 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return RedirectResponse(url=f"/sources/{source_id}", status_code=303)
 
+    @app.post("/sources/{source_id}/review")
+    def review_from_ui(source_id: str, state: ObservationReviewState):
+        latest = storage.get_latest(source_id)
+        if latest is None:
+            raise HTTPException(status_code=409, detail="No observation available to review")
+        try:
+            service.review_observation(source_id, latest.id, state)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/sources/{source_id}", status_code=303)
+
+    @app.post("/sources/{source_id}/baseline")
+    def baseline_from_ui(
+        source_id: str,
+        candidate_id: str,
+        expected_current_baseline_id: str,
+    ):
+        try:
+            service.promote_baseline_after_review(
+                source_id,
+                candidate_id,
+                expected_current_baseline_id,
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/sources/{source_id}", status_code=303)
+
     @app.post("/api/preflight")
     def api_preflight(source: SourceDefinition):
         return service.preflight_source(source)
@@ -113,6 +152,15 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def create_source(source: SourceDefinition):
         return service.add_source(source)
 
+    @app.put("/api/sources/{source_id}")
+    def update_source(source_id: str, replacement: SourceDefinition):
+        try:
+            return service.update_source(source_id, replacement)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/sources")
     def api_sources() -> list[dict[str, object]]:
         return [source_view(source) for source in storage.list_sources()]
@@ -126,6 +174,24 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             **source_view(source),
             "history": storage.list_observations(source_id, limit=20),
         }
+
+    @app.get("/api/sources/{source_id}/baseline-review")
+    def api_baseline_review(source_id: str, observation_id: str | None = None):
+        try:
+            return service.baseline_review(source_id, observation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/sources/{source_id}/observations/{observation_id}/review")
+    def api_review_observation(
+        source_id: str,
+        observation_id: str,
+        state: ObservationReviewState,
+    ):
+        try:
+            return service.review_observation(source_id, observation_id, state)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/schedule")
     def api_schedule():
@@ -145,14 +211,19 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/sources/{source_id}/baseline")
-    def api_promote_baseline(source_id: str, observation_id: str | None = None):
-        target = observation_id or (
-            storage.get_latest(source_id).id if storage.get_latest(source_id) else None
-        )
-        if target is None:
-            raise HTTPException(status_code=409, detail="No observation available")
+    def api_promote_baseline(
+        source_id: str,
+        observation_id: str,
+        expected_current_baseline_id: str,
+    ):
         try:
-            return storage.promote_baseline(source_id, target)
+            return service.promote_baseline_after_review(
+                source_id,
+                observation_id,
+                expected_current_baseline_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
