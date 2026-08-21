@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import httpx
@@ -17,7 +17,8 @@ from .models import (
     BaselineReview,
     DeliveryAttempt,
     DeliveryAttemptState,
-    DeliveryMode,
+    DeliveryReconciliationOutcome,
+    DeliveryRetryDecision,
     Finding,
     HealthStatus,
     IncidentSnapshot,
@@ -178,6 +179,108 @@ class MonitorService:
             limit=limit,
         )
 
+    def delivery_retry_decision(
+        self,
+        candidate_id: str,
+        *,
+        now: datetime | None = None,
+        adapter_name: str = "dry-run",
+    ) -> DeliveryRetryDecision:
+        candidate = self.storage.get_notification_candidate(candidate_id)
+        if candidate is None:
+            raise KeyError(f"Unknown notification candidate: {candidate_id}")
+        source = self.storage.get_source(candidate.source_id)
+        if source is None:
+            raise KeyError(f"Unknown source: {candidate.source_id}")
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        if candidate.state != NotificationCandidateState.ELIGIBLE:
+            return DeliveryRetryDecision(
+                candidate_id=candidate.id,
+                due=False,
+                reason="Only Eligible notification candidates can be attempted.",
+            )
+
+        attempts = [
+            item
+            for item in self.storage.list_delivery_attempts(candidate_id=candidate.id, limit=1000)
+            if item.adapter == adapter_name
+        ]
+        latest = max(attempts, key=lambda item: item.attempt_number, default=None)
+        if latest is None:
+            return DeliveryRetryDecision(
+                candidate_id=candidate.id,
+                due=True,
+                reason="No delivery attempt has been claimed for this candidate.",
+            )
+        if latest.state == DeliveryAttemptState.SUCCEEDED:
+            return DeliveryRetryDecision(
+                candidate_id=candidate.id,
+                due=False,
+                reason="A successful delivery attempt already exists.",
+                last_attempt_id=latest.id,
+                last_state=latest.state,
+            )
+        if latest.state == DeliveryAttemptState.PREPARED:
+            return DeliveryRetryDecision(
+                candidate_id=candidate.id,
+                due=False,
+                reason="Prepared attempt requires explicit reconciliation before retry.",
+                last_attempt_id=latest.id,
+                last_state=latest.state,
+            )
+        if latest.completed_at is None:
+            return DeliveryRetryDecision(
+                candidate_id=candidate.id,
+                due=False,
+                reason="Failed attempt is missing its completion timestamp.",
+                last_attempt_id=latest.id,
+                last_state=latest.state,
+            )
+
+        next_retry_at = latest.completed_at + timedelta(
+            minutes=source.config.delivery_retry_minutes
+        )
+        due = current >= next_retry_at
+        return DeliveryRetryDecision(
+            candidate_id=candidate.id,
+            due=due,
+            reason=(
+                "Failed attempt is eligible for retry."
+                if due
+                else "Failed attempt is inside the configured retry delay."
+            ),
+            last_attempt_id=latest.id,
+            last_state=latest.state,
+            next_retry_at=next_retry_at,
+        )
+
+    def reconcile_delivery_attempt(
+        self,
+        attempt_id: str,
+        outcome: DeliveryReconciliationOutcome,
+        note: str,
+        *,
+        now: datetime | None = None,
+    ) -> DeliveryAttempt:
+        if not note or note != note.strip():
+            raise ValueError("Reconciliation note must be non-empty and trimmed")
+        reconciled_at = now or datetime.now(timezone.utc)
+        if reconciled_at.tzinfo is None:
+            reconciled_at = reconciled_at.replace(tzinfo=timezone.utc)
+        state = (
+            DeliveryAttemptState.SUCCEEDED
+            if outcome == DeliveryReconciliationOutcome.SUCCEEDED
+            else DeliveryAttemptState.FAILED
+        )
+        return self.storage.reconcile_prepared_delivery_attempt(
+            attempt_id,
+            state,
+            reconciled_at=reconciled_at,
+            note=note,
+        )
+
     def dry_run_delivery(
         self,
         candidate_id: str,
@@ -186,50 +289,28 @@ class MonitorService:
         now: datetime | None = None,
         adapter: DryRunDeliveryAdapter | None = None,
     ) -> DeliveryAttempt:
+        if not idempotency_key or idempotency_key != idempotency_key.strip():
+            raise ValueError("idempotency_key must be non-empty and trimmed")
         candidate = self.storage.get_notification_candidate(candidate_id)
         if candidate is None:
             raise KeyError(f"Unknown notification candidate: {candidate_id}")
-        if candidate.state != NotificationCandidateState.ELIGIBLE:
-            raise ValueError("Only Eligible notification candidates can be dry-run attempted")
-        if not idempotency_key or idempotency_key != idempotency_key.strip():
-            raise ValueError("idempotency_key must be non-empty and trimmed")
-
-        delivery_adapter = adapter or DryRunDeliveryAdapter()
-        existing = self.storage.get_delivery_attempt_by_idempotency_key(idempotency_key)
-        if existing is not None:
-            if existing.candidate_id != candidate_id or existing.adapter != delivery_adapter.name:
-                raise ValueError("Idempotency key belongs to a different delivery attempt")
-            return existing
-
-        attempts = [
-            item
-            for item in self.storage.list_delivery_attempts(candidate_id=candidate_id, limit=1000)
-            if item.adapter == delivery_adapter.name
-        ]
-        if any(item.state == DeliveryAttemptState.SUCCEEDED for item in attempts):
-            raise ValueError("Candidate already has a successful dry-run delivery attempt")
-        latest = max(attempts, key=lambda item: item.attempt_number, default=None)
-        if latest is not None and latest.state == DeliveryAttemptState.PREPARED:
-            raise ValueError("Candidate already has a Prepared dry-run delivery attempt")
-        if latest is not None and latest.state != DeliveryAttemptState.FAILED:
-            raise ValueError("A new dry-run attempt requires the previous attempt to have Failed")
+        source = self.storage.get_source(candidate.source_id)
+        if source is None:
+            raise KeyError(f"Unknown source: {candidate.source_id}")
 
         created_at = now or datetime.now(timezone.utc)
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
-        attempt_number = 1 if latest is None else latest.attempt_number + 1
-        prepared = DeliveryAttempt(
-            id=f"{candidate.id}:{delivery_adapter.name}:{attempt_number}",
-            candidate_id=candidate.id,
-            source_id=candidate.source_id,
-            adapter=delivery_adapter.name,
-            mode=DeliveryMode.DRY_RUN,
-            idempotency_key=idempotency_key,
-            attempt_number=attempt_number,
-            state=DeliveryAttemptState.PREPARED,
+        delivery_adapter = adapter or DryRunDeliveryAdapter()
+        prepared, replayed = self.storage.claim_delivery_attempt(
+            candidate_id,
+            idempotency_key,
+            delivery_adapter.name,
             created_at=created_at,
+            retry_minutes=source.config.delivery_retry_minutes,
         )
-        self.storage.create_delivery_attempt(prepared)
+        if replayed:
+            return prepared
 
         try:
             result = delivery_adapter.deliver(candidate)
