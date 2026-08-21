@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import Observation, SourceDefinition
+from .models import Observation, ObservationReview, SourceDefinition
 
 
 class Storage:
@@ -40,6 +40,14 @@ class Storage:
 
                 CREATE INDEX IF NOT EXISTS idx_observations_source_time
                 ON observations(source_id, observed_at DESC);
+
+                CREATE TABLE IF NOT EXISTS observation_reviews (
+                    observation_id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL,
+                    review_json TEXT NOT NULL,
+                    FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE CASCADE,
+                    FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE
+                );
                 """
             )
 
@@ -96,6 +104,9 @@ class Storage:
                 "SELECT observation_json FROM observations WHERE id = ?", (observation_id,)
             ).fetchone()
         return Observation.model_validate_json(row[0]) if row else None
+
+    def get_observation(self, observation_id: str) -> Observation | None:
+        return self._observation_by_id(observation_id)
 
     def get_baseline(self, source_id: str) -> Observation | None:
         with self.connect() as db:
@@ -164,6 +175,28 @@ class Storage:
                 for item in observations
             ]
         return observations
+
+    def save_review(self, review: ObservationReview) -> ObservationReview:
+        with self.connect() as db:
+            db.execute(
+                """
+                INSERT INTO observation_reviews(observation_id, source_id, review_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(observation_id) DO UPDATE SET
+                    source_id=excluded.source_id,
+                    review_json=excluded.review_json
+                """,
+                (review.observation_id, review.source_id, review.model_dump_json()),
+            )
+        return review
+
+    def get_review(self, observation_id: str) -> ObservationReview | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT review_json FROM observation_reviews WHERE observation_id = ?",
+                (observation_id,),
+            ).fetchone()
+        return ObservationReview.model_validate_json(row[0]) if row else None
 
     def promote_baseline(self, source_id: str, observation_id: str) -> Observation:
         observation = self._observation_by_id(observation_id)
