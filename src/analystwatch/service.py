@@ -7,7 +7,16 @@ import httpx
 
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
 from .ingest import ingest_source
-from .models import Finding, HealthStatus, Observation, RunDecision, SourceDefinition
+from .models import (
+    BaselineReview,
+    Finding,
+    HealthStatus,
+    Observation,
+    ObservationReview,
+    ObservationReviewState,
+    RunDecision,
+    SourceDefinition,
+)
 from .preflight import SourcePreflight, preflight_source
 from .profile import profile_dataframe
 from .scheduler import run_decision
@@ -54,6 +63,97 @@ class MonitorService:
             return preflight
         self.add_source(source)
         return preflight.model_copy(update={"accepted": True})
+
+    def update_source(
+        self,
+        source_id: str,
+        replacement: SourceDefinition,
+        *,
+        client: httpx.Client | None = None,
+        now: datetime | None = None,
+    ) -> SourcePreflight:
+        existing = self.storage.get_source(source_id)
+        if existing is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        if replacement.id != source_id:
+            raise ValueError("Source ID cannot change during an update")
+        preflight = self.preflight_source(replacement, client=client, now=now)
+        if not preflight.ready:
+            return preflight
+        self.add_source(replacement)
+        return preflight.model_copy(update={"accepted": True})
+
+    def review_observation(
+        self,
+        source_id: str,
+        observation_id: str,
+        state: ObservationReviewState,
+        *,
+        now: datetime | None = None,
+    ) -> ObservationReview:
+        observation = self.storage.get_observation(observation_id)
+        if observation is None or observation.source_id != source_id:
+            raise ValueError("Observation does not belong to this source")
+        if observation.health == HealthStatus.HEALTHY:
+            raise ValueError("Healthy observations do not require an alert review state")
+        reviewed_at = now or datetime.now(timezone.utc)
+        if reviewed_at.tzinfo is None:
+            reviewed_at = reviewed_at.replace(tzinfo=timezone.utc)
+        return self.storage.save_review(
+            ObservationReview(
+                observation_id=observation.id,
+                source_id=source_id,
+                state=state,
+                updated_at=reviewed_at,
+            )
+        )
+
+    def baseline_review(
+        self,
+        source_id: str,
+        observation_id: str | None = None,
+    ) -> BaselineReview:
+        source = self.storage.get_source(source_id)
+        if source is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        current = self.storage.get_baseline(source_id)
+        candidate = (
+            self.storage.get_observation(observation_id)
+            if observation_id
+            else self.storage.get_latest(source_id)
+        )
+        blockers: list[str] = []
+        if current is None:
+            blockers.append("No current baseline is established.")
+        if candidate is None or candidate.source_id != source_id:
+            blockers.append("No candidate observation is available for this source.")
+        elif not candidate.available or candidate.profile is None:
+            blockers.append("The candidate observation is unavailable or has no profile.")
+        elif candidate.health != HealthStatus.HEALTHY:
+            blockers.append("Only a Healthy observation can be promoted after baseline review.")
+        elif current and candidate.id == current.id:
+            blockers.append("The candidate is already the current baseline.")
+        return BaselineReview(
+            source_id=source_id,
+            current_baseline=current,
+            candidate=candidate,
+            ready=not blockers,
+            blockers=blockers,
+        )
+
+    def promote_baseline_after_review(
+        self,
+        source_id: str,
+        observation_id: str,
+        expected_current_baseline_id: str,
+    ) -> Observation:
+        current = self.storage.get_baseline(source_id)
+        if current is None or current.id != expected_current_baseline_id:
+            raise ValueError("Baseline changed since review; refresh the candidate before promoting.")
+        review = self.baseline_review(source_id, observation_id)
+        if not review.ready:
+            raise ValueError("; ".join(review.blockers))
+        return self.storage.promote_baseline(source_id, observation_id)
 
     def get_run_decision(
         self,

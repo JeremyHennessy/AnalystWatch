@@ -37,6 +37,9 @@
         <label class="span-two"><span>Numeric fields</span><input id="numeric-fields" placeholder="amount, total_value"></label>
         <label class="span-two"><span>Unique keys</span><input id="unique-keys" placeholder="id, record_id"></label>
 
+        <div class="form-section span-two"><strong>API secrets</strong><span>Enter header → environment-variable references only. Secret values are never stored in the source definition.</span></div>
+        <label class="span-two"><span>Request header environment refs</span><input id="request-header-env" placeholder="Authorization=ANALYSTWATCH_API_TOKEN, X-Api-Key=VENDOR_API_KEY"></label>
+
         <div class="form-actions span-two">
           <button id="preflight-button" type="submit">Run preflight</button>
           <button id="accept-button" class="secondary" type="button" disabled>Add monitored source</button>
@@ -61,6 +64,19 @@ let lastPreflight = null;
 function value(id) { return document.getElementById(id).value.trim(); }
 function list(id) { return value(id).split(',').map(v => v.trim()).filter(Boolean); }
 function optionalNumber(id) { const raw = value(id); return raw ? Number(raw) : null; }
+function mapping(id) {
+  const result = {};
+  for (const item of list(id)) {
+    const index = item.indexOf('=');
+    if (index <= 0 || index === item.length - 1) {
+      throw new Error('Header references must use Header-Name=ENV_VAR syntax.');
+    }
+    const header = item.slice(0, index).trim();
+    const envName = item.slice(index + 1).trim();
+    result[header] = envName;
+  }
+  return result;
+}
 
 function sourcePayload() {
   return {
@@ -77,7 +93,8 @@ function sourcePayload() {
       sheet_name: value('sheet-name') || null,
       json_record_path: value('json-path') || null,
       numeric_fields: list('numeric-fields'),
-      unique_keys: list('unique-keys')
+      unique_keys: list('unique-keys'),
+      request_header_env: mapping('request-header-env')
     }
   };
 }

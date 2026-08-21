@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -56,6 +57,18 @@ def _json_to_frame(payload: Any, record_path: str | None = None) -> pd.DataFrame
     )
 
 
+def _request_headers(source: SourceDefinition) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for header, env_name in source.config.request_header_env.items():
+        value = os.environ.get(env_name)
+        if value is None:
+            raise ValueError(
+                f"Missing environment variable '{env_name}' for request header '{header}'."
+            )
+        headers[header] = value
+    return headers
+
+
 def ingest_source(
     source: SourceDefinition,
     *,
@@ -100,7 +113,7 @@ def _ingest_api(
     active_client = client or httpx.Client(timeout=source.config.request_timeout_seconds)
     start = time.perf_counter()
     try:
-        response = active_client.get(source.location)
+        response = active_client.get(source.location, headers=_request_headers(source))
         elapsed_ms = (time.perf_counter() - start) * 1000
         if response.status_code < 200 or response.status_code >= 300:
             return IngestionResult(

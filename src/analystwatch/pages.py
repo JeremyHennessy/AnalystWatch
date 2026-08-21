@@ -33,6 +33,7 @@ def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -
         "latest": latest,
         "baseline": baseline,
         "last_successful": last_successful,
+        "latest_review": storage.get_review(latest.id) if latest else None,
         "health": latest.health.value if latest else "Not checked",
         "schedule": decision,
     }
@@ -43,6 +44,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
     for source in storage.list_sources():
         latest = storage.get_latest(source.id)
         baseline = storage.get_baseline(source.id)
+        review = storage.get_review(latest.id) if latest else None
         sources.append(
             {
                 "id": source.id,
@@ -52,6 +54,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
                 "enabled": source.enabled,
                 "monitor_interval_minutes": source.config.monitor_interval_minutes,
                 "health": latest.health.value if latest else "Not checked",
+                "review_state": review.state.value if review else None,
                 "latest": json.loads(latest.model_dump_json()) if latest else None,
                 "baseline_id": baseline.id if baseline else None,
             }
