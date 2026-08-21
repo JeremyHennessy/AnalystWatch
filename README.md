@@ -4,29 +4,28 @@
 
 AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs that analysts depend on: stale data, schema changes, row loss, null explosions, scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
 
-## Core v0.6 status
+## Core v0.7 status
 
-Core v0.6 is a test-ready Python modular monolith with scheduled monitoring, GitHub Pages test hosting, real-source validation, source-contract preflight, operational review, deterministic incident transitions, and a delivery-policy sandbox.
+Core v0.7 is a test-ready Python modular monolith with scheduled monitoring, source-contract preflight, real-source validation, operational review, incident transitions, notification-policy evaluation, and an explicit dry-run delivery-attempt lifecycle.
 
 It supports:
 
 - CSV, XLSX, JSON and HTTP GET JSON sources
 - deterministic availability, freshness, schema, row-count, null-rate, numeric, categorical and configured-key uniqueness checks
-- explicit `numeric_fields` for APIs that publish numbers as strings
-- explicit baseline plus recent Healthy-history comparison context
-- independent monitoring cadence and upstream freshness expectations
+- explicit baselines plus recent Healthy-history comparison context
 - preflight-protected interactive/API source creation and editing
 - environment-backed API headers without persisting secret values
-- Acknowledged / Reviewed analyst state for unhealthy observations
+- Acknowledged / Reviewed analyst state separate from technical Health
 - guarded Healthy-only baseline promotion
 - derived incident lifecycle: Opened, Escalated, Recovered
-- persisted transition notification candidates with duplicate-noise suppression
-- opt-in per-source `notification_transitions` policy
-- auditable candidate states: Pending, Eligible, Suppressed
-- local FastAPI dashboard/API and read-only GitHub Pages views
+- auditable notification candidates: Pending, Eligible, Suppressed
+- per-source opt-in `notification_transitions` policy
+- explicit dry-run delivery attempts: Prepared, Succeeded, Failed
+- idempotent attempt replay and controlled retry after failure
+- local CLI/API inspection and read-only GitHub Pages summaries
 - scheduled GitHub Actions monitoring and live-source smoke validation
 
-**Core v0.6 still does not send notifications.** There is no email, Slack, Teams, webhook, SMS, provider adapter, destination configuration, or retry worker.
+**Core v0.7 still has no real notification delivery.** There is no email, Slack, Teams, webhook, SMS, provider SDK, destination configuration, background delivery worker, or generic send control. The only attempt adapter is `dry-run`, and it performs no external I/O or network request.
 
 ## Setup
 
@@ -40,15 +39,11 @@ python -m pip install -e ".[dev]"
 
 ## Hosted test sources
 
-`config/sources.json` is the code-reviewed source list used by GitHub Actions. It currently includes:
+`config/sources.json` is the code-reviewed source list used by GitHub Actions. It currently includes `demo-market`, Bank of Canada USD/CAD, and U.S. Treasury Debt to the Penny. Keep repository configuration free of secret values and secret query parameters.
 
-- `demo-market`
-- `bank-of-canada-usd-cad`
-- `us-treasury-debt`
+The hosted sources currently opt into no notification transitions, so candidates remain suppressed by default and no dry-run attempt is created automatically.
 
-Keep this file free of secret values and secret query parameters. The live-source smoke gate repeatedly validates the public API integrations from GitHub Actions.
-
-## Source preflight and editing
+## Source preflight, editing and credentials
 
 Run the local app:
 
@@ -56,46 +51,21 @@ Run the local app:
 analystwatch serve --host 127.0.0.1 --port 8000
 ```
 
-The **Add source** flow performs non-persistent preflight before acceptance. Preflight can validate availability, non-empty data, numeric fields, unique keys and freshness evidence. Accepted sources do not get a baseline until their first real monitoring check.
+Interactive/API creation and edits perform fresh server-side preflight before persistence. A failed edit leaves the prior definition, observations and baseline unchanged. Accepted new sources establish their baseline only on the first real monitoring check.
 
-Existing interactive/API source edits use the same server-side preflight. A failed edit leaves the prior definition, observations and baseline unchanged. `sync-sources` remains the explicit repository-reviewed path for hosted source configuration.
+API header values are resolved from environment variables at request time. `request_header_env` stores only header-to-environment-variable references; secret values are not written into source definitions, SQLite source JSON, Git history, or Pages output.
 
-## Environment-backed API headers
+## Incidents and notification policy
 
-Secret values are resolved from environment variables at request time and are never stored in `SourceDefinition`, SQLite source JSON, Git history, or Pages output.
-
-```json
-{
-  "request_header_env": {
-    "Authorization": "ANALYSTWATCH_API_TOKEN"
-  }
-}
-```
-
-Missing required environment variables become explicit source-availability evidence rather than crashes. The repository and `monitor-state` branch are currently public, so secret **values must never be committed or persisted there**.
-
-## Incident lifecycle
-
-Incident state is derived from immutable observation history.
+Incident state is derived from immutable observation history:
 
 - **Opened** — Healthy/no prior observation → Warning or Critical
 - **Escalated** — Warning → Critical in an open incident
 - **Recovered** — Warning/Critical → Healthy
 
-Repeated Warning or repeated Critical observations at unchanged severity do not create another transition candidate.
+Repeated same-severity incident observations do not create duplicate transition candidates.
 
-```bash
-analystwatch incident market_data
-analystwatch notification-candidates --source-id market_data
-```
-
-Observation review state is independent: Acknowledged / Reviewed records analyst attention only and never changes Health or resolves an incident.
-
-## Delivery policy sandbox
-
-Each meaningful transition still creates an auditable notification candidate, but v0.6 evaluates whether that candidate would be eligible for a future delivery system.
-
-A source opts in by listing transitions:
+A source can opt specific transitions into notification eligibility:
 
 ```json
 {
@@ -103,42 +73,58 @@ A source opts in by listing transitions:
 }
 ```
 
-The safe default is an empty list. With no enabled transitions, new candidates are **Suppressed**.
-
-Candidate states:
+The safe default is an empty list. Candidate states are:
 
 - **Eligible** — transition matched the source policy
-- **Suppressed** — transition did not match the policy or no transitions were enabled
-- **Pending** — legacy v0.5 candidate not yet explicitly policy-evaluated
+- **Suppressed** — transition did not match, or no transitions were enabled
+- **Pending** — legacy candidate not yet explicitly policy-evaluated
 
-Each evaluated candidate snapshots the enabled-transition policy, evaluation time and decision reason. Later source-policy edits do **not** rewrite historical decisions. Legacy Pending candidates can be evaluated once:
+Policy evaluation snapshots the enabled transitions, evaluation time and reason; later source edits do not rewrite historical decisions.
 
 ```bash
+analystwatch incident market_data
+analystwatch notification-candidates --source-id market_data
 analystwatch evaluate-notification-candidates market_data
 ```
 
-Repeat evaluation is idempotent because already evaluated candidates are skipped.
+## Dry-run delivery attempts
 
-**Eligible does not mean delivered.** Core v0.6 has no send path.
-
-## Baseline review
-
-Baseline promotion remains a guarded operation:
+An **Eligible** candidate can be explicitly exercised through the local dry-run adapter:
 
 ```bash
-analystwatch baseline-review market_data
-analystwatch promote-baseline market_data \
-  --observation-id <healthy-observation-id> \
-  --expected-baseline-id <current-baseline-id>
+analystwatch dry-run-delivery <candidate-id> \
+  --idempotency-key <caller-stable-key>
+
+analystwatch delivery-attempts --candidate-id <candidate-id>
 ```
 
-Only a Healthy available candidate with a profile can be promoted, and the expected baseline guard prevents stale review from overwriting a newer baseline.
+Attempt states are:
+
+- **Prepared** — attempt persisted before adapter execution
+- **Succeeded** — dry-run adapter completed successfully
+- **Failed** — dry-run adapter reported or raised a failure
+
+Semantics:
+
+- attempts are never created automatically by monitoring;
+- only Eligible candidates can be attempted;
+- the same idempotency key returns the same persisted attempt without rerunning the adapter;
+- a successful dry-run blocks another attempt for the same candidate/adapter;
+- a failed attempt can be retried with a new idempotency key and incremented attempt number;
+- a persisted Prepared attempt blocks a blind retry because the system refuses to guess whether a side effect occurred;
+- notification-candidate policy state is not rewritten by attempt outcomes.
+
+The `dry-run` adapter performs **no network or external I/O**. API equivalents are `GET /api/delivery-attempts` and `POST /api/delivery-attempts/dry-run`. There is no generic `/send` endpoint.
+
+## Baseline and review semantics
+
+Acknowledged/Reviewed records analyst attention only; it never changes Health or resolves an incident. Baseline promotion remains Healthy-only and requires the expected current baseline ID so stale review cannot overwrite a newer approved baseline.
 
 ## GitHub Pages test deployment
 
-Pages is read-only. GitHub Actions runs monitoring, persists the small test database on `monitor-state`, renders `site/`, and deploys the generated static artifact.
+Pages remains read-only. It can display monitoring contracts, review state, incident summaries, notification policy/candidate counts, and dry-run attempt counts by state. It does not expose idempotency keys, attempt payloads, request-header environment-variable names, or delivery controls.
 
-Pages can expose source contracts, review state, incident summaries, notification policy and Eligible/Suppressed/Pending counts. It exposes no delivery controls, strips API query strings from displayed locations, and does not render request-header environment-variable names.
+The temporary `monitor-state` branch remains test-only persistence and must contain only non-secret state.
 
 ## Verification
 
@@ -150,12 +136,13 @@ python -m compileall -q src tests scripts
 pytest -q
 ```
 
-The verified v0.6 functional head passed Ruff, compile, **58 tests**, and live-source smoke. During verification CI also caught and forced restoration of the approved **“Notification candidates”** UI label before the milestone closeout.
+The verified v0.7 functional checkpoint passed Ruff, compile, **66 tests**, and live-source smoke. During development CI also caught preservation of the approved no-delivery UI copy; the prior text was restored and the v0.7 dry-run clarification was added separately.
 
 ## Current limitations
 
-- no outbound notification delivery
-- no production delivery retry/idempotency lifecycle yet
+- dry-run only; no outbound provider exists
+- a crash can leave a Prepared attempt that requires future explicit reconciliation rather than automatic retry
+- SQLite idempotency constraints are present, but concurrent production-grade claim/lease semantics are not yet implemented
 - GitHub Pages is read-only and intended for testing
 - `monitor-state` branch persistence is not a production database design
 - authentication/workspace ownership is not implemented
@@ -163,6 +150,6 @@ The verified v0.6 functional head passed Ruff, compile, **58 tests**, and live-s
 - GitHub cron execution can be delayed
 - schema rename inference is not implemented
 - historical detector context remains deterministic rolling Healthy medians, not forecasting/ML
-- more real-source transition history is required before enabling a real delivery adapter
+- more real transition history is required before any real provider integration
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).

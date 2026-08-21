@@ -22,54 +22,54 @@ Added environment-backed request headers, preflight-protected edits, Acknowledge
 
 ## Core v0.5 — Incident transitions & notification readiness — complete
 
-Added derived incident lifecycle and atomic transition candidates:
+Added derived Opened/Escalated/Recovered incident lifecycle, duplicate-noise suppression, and transition candidates persisted atomically with observations. Clean gate: 50 tests; live-source smoke green. No outbound delivery.
 
-- Opened
-- Escalated
-- Recovered
-- repeated same-severity incident checks suppressed as duplicate noise
-- candidate persisted atomically with transition observation
-- no outbound delivery
+## Core v0.6 — Delivery policy sandbox — complete
 
-Clean gate: 50 tests; live-source smoke green.
+Added per-source opt-in transition policy, safe-default suppression, Eligible/Suppressed evaluation with immutable policy snapshots, and explicit idempotent evaluation of legacy Pending candidates. Clean gate: 58 tests; live-source smoke green. No outbound delivery.
 
-## Core v0.6 — Delivery policy sandbox — current
+## Core v0.7 — Dry-run delivery attempts — current
 
-Goal: determine whether a transition *would* be deliverable, without connecting any provider.
+Goal: prove execution, idempotency and retry persistence semantics without connecting a real provider.
 
-Implemented and verified on the functional candidate:
+Implemented and verified on the functional checkpoint:
 
-- per-source `notification_transitions` policy
-- safe default is no enabled transitions
-- new candidates immediately evaluate to `Eligible` or `Suppressed`
-- candidate snapshots enabled transitions, evaluation time and decision reason
-- later policy edits do not rewrite historical candidate decisions
-- legacy v0.5 `Pending` candidates are explicitly evaluated, not silently migrated
-- repeat legacy evaluation is idempotent
-- CLI/API expose policy evaluation and candidate state only
-- Pages exposes policy and Pending / Eligible / Suppressed counts
-- still no email, Slack, Teams, webhook, SMS, destination, retry worker or send control
-- approved **“Notification candidates”** UI label restored after CI caught a regression
-- clean functional gate reached **58 passing tests**
+- separate `DeliveryAttempt` model; candidate policy state remains unchanged
+- states: `Prepared`, `Succeeded`, `Failed`
+- `dry-run` is the only delivery mode/adapter
+- adapter performs no network or external I/O
+- attempts are explicit only; monitoring never creates them automatically
+- only Eligible notification candidates can be attempted
+- caller-supplied idempotency key
+- same key replays the stored attempt without rerunning the adapter
+- idempotency-key reuse across a different candidate/adapter is rejected
+- successful attempt blocks another attempt for the same candidate/adapter
+- failed attempt may be retried with a new key and incremented attempt number
+- persisted Prepared attempt blocks blind retry
+- SQLite uniqueness on idempotency key and candidate/adapter/attempt number
+- CLI/API can inspect attempts and execute only the explicitly named dry-run path
+- Pages exposes aggregate attempt counts/state counts only and does not expose idempotency keys
+- approved `Notification candidates` label and v0.6 no-delivery copy preserved
+- clean functional checkpoint reached **66 passing tests**
 - live-source smoke remained green
 
-No detector, scheduler, hosted source configuration, secret handling, review semantics, baseline semantics, Pages workflow or shared CSS changed.
+No detector, scheduler, hosted source configuration, notification-policy semantics, secret handling, review semantics, baseline semantics, Pages workflow or shared CSS changed.
 
-## Candidate v0.7 — delivery-attempt model & persistence readiness
+## Candidate v0.8 — attempt reconciliation & persistence hardening
 
-Before real provider integration:
+Before any real provider integration:
 
-- add explicit delivery-attempt lifecycle independent from monitoring transactions
-- define idempotency key and retry/backoff semantics
-- add dry-run/sandbox destination abstraction with no external network side effect by default
-- preserve immutable candidate policy decisions
+- define explicit reconciliation for abandoned `Prepared` attempts
+- define claim/lease/concurrency semantics for multiple workers
+- define retry timing/backoff separately from monitoring cadence
+- make idempotency behavior robust under concurrent requests, not only sequential service calls
 - replace branch-backed SQLite test persistence with deployment-appropriate storage
 - define authentication/workspace ownership before remote delivery actions
-- accumulate real transition/candidate history to evaluate policy noise
+- accumulate real transition/candidate history and inspect policy noise
 
 ## Later
 
-- first opt-in provider integration
+- first opt-in provider integration behind the proven attempt abstraction
 - production notification delivery
 - SourceGuard productization
 - ModelGuard
