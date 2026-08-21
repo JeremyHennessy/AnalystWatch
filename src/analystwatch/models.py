@@ -25,6 +25,21 @@ class ObservationReviewState(str, Enum):
     REVIEWED = "Reviewed"
 
 
+class IncidentStatus(str, Enum):
+    OPEN = "Open"
+    RECOVERED = "Recovered"
+
+
+class IncidentTransition(str, Enum):
+    OPENED = "Opened"
+    ESCALATED = "Escalated"
+    RECOVERED = "Recovered"
+
+
+class NotificationCandidateState(str, Enum):
+    PENDING = "Pending"
+
+
 class MonitoringConfig(BaseModel):
     expected_refresh_minutes: int | None = Field(default=None, gt=0)
     monitor_interval_minutes: int = Field(default=60, gt=0)
@@ -160,3 +175,29 @@ class BaselineReview(BaseModel):
     candidate: Observation | None = None
     ready: bool
     blockers: list[str] = Field(default_factory=list)
+
+
+class IncidentSnapshot(BaseModel):
+    source_id: str
+    status: IncidentStatus
+    opened_observation_id: str
+    opened_at: datetime
+    latest_incident_observation_id: str
+    updated_at: datetime
+    current_health: HealthStatus
+    peak_health: HealthStatus
+    observation_count: int
+    recovered_observation_id: str | None = None
+    recovered_at: datetime | None = None
+
+
+class NotificationCandidate(BaseModel):
+    id: str
+    source_id: str
+    observation_id: str
+    transition: IncidentTransition
+    previous_health: HealthStatus | None = None
+    current_health: HealthStatus
+    created_at: datetime
+    reason: str
+    state: NotificationCandidateState = NotificationCandidateState.PENDING

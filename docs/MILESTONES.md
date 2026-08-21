@@ -17,79 +17,74 @@ Established the deterministic monitoring foundation:
 
 Made the core continuously checkable without weakening detector trust:
 
-- independent monitoring cadence via `monitor_interval_minutes`
-- due/not-due schedule decisions and `check-due` / `check-all`
+- independent monitoring cadence
+- due/not-due scheduling
 - repository source configuration sync
-- recent Healthy-history reference windows for row, null, numeric and uniqueness signals
-- explicit baseline retained alongside historical context
-- opt-in conservative latest-date inference
-- API `Last-Modified` and ETag evidence capture
+- recent Healthy-history references alongside explicit baselines
+- conservative freshness inference
+- API HTTP evidence
 - read-only static dashboard export
-- GitHub Actions hourly monitoring workflow
-- persistent test monitoring state on dedicated `monitor-state` branch
-- GitHub Pages deployment workflow
-- scheduling/signal/static-site regression tests
+- scheduled GitHub Actions monitoring and Pages deployment
 
 ## Core v0.2.1 — Initial real-source validation — complete
 
-Established that the v0.2 monitoring path works against real analyst-style public APIs:
-
-- Bank of Canada USD/CAD daily Valet observations validated from GitHub Actions
-- U.S. Treasury Debt to the Penny validated from GitHub Actions
-- explicit `numeric_fields` contracts for APIs that publish numeric amounts as strings
-- configured content-date freshness fields validated for both real APIs
-- live-source smoke gate for availability and numeric/date contracts
-- numeric-string `/100` scaling remains detectable as Critical numeric drift
-
-No detector thresholds were tuned because the initial live observations did not provide evidence that tuning was necessary.
+Validated Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny from GitHub Actions and added explicit `numeric_fields` contracts for APIs that publish numeric amounts as strings. No detector thresholds were changed.
 
 ## Core v0.3 — Source onboarding & contract preflight — complete
 
-Prevented invalid or misunderstood source contracts from entering monitoring silently:
+Added non-persistent candidate preflight, contract validation, local onboarding, server-side preflight before acceptance, duplicate-ID protection, and read-only Pages contract visibility. The clean gate reached 32 passing tests.
 
-- read-only source preflight before persistence
-- availability, empty-data, numeric, unique-key and freshness contract validation
-- local FastAPI onboarding plus `/api/preflight` and `/api/onboard`
-- server-side preflight repeated before acceptance
-- duplicate source IDs rejected instead of overwritten
-- accepted definitions do not create an observation/baseline until normal monitoring runs
-- Pages remains read-only while exposing monitoring-contract configuration
-- isolated onboarding styling and regression coverage
+## Core v0.4 — Operational review & secure source configuration — complete
 
-The clean v0.3 GitHub gate reached 32 passing tests and the live-source smoke remained green.
+Added:
 
-## Core v0.4 — Operational review & secure source configuration — current
+- environment-backed request-header references without storing secret values
+- preflight-protected source edits that preserve history/baselines
+- Acknowledged / Reviewed analyst state separate from observation Health
+- guarded Healthy-only baseline review and promotion
+- redacted Pages operational views
 
-Goal: add operational controls and credential-safe configuration around the verified monitoring engine without weakening its evidence semantics.
+The clean v0.4 functional gate reached 41 passing tests and live-source smoke remained green.
+
+## Core v0.5 — Incident transitions & notification readiness — current
+
+Goal: prove meaningful incident transitions and notification-candidate semantics before introducing any outbound side effects.
 
 Implemented and verified on the functional candidate:
 
-- `request_header_env` maps API headers to runtime environment-variable names; secret values are never stored in source definitions
-- missing required environment variables become explicit availability evidence
-- safe source edits use the same preflight discipline as onboarding and preserve existing observations/baseline
-- interactive/API source creation is preflight-protected; `sync-sources` remains the code-reviewed hosted configuration path
-- Warning/Critical observations can be marked `Acknowledged` or `Reviewed` without changing health or claiming resolution
-- review state persists separately from observation evidence
-- baseline review only allows Healthy available candidates with profiles
-- baseline promotion is guarded by the expected current baseline ID to prevent stale-review promotion
-- Pages remains read-only and hides API query strings and request-header environment-variable names
-- CLI supports environment-backed headers, baseline review, and guarded promotion
-- live Bank of Canada/Treasury smoke remains green after the ingestion/service changes
-- clean functional gate reached 41 passing tests before documentation/version closeout
+- incident lifecycle is derived deterministically from immutable observation history
+- `Opened`: Healthy/no prior state → Warning/Critical
+- `Escalated`: Warning → Critical inside an open incident
+- `Recovered`: Warning/Critical → Healthy
+- repeated Warning or repeated Critical observations do not create duplicate transition candidates
+- recovered incidents remain reconstructable through later Healthy checks
+- `IncidentSnapshot` exposes opening/recovery timing, current/peak Health, and incident observation count
+- each meaningful transition can create one `Pending` notification candidate
+- transition observation and candidate persist atomically in the same SQLite transaction
+- review state remains independent and cannot resolve an incident
+- API/CLI inspect incidents/candidates without write/delivery operations
+- Pages exposes incident summary and candidate count while remaining read-only
+- no email, Slack, webhook, SMS, retry worker, destination configuration, or delivery adapter exists
+- live source smoke remains green after the storage/service changes
+- clean functional gate reached **50 passing tests** before documentation/version closeout
 
-No detector or scheduler thresholds were changed in this milestone.
+No detector, scheduler, hosted source configuration, secret handling, review semantics, or baseline semantics were changed in v0.5.
 
-## Candidate v0.5 — persistence & notification readiness
+## Candidate v0.6 — delivery policy sandbox & persistence readiness
 
-- accumulate more real-source history and quantify false positives/false negatives before changing thresholds
+Before any real delivery:
+
+- accumulate real transition history and inspect candidate noise/coverage
+- define per-source transition policy (which Opened/Escalated/Recovered events should be deliverable)
+- add explicit candidate lifecycle such as Pending / Suppressed / Delivered / Failed without sending by default
+- define idempotency and retry semantics independently of monitoring transactions
 - replace branch-backed SQLite test persistence with deployment-appropriate storage
-- define authentication/workspace ownership before exposing write actions remotely
-- add a dedicated secret-management boundary for multi-user/hosted authenticated sources
-- design incident notification rules around unreviewed Warning/Critical transitions
-- notification delivery only after signal quality and persistence semantics are trustworthy
+- define authentication/workspace ownership before remote write/delivery actions
+- introduce one sandbox delivery adapter only after candidate semantics are proven
 
 ## Later
 
+- production notification delivery
 - SourceGuard productization
 - ModelGuard
 - DashboardGuard
