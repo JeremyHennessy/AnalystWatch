@@ -20,6 +20,7 @@ from .models import (
 )
 from .service import MonitorService
 from .storage import Storage
+from .workspace import DEFAULT_WORKSPACE_ID, WorkspaceStore, validate_workspace_id
 
 PACKAGE_DIR = Path(__file__).parent
 
@@ -45,16 +46,35 @@ def _attempt_state_counts(attempts: list[DeliveryAttempt]) -> dict[str, int]:
     return counts
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(
+    db_path: str | Path | None = None,
+    workspace_id: str | None = None,
+) -> FastAPI:
     resolved_db = Path(db_path or os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"))
-    storage = Storage(resolved_db)
+    resolved_workspace = validate_workspace_id(
+        workspace_id
+        if workspace_id is not None
+        else os.environ.get("ANALYSTWATCH_WORKSPACE_ID", DEFAULT_WORKSPACE_ID)
+    )
+    storage = WorkspaceStore(Storage(resolved_db), resolved_workspace)
     service = MonitorService(storage)
 
     app = FastAPI(title="AnalystWatch", version="0.10.0")
     app.state.storage = storage
     app.state.service = service
+    app.state.workspace_id = resolved_workspace
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
     app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
+
+    def require_source_workspace(source: SourceDefinition) -> None:
+        if source.workspace_id != resolved_workspace:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Source workspace {source.workspace_id!r} does not match bound workspace "
+                    f"{resolved_workspace!r}"
+                ),
+            )
 
     def source_view(source: SourceDefinition) -> dict[str, object]:
         latest = storage.get_latest(source.id)
@@ -173,6 +193,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/onboard")
     def api_onboard(source: SourceDefinition):
+        require_source_workspace(source)
         try:
             return service.onboard_source(source)
         except ValueError as exc:
@@ -180,6 +201,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/sources")
     def create_source(source: SourceDefinition):
+        require_source_workspace(source)
         try:
             return service.onboard_source(source)
         except ValueError as exc:
@@ -187,6 +209,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.put("/api/sources/{source_id}")
     def update_source(source_id: str, replacement: SourceDefinition):
+        require_source_workspace(replacement)
         try:
             return service.update_source(source_id, replacement)
         except KeyError as exc:
