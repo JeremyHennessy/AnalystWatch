@@ -119,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dry_run.add_argument("candidate_id")
     dry_run.add_argument("--idempotency-key", required=True)
+    dry_run.add_argument("--execution-owner")
 
     reconcile = sub.add_parser(
         "reconcile-delivery-attempt",
@@ -131,6 +132,23 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[item.value for item in DeliveryReconciliationOutcome],
     )
     reconcile.add_argument("--note", required=True)
+    reconcile.add_argument("--reviewer")
+
+    sub.add_parser(
+        "verify-state",
+        help="Verify an existing SQLite state database without modifying it",
+    )
+    backup = sub.add_parser(
+        "backup-state",
+        help="Create and verify a new SQLite snapshot of the active state database",
+    )
+    backup.add_argument("destination")
+    restore = sub.add_parser(
+        "restore-state",
+        help="Restore a verified snapshot into a new destination database only",
+    )
+    restore.add_argument("snapshot")
+    restore.add_argument("destination")
 
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
@@ -164,7 +182,23 @@ def _print_observations(observations) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "verify-state":
+        verification = Storage.verify_database(args.db)
+        print(verification.model_dump_json(indent=2))
+        return 0 if verification.integrity_ok else 2
+
+    if args.command == "restore-state":
+        result = Storage.restore_snapshot(args.snapshot, args.destination)
+        print(result.model_dump_json(indent=2))
+        return 0
+
     service = _service(args.db)
+
+    if args.command == "backup-state":
+        result = service.storage.backup_to(args.destination)
+        print(result.model_dump_json(indent=2))
+        return 0
 
     if args.command == "add-source":
         config = MonitoringConfig(
@@ -267,7 +301,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if decision.due else 2
 
     if args.command == "dry-run-delivery":
-        attempt = service.dry_run_delivery(args.candidate_id, args.idempotency_key)
+        attempt = service.dry_run_delivery(
+            args.candidate_id,
+            args.idempotency_key,
+            execution_owner=args.execution_owner,
+        )
         print(attempt.model_dump_json(indent=2))
         return 0 if attempt.state.value == "Succeeded" else 2
 
@@ -276,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
             args.attempt_id,
             DeliveryReconciliationOutcome(args.outcome),
             args.note,
+            reviewer=args.reviewer,
         )
         print(attempt.model_dump_json(indent=2))
         return 0

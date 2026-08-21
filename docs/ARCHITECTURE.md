@@ -1,124 +1,106 @@
-# AnalystWatch Core v0.8 Architecture
+# AnalystWatch Core v0.9 Architecture
 
 ## Decision
 
-Core v0.8 remains a Python modular monolith. FastAPI is the local/API control surface; GitHub Pages is generated read-only test output. The monitoring engine remains authoritative. Review state, incident state, notification-policy decisions, and delivery attempts are downstream operational records and never rewrite detector findings or Health.
+Core v0.9 remains a Python modular monolith. SQLite is still the current local/test persistence mechanism; v0.9 makes that state identifiable, verifiable and portable without claiming it is production storage. FastAPI remains the local/API control plane and GitHub Pages remains read-only generated output.
 
-SQLite persists source definitions, observations, review state, notification candidates, delivery attempts, profiles, and baseline selection. `monitor-state` remains temporary public test persistence and must contain only non-secret state.
+The deterministic monitoring engine is still authoritative. Review state, incident state, notification policy, delivery attempts, claim ownership and reconciliation attribution are operational records and never rewrite detector findings or Health.
 
-## Data flow
+## Storage identity
 
-```text
-source -> preflight/config -> schedule -> ingest -> profile -> detectors
-                                                |
-                                                v
-                                      immutable Observation
-                                          |      |      |
-                                       review incident baseline
-                                                |
-                                      transition candidate
-                                                |
-                                      notification policy
-                                  Pending / Eligible / Suppressed
-                                                |
-                                  explicit dry-run execution only
-                                                |
-                                 atomic SQLite attempt claim
-                                                |
-                                             Prepared
-                                                |
-                                      local dry-run adapter
-                                         /             \
-                                  Succeeded           Failed
-                                      |                 |
-                                      |           optional retry delay
-                                      |                 |
-                                      +------ explicit retry --------+
+`Storage.initialize()` additively creates `storage_metadata` and writes, once:
 
-abandoned Prepared -> explicit reconciliation review -> Succeeded / Failed
-```
+- `schema_version`
+- `storage_id`
 
-No monitoring transaction automatically executes a delivery attempt.
+Existing databases receive these rows when first opened under v0.9. `INSERT OR IGNORE` keeps the storage ID stable across later initialization.
 
-## Atomic claim safety
+## Read-only verification
 
-v0.7 enforced idempotency sequentially in the service. v0.8 moves the concurrency-critical decision into `Storage.claim_delivery_attempt` under one SQLite `BEGIN IMMEDIATE` transaction.
+`Storage.verify_database(path)`:
 
-The transaction covers:
+1. requires the file to already exist;
+2. opens SQLite using `mode=ro`;
+3. runs `PRAGMA integrity_check`;
+4. reads metadata when available;
+5. reports table counts for sources, observations, reviews, notification candidates and delivery attempts;
+6. closes without initializing or modifying the database.
 
-1. candidate existence and Eligible state;
-2. caller idempotency-key lookup;
-3. latest candidate/adapter attempt state;
-4. configured retry timing;
-5. attempt-number allocation;
-6. Prepared insert.
+A corrupt SQLite file returns an unsuccessful `StorageVerification`; verification does not repair or rewrite it.
 
-Same-key concurrent callers converge on the same persisted attempt. Different keys cannot create two Prepared attempts for the same candidate/adapter. SQLite also retains unique constraints on the idempotency key and `(candidate_id, adapter, attempt_number)`.
+## Snapshot creation
 
-This is adequate for the current single SQLite database. It is not a distributed lease/claim system for multiple database nodes.
+`Storage.backup_to(destination)` is create-only:
 
-## Retry timing
+- destination cannot equal active DB;
+- existing destination is rejected;
+- active DB must verify first;
+- copy uses SQLite's backup API;
+- snapshot is verified afterward;
+- verified storage identity/schema/table counts must match the active DB;
+- incomplete new snapshot is deleted on failure.
 
-`MonitoringConfig.delivery_retry_minutes` is independent from monitoring cadence. The default is `0`, preserving v0.7 immediate retry after a Failed attempt. Nonzero delay is opt-in.
+## Snapshot restore
 
-`DeliveryRetryDecision` reports whether a candidate is currently retryable and the next retry timestamp when applicable.
+`Storage.restore_snapshot(snapshot, destination)` is also create-only:
 
-Rules:
+- source snapshot must exist and verify;
+- destination must not already exist;
+- source snapshot is opened read-only;
+- SQLite backup API copies it into a new DB;
+- restored DB must verify identically;
+- incomplete new destination is deleted on failure.
 
-- no attempt yet -> due;
-- Succeeded -> not due;
-- Prepared -> not due; explicit reconciliation required;
-- Failed with completion timestamp -> due at `completed_at + delivery_retry_minutes`;
-- non-Eligible candidate -> not due.
+There is intentionally no in-place restore/overwrite operation in v0.9.
 
-The claim transaction enforces the same timing rule; retry-status is not merely advisory.
+## Execution ownership
 
-## Prepared reconciliation
+`DeliveryAttempt` adds optional audit fields:
 
-A process crash between Prepared persistence and completion can leave an ambiguous Prepared attempt. v0.8 does not infer an outcome or automatically retry it.
+- `claim_owner`
+- `reconciled_by`
 
-`reconcile_prepared_delivery_attempt` requires:
+Operational `MonitorService` paths always provide a validated owner. Low-level storage helpers keep ownership optional for backward-compatible tests/manual fixtures.
 
-- an existing Prepared attempt;
-- explicit outcome `Succeeded` or `Failed`;
-- explicit review note;
-- reconciliation timestamp.
+Service owner resolution order:
 
-The resulting attempt stores `reconciled_at` and `reconciliation_note`. A Failed reconciliation becomes eligible for retry according to the configured retry delay. A Succeeded reconciliation blocks later attempts.
+1. explicit constructor/operation override;
+2. `ANALYSTWATCH_EXECUTION_OWNER`;
+3. `hostname:pid`.
 
-Reconciliation runs under `BEGIN IMMEDIATE` so two reviewers cannot independently reconcile the same Prepared state.
+Same-key idempotency replay returns the existing persisted attempt, so a later process cannot overwrite the original claimant.
 
-## Dry-run boundary
+Prepared reconciliation records a separate reviewer identity while preserving the original claimant.
 
-The only adapter remains `DryRunDeliveryAdapter`; it contains no network/client/provider dependency. Real delivery remains out of scope.
+## Remote/API boundary
 
-## CLI and API
+Storage verification/backup/restore are **local CLI only**. They are not FastAPI endpoints. FastAPI dry-run/reconciliation uses the process execution owner and does not accept remote owner-spoofing parameters.
 
-New local operations:
+## Public Pages boundary
 
-- `delivery-retry-status <candidate-id>`
-- `reconcile-delivery-attempt <attempt-id> --outcome ... --note ...`
-- `GET /api/delivery-attempts/retry-status`
-- `POST /api/delivery-attempts/{attempt_id}/reconcile`
+Pages code is unchanged in v0.9. It consumes aggregate attempt/candidate data only, so storage IDs, execution owners, reviewer identities, reconciliation notes and idempotency keys remain absent from generated output.
 
-Existing explicit dry-run operations remain. There is no generic send route, automatic retry loop, or automatic reconciliation loop.
+## Existing safety semantics
 
-## Pages/public boundary
+v0.8 behavior remains unchanged:
 
-Pages remains read-only. Public state may include `delivery_retry_minutes` and aggregate attempt-state counts. It does not contain idempotency keys, reconciliation notes, attempt JSON, or reconciliation controls.
-
-Approved v0.6/v0.7 copy and the `Notification candidates` label remain preserved, with v0.8 wording added separately.
+- atomic SQLite claim under `BEGIN IMMEDIATE`;
+- idempotency replay;
+- concurrent different-key exclusion;
+- independent retry timing;
+- explicit Prepared reconciliation;
+- dry-run adapter only;
+- no automatic delivery/provider.
 
 ## Verification boundary
 
-The verified v0.8 functional checkpoint passed Ruff, compile, **75 deterministic tests**, and live-source smoke against the existing configured sources. The new suite includes concurrent same-key and different-key SQLite claim tests.
+The verified v0.9 functional checkpoint passed Ruff, compile, **84 deterministic tests**, and live-source smoke against the existing configured sources.
 
 ## Limitations
 
-- single SQLite database claim safety, not distributed leasing
-- manual Prepared reconciliation only
-- no automatic retry worker
-- no real provider integration
-- branch-backed hosted state remains test-only
-- no authentication/workspace ownership
-- more real incident/candidate history is required before introducing side effects
+- branch-backed SQLite is still test persistence, not a production database
+- snapshot files are local artifacts, not managed/remote backups
+- no automatic backup schedule or retention policy
+- no distributed execution lease across independent databases
+- no authentication/workspace boundary
+- no real notification provider

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import socket
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -37,9 +39,21 @@ from .storage import Storage
 
 
 class MonitorService:
-    def __init__(self, storage: Storage):
+    def __init__(self, storage: Storage, execution_owner: str | None = None):
         self.storage = storage
         self.storage.initialize()
+        default_owner = os.environ.get("ANALYSTWATCH_EXECUTION_OWNER")
+        if default_owner is None:
+            default_owner = f"{socket.gethostname()}:{os.getpid()}"
+        self.execution_owner = self._validate_execution_owner(
+            execution_owner if execution_owner is not None else default_owner
+        )
+
+    @staticmethod
+    def _validate_execution_owner(owner: str) -> str:
+        if not owner or owner != owner.strip():
+            raise ValueError("execution owner must be non-empty and trimmed")
+        return owner
 
     def add_source(self, source: SourceDefinition) -> SourceDefinition:
         self.storage.upsert_source(source)
@@ -263,12 +277,16 @@ class MonitorService:
         note: str,
         *,
         now: datetime | None = None,
+        reviewer: str | None = None,
     ) -> DeliveryAttempt:
         if not note or note != note.strip():
             raise ValueError("Reconciliation note must be non-empty and trimmed")
         reconciled_at = now or datetime.now(timezone.utc)
         if reconciled_at.tzinfo is None:
             reconciled_at = reconciled_at.replace(tzinfo=timezone.utc)
+        reconciled_by = self._validate_execution_owner(
+            reviewer if reviewer is not None else self.execution_owner
+        )
         state = (
             DeliveryAttemptState.SUCCEEDED
             if outcome == DeliveryReconciliationOutcome.SUCCEEDED
@@ -279,6 +297,7 @@ class MonitorService:
             state,
             reconciled_at=reconciled_at,
             note=note,
+            reconciled_by=reconciled_by,
         )
 
     def dry_run_delivery(
@@ -288,6 +307,7 @@ class MonitorService:
         *,
         now: datetime | None = None,
         adapter: DryRunDeliveryAdapter | None = None,
+        execution_owner: str | None = None,
     ) -> DeliveryAttempt:
         if not idempotency_key or idempotency_key != idempotency_key.strip():
             raise ValueError("idempotency_key must be non-empty and trimmed")
@@ -302,12 +322,16 @@ class MonitorService:
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
         delivery_adapter = adapter or DryRunDeliveryAdapter()
+        claim_owner = self._validate_execution_owner(
+            execution_owner if execution_owner is not None else self.execution_owner
+        )
         prepared, replayed = self.storage.claim_delivery_attempt(
             candidate_id,
             idempotency_key,
             delivery_adapter.name,
             created_at=created_at,
             retry_minutes=source.config.delivery_retry_minutes,
+            claim_owner=claim_owner,
         )
         if replayed:
             return prepared
