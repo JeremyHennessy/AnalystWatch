@@ -149,7 +149,9 @@ class MonitorService:
     ) -> Observation:
         current = self.storage.get_baseline(source_id)
         if current is None or current.id != expected_current_baseline_id:
-            raise ValueError("Baseline changed since review; refresh the candidate before promoting.")
+            raise ValueError(
+                "Baseline changed since review; refresh the candidate before promoting."
+            )
         review = self.baseline_review(source_id, observation_id)
         if not review.ready:
             raise ValueError("; ".join(review.blockers))
