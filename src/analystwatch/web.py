@@ -41,6 +41,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         last_successful = storage.get_last_successful(source.id)
         latest_review = storage.get_review(latest.id) if latest else None
         baseline_review = service.baseline_review(source.id) if latest and baseline else None
+        candidates = service.notification_candidates(source.id, limit=20)
         return {
             "source": source,
             "public_location": _public_location(source),
@@ -49,6 +50,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             "last_successful": last_successful,
             "latest_review": latest_review,
             "baseline_review": baseline_review,
+            "incident": service.incident(source.id),
+            "notification_candidates": candidates,
+            "notification_candidate_count": len(candidates),
             "health": latest.health.value if latest else "Not checked",
             "schedule": service.get_run_decision(source.id),
             "href": f"/sources/{source.id}",
@@ -177,6 +181,20 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             **source_view(source),
             "history": storage.list_observations(source_id, limit=20),
         }
+
+    @app.get("/api/sources/{source_id}/incident")
+    def api_incident(source_id: str):
+        try:
+            return service.incident(source_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/notification-candidates")
+    def api_notification_candidates(source_id: str | None = None, limit: int = 100):
+        try:
+            return service.notification_candidates(source_id, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/sources/{source_id}/baseline-review")
     def api_baseline_review(source_id: str, observation_id: str | None = None):
