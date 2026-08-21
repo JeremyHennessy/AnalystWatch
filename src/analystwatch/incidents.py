@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from .models import (
     HealthStatus,
     IncidentSnapshot,
     IncidentStatus,
     IncidentTransition,
     NotificationCandidate,
+    NotificationCandidateState,
     Observation,
 )
 
@@ -60,6 +63,32 @@ def notification_candidate(
         current_health=current.health,
         created_at=current.observed_at,
         reason=reason,
+    )
+
+
+def evaluate_notification_candidate(
+    candidate: NotificationCandidate,
+    enabled_transitions: list[IncidentTransition],
+    *,
+    evaluated_at: datetime,
+) -> NotificationCandidate:
+    enabled_snapshot = list(enabled_transitions)
+    if candidate.transition in enabled_snapshot:
+        state = NotificationCandidateState.ELIGIBLE
+        reason = f"{candidate.transition.value} is enabled by the source notification policy."
+    else:
+        state = NotificationCandidateState.SUPPRESSED
+        if enabled_snapshot:
+            reason = f"{candidate.transition.value} is not enabled by the source notification policy."
+        else:
+            reason = "No notification transitions are enabled for this source."
+    return candidate.model_copy(
+        update={
+            "state": state,
+            "evaluated_at": evaluated_at,
+            "policy_enabled_transitions": enabled_snapshot,
+            "policy_reason": reason,
+        }
     )
 
 

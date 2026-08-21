@@ -39,6 +39,7 @@
         <div><dt>Record path / sheet</dt><dd>{{ source.config.json_record_path or source.config.sheet_name or 'Default' }}</dd></div>
         <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
         <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
+        <div><dt>Notification policy</dt><dd>{% if source.config.notification_transitions %}Eligible transitions: {% for transition in source.config.notification_transitions %}{{ transition.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}No transitions enabled; candidates are suppressed{% endif %}</dd></div>
         <div><dt>Request headers</dt><dd>{% if source.config.request_header_env %}{% if static_mode %}{{ source.config.request_header_env|length }} environment-backed header{{ '' if source.config.request_header_env|length == 1 else 's' }} configured; values are not stored{% else %}{% for header, env_name in source.config.request_header_env.items() %}<code>{{ header }}</code> ← <code>{{ env_name }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}{% else %}None configured{% endif %}</dd></div>
       </dl>
     </section>
@@ -58,14 +59,15 @@
           <div class="metric-card"><span>Opened</span><strong>{{ incident.opened_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
           <div class="metric-card"><span>Peak health</span><strong class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</strong></div>
           <div class="metric-card"><span>Incident observations</span><strong>{{ incident.observation_count }}</strong></div>
-          <div class="metric-card"><span>Notification candidates</span><strong>{{ notification_candidate_count }}</strong></div>
+          <div class="metric-card"><span>Candidates</span><strong>{{ notification_candidate_count }}</strong></div>
         </div>
         {% if incident.status.value == 'Recovered' %}
           <p class="healthy-note"><strong>Recovered.</strong> The source returned to Healthy at {{ incident.recovered_at.strftime('%Y-%m-%d %H:%M UTC') }}.</p>
         {% else %}
           <p class="muted">The incident remains open at {{ incident.current_health.value }} health.</p>
         {% endif %}
-        <p class="muted">Notification candidates are transition records only. Core v0.5 does not send email, Slack, webhooks, or other outbound notifications.</p>
+        <p class="muted">Candidate policy: {{ notification_candidate_states.Eligible }} Eligible · {{ notification_candidate_states.Suppressed }} Suppressed · {{ notification_candidate_states.Pending }} Pending.</p>
+        <p class="muted">Eligible means the transition matches the source policy only. Core v0.6 still does not send email, Slack, webhooks, or other outbound notifications.</p>
       </section>
       {% endif %}
 
