@@ -1,106 +1,90 @@
-# AnalystWatch Core v0.9 Architecture
+# AnalystWatch Core v0.10 Architecture
 
 ## Decision
 
-Core v0.9 remains a Python modular monolith. SQLite is still the current local/test persistence mechanism; v0.9 makes that state identifiable, verifiable and portable without claiming it is production storage. FastAPI remains the local/API control plane and GitHub Pages remains read-only generated output.
+Core v0.10 keeps the Python modular-monolith runtime and the existing SQLite schema, but adds the first explicit storage/workspace boundary. The objective is to separate ownership semantics from detector/service logic before selecting a production database or adding remote authentication.
 
-The deterministic monitoring engine is still authoritative. Review state, incident state, notification policy, delivery attempts, claim ownership and reconciliation attribution are operational records and never rewrite detector findings or Health.
+The deterministic monitoring engine remains authoritative. Review state, incident state, notification policy, delivery attempts, execution ownership and reconciliation attribution remain operational records and do not rewrite detector findings or Health.
 
-## Storage identity
+## MonitoringStore protocol
 
-`Storage.initialize()` additively creates `storage_metadata` and writes, once:
+`src/analystwatch/store.py` defines the structural persistence contract required by monitoring/service/read surfaces. The protocol covers:
 
-- `schema_version`
-- `storage_id`
+- source persistence and lookup;
+- observations, baselines and reference history;
+- observation review state;
+- notification candidate state;
+- delivery attempt claim/update/list/reconciliation;
+- guarded baseline promotion.
 
-Existing databases receive these rows when first opened under v0.9. `INSERT OR IGNORE` keeps the storage ID stable across later initialization.
+The existing SQLite `Storage` class satisfies this protocol without schema changes.
 
-## Read-only verification
+The protocol intentionally excludes local SQLite maintenance operations such as verify/backup/restore because those are implementation-specific persistence tooling rather than the monitoring domain contract.
 
-`Storage.verify_database(path)`:
+## Source workspace ownership
 
-1. requires the file to already exist;
-2. opens SQLite using `mode=ro`;
-3. runs `PRAGMA integrity_check`;
-4. reads metadata when available;
-5. reports table counts for sources, observations, reviews, notification candidates and delivery attempts;
-6. closes without initializing or modifying the database.
+`SourceDefinition.workspace_id` is introduced with a safe default of `local` and the same conservative identifier alphabet used for source IDs.
 
-A corrupt SQLite file returns an unsuccessful `StorageVerification`; verification does not repair or rewrite it.
+Persisted source JSON written before v0.10 omits the field. Pydantic therefore loads those definitions as `workspace_id="local"`; v0.10 does not need a destructive migration or rewrite.
 
-## Snapshot creation
+## WorkspaceStore
 
-`Storage.backup_to(destination)` is create-only:
+`WorkspaceStore` is a workspace-bound view over a `MonitoringStore`.
 
-- destination cannot equal active DB;
-- existing destination is rejected;
-- active DB must verify first;
-- copy uses SQLite's backup API;
-- snapshot is verified afterward;
-- verified storage identity/schema/table counts must match the active DB;
-- incomplete new snapshot is deleted on failure.
+For reads it returns only records whose source belongs to the bound workspace. For writes it validates workspace ownership before delegating to the underlying store.
 
-## Snapshot restore
+The boundary covers:
 
-`Storage.restore_snapshot(snapshot, destination)` is also create-only:
+- sources;
+- observations and baselines;
+- reviews;
+- notification candidates;
+- delivery attempts and claims;
+- Prepared reconciliation;
+- baseline promotion.
 
-- source snapshot must exist and verify;
-- destination must not already exist;
-- source snapshot is opened read-only;
-- SQLite backup API copies it into a new DB;
-- restored DB must verify identically;
-- incomplete new destination is deleted on failure.
+Foreign records are treated as unavailable to the bound service rather than exposing their existence.
 
-There is intentionally no in-place restore/overwrite operation in v0.9.
+## Service binding
 
-## Execution ownership
+`create_workspace_service(storage, workspace_id, execution_owner=None)` creates an existing `MonitorService` over `WorkspaceStore`. Core monitoring and delivery state-machine code is therefore unchanged; ownership is enforced by the persistence boundary supplied to it.
 
-`DeliveryAttempt` adds optional audit fields:
+This is deliberately opt-in in v0.10. Existing CLI/FastAPI construction continues to use the unbound SQLite store so the hosted/test runtime does not change in the same milestone that introduces the guard abstraction.
 
-- `claim_owner`
-- `reconciled_by`
+## Important persistence limitation
 
-Operational `MonitorService` paths always provide a validated owner. Low-level storage helpers keep ownership optional for backward-compatible tests/manual fixtures.
+The current SQLite schema still has `sources.id` as a global primary key and downstream records still refer to `source_id` alone. Consequently:
 
-Service owner resolution order:
+- two workspaces cannot store the same source ID in one database;
+- `WorkspaceStore` blocks a foreign workspace from reusing an existing source ID;
+- v0.10 is an ownership guardrail, not full multi-tenant persistence.
 
-1. explicit constructor/operation override;
-2. `ANALYSTWATCH_EXECUTION_OWNER`;
-3. `hostname:pid`.
+Composite workspace/source keys or a deployment database must be introduced in a later, separately verified migration.
 
-Same-key idempotency replay returns the existing persisted attempt, so a later process cannot overwrite the original claimant.
+## Existing v0.9 persistence safety
 
-Prepared reconciliation records a separate reviewer identity while preserving the original claimant.
+All v0.9 behavior remains unchanged:
 
-## Remote/API boundary
+- additive stable `storage_id` and schema metadata;
+- read-only SQLite integrity verification;
+- verified SQLite backup API snapshots;
+- create-only verified restore;
+- execution claim/reviewer attribution;
+- atomic delivery claim and explicit reconciliation semantics.
 
-Storage verification/backup/restore are **local CLI only**. They are not FastAPI endpoints. FastAPI dry-run/reconciliation uses the process execution owner and does not accept remote owner-spoofing parameters.
+## Public/runtime boundary
 
-## Public Pages boundary
-
-Pages code is unchanged in v0.9. It consumes aggregate attempt/candidate data only, so storage IDs, execution owners, reviewer identities, reconciliation notes and idempotency keys remain absent from generated output.
-
-## Existing safety semantics
-
-v0.8 behavior remains unchanged:
-
-- atomic SQLite claim under `BEGIN IMMEDIATE`;
-- idempotency replay;
-- concurrent different-key exclusion;
-- independent retry timing;
-- explicit Prepared reconciliation;
-- dry-run adapter only;
-- no automatic delivery/provider.
+Core v0.10 does not change GitHub Pages, the hosted source configuration, FastAPI routing, CLI behavior or notification delivery. This avoids silently changing the production/test entrypoint before the workspace guard itself has passed the full regression and live-source gates.
 
 ## Verification boundary
 
-The verified v0.9 functional checkpoint passed Ruff, compile, **84 deterministic tests**, and live-source smoke against the existing configured sources.
+The verified v0.10 functional checkpoint passed Ruff, compile, **92 deterministic tests**, and live-source smoke against the existing configured sources.
 
 ## Limitations
 
-- branch-backed SQLite is still test persistence, not a production database
-- snapshot files are local artifacts, not managed/remote backups
-- no automatic backup schedule or retention policy
-- no distributed execution lease across independent databases
-- no authentication/workspace boundary
-- no real notification provider
+- workspace binding is opt-in rather than the default runtime path
+- no remote user/session authentication exists
+- no authorization policy beyond explicit workspace ownership is implemented
+- SQLite source IDs are still globally unique
+- branch-backed SQLite remains test persistence, not a production database
+- no real notification provider exists

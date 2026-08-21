@@ -36,49 +36,55 @@ Added explicit Prepared/Succeeded/Failed dry-run attempts, caller idempotency, r
 
 Added atomic SQLite attempt claims, concurrent claim protection, independent retry delay and explicit Prepared reconciliation. Clean gate: 75 tests.
 
-## Core v0.9 — Persistence integrity & execution ownership — current
+## Core v0.9 — Persistence integrity & execution ownership — complete
 
-Goal: make current state portable/verifiable and add execution attribution without pretending test SQLite is production storage.
+Added stable storage identity/schema metadata, read-only integrity verification, verified SQLite snapshots, create-only restore, delivery claimant attribution and reconciliation reviewer attribution. Clean gate: 84 tests.
+
+## Core v0.10 — Storage protocol & workspace guardrails — current
+
+Goal: define and prove an ownership boundary without changing the hosted runtime or pretending the current SQLite schema is multi-tenant.
 
 Implemented and verified on the functional checkpoint:
 
-- additive persistent storage metadata with stable `storage_id` and schema version
-- read-only SQLite integrity verification without initialization/mutation
-- source/observation/review/candidate/attempt count verification
-- SQLite backup-API snapshots with pre/post integrity verification
-- snapshot identity/schema/counts must match active DB
-- create-only restore into a new destination database
-- existing backup/restore targets are never overwritten
-- corrupt snapshot verification fails without mutating the source file
-- incomplete newly-created backup/restore destinations are removed on failure
-- `claim_owner` persisted on delivery attempts
-- `reconciled_by` persisted separately on Prepared reconciliation
-- same-key replay preserves the original claimant across service processes
-- local service owner resolves from explicit value, environment, or hostname:pid
-- local CLI adds `verify-state`, `backup-state`, `restore-state`
-- owner/reviewer overrides remain local CLI operations; no remote spoofing parameters added
-- Pages remains unchanged and redacts storage/owner/reviewer/internal persistence details
-- clean functional checkpoint reached **84 passing tests**
+- structural `MonitoringStore` persistence protocol
+- backward-compatible `SourceDefinition.workspace_id` with default `local`
+- strict workspace identifier validation
+- `WorkspaceStore` bound to one workspace
+- workspace-filtered source listing and lookup
+- foreign-workspace source writes blocked before SQLite
+- observations/baselines/reviews hidden across workspace boundaries
+- notification candidates and delivery attempts hidden across workspace boundaries
+- foreign candidate claims/attempt updates/reconciliation blocked
+- baseline promotion constrained to the bound workspace
+- `create_workspace_service(...)` composes existing `MonitorService` with the workspace store
+- existing v0.9 SQLite schema remains unchanged
+- existing persisted source JSON remains valid and resolves to workspace `local`
+- global source-ID collision is explicit: another workspace cannot reuse an existing ID yet
+- eight new regressions, including a real incident → Eligible candidate → dry-run attempt isolation path
+- clean functional checkpoint reached **92 passing tests**
 - live-source smoke remained green
 
 No detector, scheduler, hosted source configuration, notification-policy, retry/reconciliation state-machine, Pages/UI, secret, review, baseline, workflow or shared-CSS semantics changed.
 
-## Candidate v0.10 — production persistence boundary & workspace ownership
+## Candidate v0.11 — runtime workspace binding & storage conformance
 
-Before any real provider integration:
+Before selecting a production database or adding authentication:
 
-- define storage repository/protocol boundary independent from SQLite implementation
-- select/develop deployment-appropriate persistent storage
-- define workspace/user ownership and authorization for remote write operations
-- define migration/import path from verified SQLite snapshots
-- define retention/audit policy for observations, candidates and attempts
-- preserve deterministic monitoring and delivery state-machine semantics across the storage boundary
+- run CLI/FastAPI/Pages through explicit workspace-bound construction
+- add a second independent `MonitoringStore` implementation or conformance harness
+- prove the full operational contract across both implementations
+- define composite workspace/source identity requirements for future persistent storage
+- keep legacy hosted SQLite as the default until migration behavior is independently verified
 
 ## Later
 
+- deployment-appropriate persistent database adapter
+- authenticated workspace/user authorization
+- migration/import from verified SQLite snapshots
+- retention/audit policy for observations, candidates and attempts
 - first opt-in provider integration behind the proven attempt abstraction
 - production notification delivery
 - SourceGuard productization
 - ModelGuard
 - DashboardGuard
-- team workspaces, authentication, billing and integrations
+- billing and integrations
