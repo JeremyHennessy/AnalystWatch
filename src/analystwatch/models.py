@@ -48,6 +48,11 @@ class DeliveryAttemptState(str, Enum):
     FAILED = "Failed"
 
 
+class DeliveryReconciliationOutcome(str, Enum):
+    SUCCEEDED = "Succeeded"
+    FAILED = "Failed"
+
+
 class DeliveryMode(str, Enum):
     DRY_RUN = "dry-run"
 
@@ -63,6 +68,7 @@ class MonitoringConfig(BaseModel):
     numeric_fields: list[str] = Field(default_factory=list)
     request_header_env: dict[str, str] = Field(default_factory=dict)
     notification_transitions: list[IncidentTransition] = Field(default_factory=list)
+    delivery_retry_minutes: int = Field(default=60, gt=0)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
 
     history_window_size: int = Field(default=5, ge=3, le=50)
@@ -234,3 +240,14 @@ class DeliveryAttempt(BaseModel):
     completed_at: datetime | None = None
     result_summary: str | None = None
     error: str | None = None
+    reconciled_at: datetime | None = None
+    reconciliation_note: str | None = None
+
+
+class DeliveryRetryDecision(BaseModel):
+    candidate_id: str
+    due: bool
+    reason: str
+    last_attempt_id: str | None = None
+    last_state: DeliveryAttemptState | None = None
+    next_retry_at: datetime | None = None
