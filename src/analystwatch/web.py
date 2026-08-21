@@ -148,9 +148,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/sources", response_model=SourceDefinition)
+    @app.post("/api/sources")
     def create_source(source: SourceDefinition):
-        return service.add_source(source)
+        try:
+            return service.onboard_source(source)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.put("/api/sources/{source_id}")
     def update_source(source_id: str, replacement: SourceDefinition):
