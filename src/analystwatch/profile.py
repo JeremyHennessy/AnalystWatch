@@ -1,11 +1,26 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import pandas as pd
 
 from .models import ColumnProfile, DatasetProfile, NumericStats
+
+_DATE_FIELD_PRIORITY = (
+    "last_updated",
+    "last_modified",
+    "updated_at",
+    "modified_at",
+    "as_of",
+    "snapshot_date",
+    "report_date",
+    "effective_date",
+    "timestamp",
+    "datetime",
+    "date",
+)
 
 
 def _finite(value: Any) -> float | None:
@@ -54,7 +69,32 @@ def _category_frequencies(series: pd.Series, row_count: int) -> dict[str, float]
     return {str(key): float(value) for key, value in frequencies.items()}
 
 
-def profile_dataframe(frame: pd.DataFrame, latest_date_field: str | None = None) -> DatasetProfile:
+def _normalized_field_name(name: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
+
+
+def _candidate_date_field(frame: pd.DataFrame) -> str | None:
+    normalized = {_normalized_field_name(name): str(name) for name in frame.columns}
+    for candidate in _DATE_FIELD_PRIORITY:
+        if candidate not in normalized:
+            continue
+        field = normalized[candidate]
+        series = frame[field]
+        non_null = series.dropna()
+        if non_null.empty:
+            continue
+        parsed = pd.to_datetime(non_null, errors="coerce", utc=True)
+        if float(parsed.notna().mean()) >= 0.80:
+            return field
+    return None
+
+
+def profile_dataframe(
+    frame: pd.DataFrame,
+    latest_date_field: str | None = None,
+    *,
+    infer_latest_date_field: bool = False,
+) -> DatasetProfile:
     row_count = len(frame)
     columns: dict[str, ColumnProfile] = {}
 
@@ -79,9 +119,13 @@ def profile_dataframe(frame: pd.DataFrame, latest_date_field: str | None = None)
             ),
         )
 
+    resolved_date_field = latest_date_field
+    if resolved_date_field is None and infer_latest_date_field:
+        resolved_date_field = _candidate_date_field(frame)
+
     latest_date = None
-    if latest_date_field and latest_date_field in frame.columns:
-        parsed = pd.to_datetime(frame[latest_date_field], errors="coerce", utc=True).dropna()
+    if resolved_date_field and resolved_date_field in frame.columns:
+        parsed = pd.to_datetime(frame[resolved_date_field], errors="coerce", utc=True).dropna()
         if not parsed.empty:
             latest_date = parsed.max().to_pydatetime()
 
@@ -90,4 +134,5 @@ def profile_dataframe(frame: pd.DataFrame, latest_date_field: str | None = None)
         column_count=len(frame.columns),
         columns=columns,
         latest_date=latest_date,
+        latest_date_field=resolved_date_field if latest_date is not None else None,
     )

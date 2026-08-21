@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import json
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from .models import SourceDefinition, SourceType
+from .scheduler import run_decision
+from .storage import Storage
+
+PACKAGE_DIR = Path(__file__).parent
+
+
+def _public_location(source: SourceDefinition) -> str:
+    if source.source_type != SourceType.API:
+        return source.location
+    parts = urlsplit(source.location)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -> dict[str, object]:
+    latest = storage.get_latest(source.id)
+    baseline = storage.get_baseline(source.id)
+    last_successful = storage.get_last_successful(source.id)
+    decision = run_decision(storage, source, now=now)
+    return {
+        "source": source,
+        "public_location": _public_location(source),
+        "latest": latest,
+        "baseline": baseline,
+        "last_successful": last_successful,
+        "health": latest.health.value if latest else "Not checked",
+        "schedule": decision,
+    }
+
+
+def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, object]:
+    sources: list[dict[str, object]] = []
+    for source in storage.list_sources():
+        latest = storage.get_latest(source.id)
+        baseline = storage.get_baseline(source.id)
+        sources.append(
+            {
+                "id": source.id,
+                "name": source.name,
+                "source_type": source.source_type.value,
+                "location": _public_location(source),
+                "enabled": source.enabled,
+                "monitor_interval_minutes": source.config.monitor_interval_minutes,
+                "health": latest.health.value if latest else "Not checked",
+                "latest": json.loads(latest.model_dump_json()) if latest else None,
+                "baseline_id": baseline.id if baseline else None,
+            }
+        )
+    return {"generated_at": generated_at.isoformat(), "sources": sources}
+
+
+def build_pages_site(
+    storage: Storage,
+    output_dir: str | Path,
+    *,
+    generated_at: datetime | None = None,
+) -> Path:
+    output = Path(output_dir)
+    generated = generated_at or datetime.now(timezone.utc)
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=timezone.utc)
+
+    if output.exists():
+        shutil.rmtree(output)
+    (output / "static").mkdir(parents=True)
+    (output / "sources").mkdir(parents=True)
+    shutil.copy2(PACKAGE_DIR / "static" / "app.css", output / "static" / "app.css")
+    (output / ".nojekyll").write_text("", encoding="utf-8")
+
+    env = Environment(
+        loader=FileSystemLoader(PACKAGE_DIR / "templates"),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
+    index_template = env.get_template("index.html")
+    source_template = env.get_template("source.html")
+
+    source_views: list[dict[str, object]] = []
+    for source in storage.list_sources():
+        view = _source_view(storage, source, now=generated)
+        view["href"] = f"sources/{source.id}/"
+        source_views.append(view)
+
+        source_dir = output / "sources" / source.id
+        source_dir.mkdir(parents=True)
+        detail = source_template.render(
+            **view,
+            history=storage.list_observations(source.id, limit=12),
+            static_mode=True,
+            static_css="../../static/app.css",
+            home_href="../../",
+            generated_at=generated,
+        )
+        (source_dir / "index.html").write_text(detail, encoding="utf-8")
+
+    index = index_template.render(
+        sources=source_views,
+        static_mode=True,
+        static_css="static/app.css",
+        generated_at=generated,
+    )
+    (output / "index.html").write_text(index, encoding="utf-8")
+    (output / "state.json").write_text(
+        json.dumps(_public_state(storage, generated_at=generated), indent=2),
+        encoding="utf-8",
+    )
+    return output

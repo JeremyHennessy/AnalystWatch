@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -20,7 +21,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     storage = Storage(resolved_db)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.1.0")
+    app = FastAPI(title="AnalystWatch", version="0.2.0")
     app.state.storage = storage
     app.state.service = service
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -32,10 +33,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         last_successful = storage.get_last_successful(source.id)
         return {
             "source": source,
+            "public_location": source.location,
             "latest": latest,
             "baseline": baseline,
             "last_successful": last_successful,
             "health": latest.health.value if latest else "Not checked",
+            "schedule": service.get_run_decision(source.id),
+            "href": f"/sources/{source.id}",
         }
 
     @app.get("/healthz")
@@ -48,7 +52,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="index.html",
-            context={"sources": sources},
+            context={
+                "sources": sources,
+                "static_mode": False,
+                "static_css": str(request.url_for("static", path="/app.css")),
+                "generated_at": datetime.now(timezone.utc),
+            },
         )
 
     @app.get("/sources/{source_id}", response_class=HTMLResponse)
@@ -62,6 +71,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             context={
                 **source_view(source),
                 "history": storage.list_observations(source_id, limit=12),
+                "static_mode": False,
+                "static_css": str(request.url_for("static", path="/app.css")),
+                "home_href": "/",
+                "generated_at": datetime.now(timezone.utc),
             },
         )
 
@@ -90,6 +103,14 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             **source_view(source),
             "history": storage.list_observations(source_id, limit=20),
         }
+
+    @app.get("/api/schedule")
+    def api_schedule():
+        return [service.get_run_decision(source.id) for source in storage.list_sources()]
+
+    @app.post("/api/check-due")
+    def api_check_due():
+        return service.check_due_sources()
 
     @app.post("/api/sources/{source_id}/check")
     def api_check(source_id: str):

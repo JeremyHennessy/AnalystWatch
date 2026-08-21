@@ -7,8 +7,9 @@ import httpx
 
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
 from .ingest import ingest_source
-from .models import Finding, HealthStatus, Observation, SourceDefinition
+from .models import Finding, HealthStatus, Observation, RunDecision, SourceDefinition
 from .profile import profile_dataframe
+from .scheduler import run_decision
 from .storage import Storage
 
 
@@ -20,6 +21,37 @@ class MonitorService:
     def add_source(self, source: SourceDefinition) -> SourceDefinition:
         self.storage.upsert_source(source)
         return source
+
+    def add_sources(self, sources: list[SourceDefinition]) -> list[SourceDefinition]:
+        for source in sources:
+            self.add_source(source)
+        return sources
+
+    def get_run_decision(
+        self,
+        source_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> RunDecision:
+        source = self.storage.get_source(source_id)
+        if source is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        return run_decision(self.storage, source, now=now)
+
+    def check_due_sources(self, *, now: datetime | None = None) -> list[Observation]:
+        observations: list[Observation] = []
+        for source in self.storage.list_sources():
+            decision = run_decision(self.storage, source, now=now)
+            if decision.due:
+                observations.append(self.check_source(source.id, now=now))
+        return observations
+
+    def check_all_sources(self, *, now: datetime | None = None) -> list[Observation]:
+        return [
+            self.check_source(source.id, now=now)
+            for source in self.storage.list_sources()
+            if source.enabled
+        ]
 
     def check_source(
         self,
@@ -39,6 +71,13 @@ class MonitorService:
             observed_at = observed_at.replace(tzinfo=timezone.utc)
 
         baseline = self.storage.get_baseline(source_id)
+        reference_observations = self.storage.list_reference_observations(
+            source_id, limit=source.config.history_window_size
+        )
+        history_profiles = [
+            item.profile for item in reference_observations if item.profile is not None
+        ]
+
         result = ingest_source(source, client=client)
         findings: list[Finding] = []
         profile = None
@@ -58,7 +97,11 @@ class MonitorService:
                 )
             )
         else:
-            profile = profile_dataframe(result.dataframe, source.config.latest_date_field)
+            profile = profile_dataframe(
+                result.dataframe,
+                source.config.latest_date_field,
+                infer_latest_date_field=source.config.infer_latest_date_field,
+            )
             findings.extend(
                 detect_freshness(
                     config=source.config,
@@ -68,7 +111,14 @@ class MonitorService:
                 )
             )
             if baseline and baseline.profile:
-                findings.extend(detect_profile_changes(baseline.profile, profile, source.config))
+                findings.extend(
+                    detect_profile_changes(
+                        baseline.profile,
+                        profile,
+                        source.config,
+                        history=history_profiles,
+                    )
+                )
 
         health = health_from_findings(findings)
         observation = Observation(
@@ -82,6 +132,7 @@ class MonitorService:
             http_status=result.http_status,
             response_ms=result.response_ms,
             source_modified_at=result.source_modified_at,
+            response_etag=result.response_etag,
             error=result.error,
             is_baseline=baseline is None and result.available and profile is not None,
         )

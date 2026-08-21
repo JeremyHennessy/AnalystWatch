@@ -22,11 +22,16 @@ class HealthStatus(str, Enum):
 
 class MonitoringConfig(BaseModel):
     expected_refresh_minutes: int | None = Field(default=None, gt=0)
+    monitor_interval_minutes: int = Field(default=60, gt=0)
     latest_date_field: str | None = None
+    infer_latest_date_field: bool = False
     sheet_name: str | int | None = None
     json_record_path: str | None = None
     unique_keys: list[str] = Field(default_factory=list)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    history_window_size: int = Field(default=5, ge=3, le=50)
+    min_history_observations: int = Field(default=3, ge=2, le=50)
 
     warning_row_change_pct: float = Field(default=0.25, ge=0)
     critical_row_change_pct: float = Field(default=0.50, ge=0)
@@ -48,6 +53,8 @@ class MonitoringConfig(BaseModel):
             raise ValueError("warning_numeric_factor must not exceed critical_numeric_factor")
         if self.warning_category_tvd > self.critical_category_tvd:
             raise ValueError("warning_category_tvd must not exceed critical_category_tvd")
+        if self.min_history_observations > self.history_window_size:
+            raise ValueError("min_history_observations must not exceed history_window_size")
         return self
 
 
@@ -87,6 +94,7 @@ class DatasetProfile(BaseModel):
     column_count: int
     columns: dict[str, ColumnProfile]
     latest_date: datetime | None = None
+    latest_date_field: str | None = None
 
 
 class Finding(BaseModel):
@@ -112,5 +120,14 @@ class Observation(BaseModel):
     http_status: int | None = None
     response_ms: float | None = None
     source_modified_at: datetime | None = None
+    response_etag: str | None = None
     error: str | None = None
     is_baseline: bool = False
+
+
+class RunDecision(BaseModel):
+    source_id: str
+    due: bool
+    reason: str
+    last_checked_at: datetime | None = None
+    next_check_at: datetime | None = None

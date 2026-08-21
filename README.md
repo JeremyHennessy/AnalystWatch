@@ -2,20 +2,24 @@
 
 **Reliability monitoring for analyst-owned data sources.**
 
-AnalystWatch detects silent changes in the CSV, Excel, JSON and REST API inputs that analysts depend on: stale data, schema changes, unexpected row loss, null explosions, numerical scaling shifts, category changes and key duplication. The top-level question is simple: **can I trust the data feeding my analysis today?**
+AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs that analysts depend on: stale data, schema changes, unexpected row loss, null explosions, numerical scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
 
-## Core v0.1 status
+## Core v0.2 status
 
-Core v0.1 is a local proof-of-concept modular monolith. It supports:
+Core v0.2 is a test-ready Python modular monolith with scheduled monitoring and a GitHub Pages test surface. It supports:
 
 - CSV, XLSX, JSON and unauthenticated HTTP GET JSON sources
 - source profiles for schema, row count, nulls, cardinality, numeric distributions and material categories
 - deterministic availability, freshness, schema, row-count, null-rate, numeric, categorical and configured-key uniqueness checks
-- retained observations and an explicit baseline
-- Healthy / Warning / Critical source state with evidence-backed findings
-- a CLI, JSON API and intentionally simple web dashboard
+- explicit baseline plus recent Healthy-history comparison context
+- independent check cadence and source-freshness expectations
+- retained observations and baseline promotion
+- Healthy / Warning / Critical state with evidence-backed findings
+- CLI, JSON API and local FastAPI dashboard
+- generated read-only GitHub Pages dashboard
+- scheduled GitHub Actions monitoring for testing
 
-It does **not** include authentication, billing, notifications, enterprise warehouses, BI integrations, LLM-dependent detection, or embedded scheduling.
+It does **not** include authentication, billing, notification delivery, authenticated API secrets, enterprise warehouses, BI integrations, or LLM-dependent detection.
 
 ## Setup
 
@@ -27,45 +31,94 @@ source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
 python -m pip install -e ".[dev]"
 ```
 
-## Add and check a source
+## Repository-configured sources
+
+`config/sources.json` is the source list used by the GitHub Actions test monitor. Keep this file free of credentials or secret query parameters.
 
 ```bash
-analystwatch add-source \\
-  --id market_data \\
-  --name "Market Data" \\
-  --type csv \\
-  --location ./market_data.csv \\
+analystwatch sync-sources config/sources.json
+analystwatch schedule
+analystwatch check-due
+```
+
+The checked-in `demo-market` source points at `samples/demo_market.csv`. Its first hosted run establishes a baseline. Editing that sample later is a simple way to exercise hosted change detection while preserving prior state.
+
+## Add a source manually
+
+```bash
+analystwatch add-source \
+  --id market_data \
+  --name "Market Data" \
+  --type csv \
+  --location ./market_data.csv \
+  --monitor-interval-minutes 60 \
   --unique-key id
 
 analystwatch check market_data
 analystwatch list
 ```
 
-The first successful observation becomes the baseline. To explicitly accept a later observation as the new baseline:
+Monitoring cadence and freshness are separate. This checks every hour but expects the source itself to refresh daily:
+
+```bash
+analystwatch add-source \
+  --id economic_api \
+  --name "Economic API" \
+  --type api \
+  --location https://example.test/data \
+  --monitor-interval-minutes 60 \
+  --expected-refresh-minutes 1440 \
+  --latest-date-field as_of
+```
+
+Date inference is deliberately opt-in:
+
+```bash
+analystwatch add-source \
+  --id inferred_api \
+  --name "Inferred Date API" \
+  --type api \
+  --location https://example.test/data \
+  --expected-refresh-minutes 1440 \
+  --infer-latest-date-field
+```
+
+## Baselines and signal quality
+
+The first successful observation becomes the baseline. To explicitly accept a later observation:
 
 ```bash
 analystwatch promote-baseline market_data
 ```
 
-For freshness, configure either file age or a date field:
+After enough recent Healthy observations exist, v0.2 uses their median as an operational reference for row count, null rate, numeric median and key-duplication checks. Findings still expose the explicit baseline so gradual healthy growth does not erase the approved reference point.
 
-```bash
-analystwatch add-source \\
-  --id economic_api \\
-  --name "Economic API" \\
-  --type api \\
-  --location https://example.test/data \\
-  --expected-refresh-minutes 1440 \\
-  --latest-date-field as_of
-```
-
-## Dashboard
+## Local dashboard
 
 ```bash
 analystwatch serve --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000`. The dashboard shows current health; each source page shows findings, baseline/current evidence and recent history. Sources can also be created with `POST /api/sources` and checked with `POST /api/sources/{id}/check`.
+Open `http://127.0.0.1:8000`.
+
+## GitHub Pages test deployment
+
+GitHub Pages is static hosting, so FastAPI does not run there. `.github/workflows/pages.yml` runs AnalystWatch in GitHub Actions, stores the small test SQLite database on the private `monitor-state` branch, renders `site/`, and deploys that read-only snapshot to Pages.
+
+The workflow runs:
+
+- after pushes to `main` — all enabled sources
+- manually — all enabled sources
+- hourly at minute 17 — only sources currently due
+
+GitHub Pages must be configured to use **GitHub Actions** as its publishing source. The workflow then uses GitHub's official Pages artifact/deployment actions.
+
+For local static export testing:
+
+```bash
+analystwatch build-pages --output site
+python -m http.server 8080 --directory site
+```
 
 ## Demonstrate the core signal
 
@@ -73,7 +126,7 @@ Open `http://127.0.0.1:8000`. The dashboard shows current health; each source pa
 python scripts/run_demo.py
 ```
 
-The demo establishes a healthy CSV baseline, divides the `amount` values by 100 without changing schema or volume, then runs AnalystWatch again. The expected result is Critical numeric drift with a **possible scaling/unit change** explanation—not an unsupported claim about root cause.
+The demo establishes a healthy CSV baseline, divides `amount` values by 100 without changing schema or volume, then detects Critical numeric drift with a **possible scaling/unit change** explanation rather than asserting an unsupported root cause.
 
 ## Test / repository gate
 
@@ -88,22 +141,27 @@ CI runs the same gate on pushes and pull requests.
 ## Architecture
 
 ```text
-source -> ingestion -> profile -> deterministic detectors -> health/findings
-                                                |
-                                                v
-                                    SQLite observation history
-                                                |
-                                                v
-                                      CLI / FastAPI dashboard
+source config -> schedule -> ingestion -> profile -> deterministic detectors
+                                      |                 |
+                                      |                 v
+                                      |       baseline + healthy history
+                                      v                 |
+                                  SQLite <--------------+
+                                      |
+                      +---------------+----------------+
+                      |                                |
+                 FastAPI local                  static Pages export
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decision and tradeoffs and [`docs/MILESTONES.md`](docs/MILESTONES.md) for scope.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).
 
 ## Current limitations
 
+- GitHub Pages is read-only and intended for testing.
+- Test-state persistence on `monitor-state` is not the production storage design.
+- GitHub cron execution can be delayed.
 - API authentication/secret storage is not implemented.
-- API content freshness requires a configured `latest_date_field`; HTTP 200 alone is not freshness evidence.
-- JSON is limited to analyst-friendly record structures documented in the architecture file.
-- Rename-looking schema changes are not inferred yet; added/removed columns are reported without claiming a rename.
-- SQLite and the local dashboard are proof-of-concept infrastructure, not a multi-tenant SaaS architecture.
-- Detection is intentionally deterministic and threshold-based; historical multi-window anomaly models are later work.
+- Date-field inference is opt-in and intentionally conservative.
+- Rename-looking schema changes are not inferred yet.
+- Historical context is a deterministic rolling Healthy median, not forecasting/ML.
+- Notifications are intentionally deferred until real-world signal quality is validated.
