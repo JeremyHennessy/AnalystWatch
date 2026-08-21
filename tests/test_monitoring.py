@@ -6,10 +6,10 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
+from conftest import write_csv_source
 
 from analystwatch.models import HealthStatus, MonitoringConfig, SourceDefinition, SourceType
 from analystwatch.service import MonitorService
-from conftest import write_csv_source
 
 
 def _baseline(service: MonitorService, path: Path, frame: pd.DataFrame, now, config=None):
