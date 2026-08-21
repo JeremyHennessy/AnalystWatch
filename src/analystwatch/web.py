@@ -56,11 +56,13 @@ def create_app(
         if workspace_id is not None
         else os.environ.get("ANALYSTWATCH_WORKSPACE_ID", DEFAULT_WORKSPACE_ID)
     )
-    storage = WorkspaceStore(Storage(resolved_db), resolved_workspace)
+    raw_storage = Storage(resolved_db)
+    storage = WorkspaceStore(raw_storage, resolved_workspace)
     service = MonitorService(storage)
 
     app = FastAPI(title="AnalystWatch", version="0.10.0")
-    app.state.storage = storage
+    app.state.storage = raw_storage
+    app.state.workspace_storage = storage
     app.state.service = service
     app.state.workspace_id = resolved_workspace
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
