@@ -67,6 +67,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             name="onboard.html",
             context={
                 "static_css": str(request.url_for("static", path="/app.css")),
+                "onboard_css": str(request.url_for("static", path="/onboard.css")),
                 "home_href": "/",
             },
         )
