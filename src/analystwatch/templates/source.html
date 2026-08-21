@@ -51,6 +51,24 @@
         <div class="panel metric-card"><span>Next scheduled check</span><strong>{% if schedule.next_check_at %}{{ schedule.next_check_at.strftime('%Y-%m-%d %H:%M UTC') }}{% elif schedule.due %}Due now{% else %}Disabled{% endif %}</strong></div>
       </section>
 
+      {% if incident %}
+      <section class="panel">
+        <div class="section-title"><h2>Incident lifecycle</h2><span>{{ incident.status.value }}</span></div>
+        <div class="grid four">
+          <div class="metric-card"><span>Opened</span><strong>{{ incident.opened_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
+          <div class="metric-card"><span>Peak health</span><strong class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</strong></div>
+          <div class="metric-card"><span>Incident observations</span><strong>{{ incident.observation_count }}</strong></div>
+          <div class="metric-card"><span>Notification candidates</span><strong>{{ notification_candidate_count }}</strong></div>
+        </div>
+        {% if incident.status.value == 'Recovered' %}
+          <p class="healthy-note"><strong>Recovered.</strong> The source returned to Healthy at {{ incident.recovered_at.strftime('%Y-%m-%d %H:%M UTC') }}.</p>
+        {% else %}
+          <p class="muted">The incident remains open at {{ incident.current_health.value }} health.</p>
+        {% endif %}
+        <p class="muted">Notification candidates are transition records only. Core v0.5 does not send email, Slack, webhooks, or other outbound notifications.</p>
+      </section>
+      {% endif %}
+
       {% if latest.health.value != 'Healthy' %}
       <section class="panel">
         <div class="section-title"><h2>Operational review</h2><span>{% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed{% endif %}</span></div>
