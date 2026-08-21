@@ -71,7 +71,10 @@ def test_duplicate_declared_unique_key_blocks_onboarding(service, tmp_path: Path
 def test_bad_numeric_parse_rate_blocks_onboarding(service, tmp_path: Path):
     path = tmp_path / "bad-numeric.csv"
     pd.DataFrame(
-        {"id": list(range(10)), "amount": ["1", "2", "3", "4", "5", "6", "7", "8", "bad", "also-bad"]}
+        {
+            "id": list(range(10)),
+            "amount": ["1", "2", "3", "4", "5", "6", "7", "8", "bad", "also-bad"],
+        }
     ).to_csv(path, index=False)
     source = _csv_source(path, numeric_fields=["amount"])
 
