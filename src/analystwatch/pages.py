@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .incidents import latest_incident
 from .models import SourceDefinition, SourceType
 from .scheduler import run_decision
 from .storage import Storage
@@ -27,6 +28,7 @@ def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -
     baseline = storage.get_baseline(source.id)
     last_successful = storage.get_last_successful(source.id)
     decision = run_decision(storage, source, now=now)
+    candidates = storage.list_notification_candidates(source.id, limit=20)
     return {
         "source": source,
         "public_location": _public_location(source),
@@ -34,6 +36,9 @@ def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -
         "baseline": baseline,
         "last_successful": last_successful,
         "latest_review": storage.get_review(latest.id) if latest else None,
+        "incident": latest_incident(storage.list_observations(source.id, limit=200)),
+        "notification_candidates": candidates,
+        "notification_candidate_count": len(candidates),
         "health": latest.health.value if latest else "Not checked",
         "schedule": decision,
     }
@@ -45,6 +50,8 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
         latest = storage.get_latest(source.id)
         baseline = storage.get_baseline(source.id)
         review = storage.get_review(latest.id) if latest else None
+        incident = latest_incident(storage.list_observations(source.id, limit=200))
+        candidates = storage.list_notification_candidates(source.id, limit=100)
         sources.append(
             {
                 "id": source.id,
@@ -55,6 +62,8 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
                 "monitor_interval_minutes": source.config.monitor_interval_minutes,
                 "health": latest.health.value if latest else "Not checked",
                 "review_state": review.state.value if review else None,
+                "incident": incident.model_dump(mode="json") if incident else None,
+                "notification_candidate_count": len(candidates),
                 "latest": json.loads(latest.model_dump_json()) if latest else None,
                 "baseline_id": baseline.id if baseline else None,
             }

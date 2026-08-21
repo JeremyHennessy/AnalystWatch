@@ -64,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("schedule", help="Show current due/next-check decisions")
     sub.add_parser("list", help="List monitored sources")
 
+    incident = sub.add_parser("incident", help="Show the latest derived incident for a source")
+    incident.add_argument("source_id")
+
+    candidates = sub.add_parser(
+        "notification-candidates",
+        help="List pending transition candidates; no delivery is performed",
+    )
+    candidates.add_argument("--source-id")
+    candidates.add_argument("--limit", type=int, default=100)
+
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
     baseline_review.add_argument("--observation-id")
@@ -163,6 +173,16 @@ def main(argv: list[str] | None = None) -> int:
                 else "due/disabled"
             )
             print(f"{source.id}\t{status}\t{next_check}\t{source.name}\t{source.location}")
+        return 0
+
+    if args.command == "incident":
+        incident_state = service.incident(args.source_id)
+        print(incident_state.model_dump_json(indent=2) if incident_state else "null")
+        return 0
+
+    if args.command == "notification-candidates":
+        items = service.notification_candidates(args.source_id, limit=args.limit)
+        print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
         return 0
 
     if args.command == "baseline-review":
