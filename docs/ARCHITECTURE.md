@@ -1,53 +1,87 @@
-# AnalystWatch Core v0.1 Architecture
+# AnalystWatch Core v0.2 Architecture
 
 ## Decision
 
-Core v0.1 is a Python modular monolith. The same process hosts a small FastAPI web/API layer and calls a deterministic monitoring engine. SQLite persists source definitions, observations, findings, profiles, and the selected baseline.
+Core v0.2 remains a Python modular monolith. FastAPI is the interactive local/API surface, while GitHub Pages is a generated read-only test surface. The monitoring engine remains authoritative; no detector logic is duplicated in browser JavaScript.
 
-This is deliberate: the data work is Python-native, SQLite is inspectable and sufficient for a proof of concept, and a single deployable avoids premature service boundaries. The monitoring domain modules are kept separate so storage, scheduling, or the web shell can be replaced later without rewriting detectors.
+SQLite persists source definitions, observations, findings, profiles, and the selected baseline. For the temporary GitHub-hosted test environment, a dedicated private `monitor-state` branch retains the small SQLite database between scheduled GitHub Actions runs. This is intentionally a testing mechanism, not the production storage design.
 
 ## Data flow
 
 ```text
 SourceDefinition
+  -> schedule decision
   -> ingest (CSV / XLSX / JSON / REST JSON)
   -> pandas DataFrame
   -> profile
-  -> freshness + baseline comparison detectors
+  -> freshness + baseline/history comparison detectors
   -> findings
   -> Healthy / Warning / Critical
   -> SQLite observation history
   -> FastAPI dashboard/API
+  -> static Pages export
 ```
 
 ## Components
 
-- `models.py` — source configuration and evidence models.
-- `ingest.py` — file/API acquisition; failures become evidence rather than uncaught monitor crashes.
-- `profile.py` — structural, completeness, cardinality, numeric and categorical summaries.
-- `detectors.py` — deterministic comparisons against the selected baseline plus freshness checks.
-- `storage.py` — SQLite source definitions, observation history and baseline pointer.
-- `service.py` — one monitoring transaction.
-- `web.py` — minimal server-rendered dashboard and JSON API.
-- `cli.py` — local source registration, checking, baseline promotion and serving.
+- `models.py` — source configuration, profiles, findings, observations, and schedule decisions.
+- `config.py` — validated JSON source-definition loading.
+- `scheduler.py` — monitor cadence decisions independent from source freshness expectations.
+- `ingest.py` — file/API acquisition; API responses retain HTTP status, timing, `Last-Modified`, and ETag evidence where available.
+- `profile.py` — structural, completeness, cardinality, numeric, categorical, and opt-in date-field inference.
+- `detectors.py` — deterministic comparisons against the selected baseline and, when enough trusted history exists, recent healthy-history reference windows.
+- `storage.py` — SQLite source definitions, observations, history, and baseline pointer.
+- `service.py` — monitoring transactions, due-source execution, and all-source execution.
+- `web.py` — interactive local FastAPI dashboard/API.
+- `pages.py` — read-only static dashboard exporter for GitHub Pages.
+- `cli.py` — source sync, scheduling, checking, baseline promotion, Pages build, and local serving.
 
-## Baselines and history
+## Scheduling
 
-The first successful observation is retained as the source baseline. Every run stores a compact observation/profile rather than a full dataset copy. A later successful observation can be explicitly promoted to baseline. The dashboard exposes recent history so current, previous, and baseline states remain distinguishable.
+`monitor_interval_minutes` controls how often AnalystWatch should inspect a source. It is distinct from `expected_refresh_minutes`, which describes how fresh the upstream data is expected to be.
 
-## Detector philosophy
+A never-checked enabled source is due immediately. After a check, the next due time is the last observation time plus the monitoring interval. Disabled sources are never due.
 
-Detectors use explicit thresholds and emit the actual current/baseline evidence. Numeric drift reports symptoms such as "possible scaling/unit change" rather than asserting an unproven root cause. Category changes use material frequency plus total-variation distance to reduce noise. Key uniqueness drift only runs for configured key columns.
+The GitHub Actions test deployment runs hourly. Scheduled runs execute only due sources. Push/manual runs execute all enabled sources so configuration or fixture changes are visible immediately.
 
-## Freshness
+## Signal-quality reference windows
 
-For files, freshness can use filesystem modification time. If `latest_date_field` is configured, its maximum parseable value is used instead. APIs therefore need a configured date field to support content freshness in v0.1; HTTP success alone is not treated as freshness evidence.
+The explicit approved baseline remains retained and visible. Once at least `min_history_observations` recent **Healthy** observations exist, row-count, null-rate, numeric-median, and uniqueness checks use the median of that healthy history as their operational comparison reference while still exposing the explicit baseline in the finding evidence.
+
+This prevents an old baseline from over-escalating normal gradual growth. Unhealthy observations are excluded from reference history so detected anomalies do not teach the monitor that the anomaly is normal.
+
+Schema and categorical-presence checks continue to compare against the explicit baseline because those semantics should not silently drift with recent history.
+
+## Freshness evidence
+
+Freshness evidence is deliberately explicit:
+
+- files can use filesystem modification time;
+- APIs can use HTTP `Last-Modified` when supplied;
+- a configured `latest_date_field` can use content dates;
+- `infer_latest_date_field` is opt-in and only considers conservative, date-like field names with high parseability.
+
+ETag is retained as observation evidence but does not by itself prove freshness.
+
+## GitHub Pages test deployment
+
+GitHub Pages cannot run FastAPI. The Pages workflow therefore:
+
+1. restores the small SQLite monitoring database from `monitor-state`;
+2. syncs repository source definitions from `config/sources.json`;
+3. runs due/all checks;
+4. renders a static site from the resulting stored observations;
+5. persists the updated database back to `monitor-state`;
+6. deploys only the generated static `site/` artifact to Pages.
+
+API query strings are removed from public static output to reduce accidental secret exposure. Secret-bearing authenticated APIs are still out of scope for this milestone.
 
 ## Tradeoffs / current limitations
 
-- SQLite is single-node and intended for the proof-of-concept, not large multi-tenant SaaS concurrency.
+- The `monitor-state` branch is acceptable for small private test state but will create Git history growth and is not a production database strategy.
+- GitHub scheduled workflows are not a real-time scheduler and can run later than the requested cron time.
+- Pages is read-only; interactive check/baseline actions require the local FastAPI app/API.
 - Authentication and source secrets are intentionally out of scope.
-- JSON support is arrays of objects, flat objects, `records`/`data` arrays, or a configured dotted record path.
-- Schema rename inference is not implemented yet; removed/added fields are reported without claiming a rename.
-- Detection compares primarily to the selected baseline. Rich multi-window historical models are later work.
-- Scheduling is not yet embedded; an external scheduler can invoke the CLI/API.
+- Schema rename inference is not implemented; removed/added fields are reported without claiming a rename.
+- Historical reference windows are deterministic rolling medians, not statistical forecasting or machine learning.
+- Notification delivery remains deferred until signal quality is validated with real sources.

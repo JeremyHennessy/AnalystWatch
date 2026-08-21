@@ -8,3 +8,4 @@ build/
 dist/
 instance/
 .DS_Store
+site/

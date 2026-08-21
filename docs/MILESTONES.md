@@ -1,30 +1,48 @@
 # Milestones
 
-## Core v0.1 — current
+## Core v0.1 — complete
 
-Goal: prove that AnalystWatch can establish a known-good source baseline, detect meaningful silent changes, explain the evidence, and expose a simple health state.
-
-Implemented in this milestone branch:
+Established the deterministic monitoring foundation:
 
 - CSV, XLSX, JSON and unauthenticated REST JSON ingestion
-- deterministic profiling and source history
+- profiling and retained source history
 - availability, freshness, schema, row-count, null-rate, numeric, categorical and configured-key uniqueness detectors
 - Healthy / Warning / Critical classification
-- explicit baseline retention and baseline promotion
-- CLI, JSON API and minimal health dashboard
-- deliberately broken detector fixtures plus false-positive control tests
-- GitHub Actions CI gate
+- explicit baseline retention/promotion
+- CLI, JSON API and minimal dashboard
+- deliberately broken fixtures and false-positive controls
+- CI gate
 
-## Candidate v0.2 — after v0.1 verification
+## Core v0.2 — Scheduling & Signal Quality
 
-- scheduled checks and run policies
-- richer baseline windows / trend context
-- better date-field inference and API freshness metadata
-- source onboarding UI
+Goal: make the core useful as a continuously checked test product without weakening detector trust.
+
+Implemented:
+
+- independent monitoring cadence via `monitor_interval_minutes`
+- due/not-due schedule decisions and `check-due` / `check-all`
+- repository source configuration sync
+- recent Healthy-history reference windows for row, null, numeric and uniqueness signals
+- explicit baseline retained alongside historical context
+- opt-in conservative latest-date inference
+- API `Last-Modified` and ETag evidence capture
+- read-only static dashboard export
+- GitHub Actions hourly monitoring workflow
+- persistent test monitoring state on dedicated `monitor-state` branch
+- GitHub Pages deployment workflow
+- v0.2 scheduling/signal/static-site regression tests
+
+## Candidate v0.3 — real-source hardening
+
+- test with several real public/government/vendor-style sources over time
+- tune thresholds from observed false positives/false negatives
+- source onboarding/configuration UI
 - secure API headers/secrets
-- notification delivery after signal quality is validated
+- incident acknowledgement and baseline-review workflow
+- notification delivery only after signal quality proves trustworthy
+- replace test-state persistence with deployment-appropriate storage before production SaaS work
 
-## Later — not v0.1
+## Later
 
 - SourceGuard productization
 - ModelGuard
