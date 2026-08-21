@@ -59,7 +59,7 @@
           <div class="metric-card"><span>Opened</span><strong>{{ incident.opened_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
           <div class="metric-card"><span>Peak health</span><strong class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</strong></div>
           <div class="metric-card"><span>Incident observations</span><strong>{{ incident.observation_count }}</strong></div>
-          <div class="metric-card"><span>Candidates</span><strong>{{ notification_candidate_count }}</strong></div>
+          <div class="metric-card"><span>Notification candidates</span><strong>{{ notification_candidate_count }}</strong></div>
         </div>
         {% if incident.status.value == 'Recovered' %}
           <p class="healthy-note"><strong>Recovered.</strong> The source returned to Healthy at {{ incident.recovered_at.strftime('%Y-%m-%d %H:%M UTC') }}.</p>
