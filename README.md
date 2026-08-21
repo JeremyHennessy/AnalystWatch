@@ -4,9 +4,9 @@
 
 AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs that analysts depend on: stale data, schema changes, unexpected row loss, null explosions, numerical scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
 
-## Core v0.2.1 status
+## Core v0.3 status
 
-Core v0.2.1 is a test-ready Python modular monolith with scheduled monitoring, a GitHub Pages test surface, and initial validation against real public APIs. It supports:
+Core v0.3 is a test-ready Python modular monolith with scheduled monitoring, a GitHub Pages test surface, initial real-source validation, and local source onboarding with contract preflight. It supports:
 
 - CSV, XLSX, JSON and unauthenticated HTTP GET JSON sources
 - source profiles for schema, row count, nulls, cardinality, numeric distributions and material categories
@@ -16,6 +16,8 @@ Core v0.2.1 is a test-ready Python modular monolith with scheduled monitoring, a
 - independent check cadence and source-freshness expectations
 - retained observations and baseline promotion
 - Healthy / Warning / Critical state with evidence-backed findings
+- source preflight that validates a candidate without saving it or creating a baseline
+- local onboarding UI that accepts only a preflight-ready new source
 - CLI, JSON API and local FastAPI dashboard
 - generated read-only GitHub Pages dashboard
 - scheduled GitHub Actions monitoring for testing
@@ -52,6 +54,39 @@ The hosted test configuration currently includes:
 The Treasury API publishes numeric amounts as JSON strings. Those amount fields are explicitly listed in `numeric_fields`, so AnalystWatch profiles them numerically and can detect scaling/distribution changes without automatically treating numeric-looking IDs or codes as numbers.
 
 The first live-source smoke run on August 21, 2026 verified both public APIs from GitHub Actions: each returned 30 usable rows, both configured freshness fields parsed successfully, and all configured numeric fields were profiled numerically. That is an initial integration verification, not yet evidence of long-term false-positive performance.
+
+## Add and validate a source locally
+
+Run the local dashboard:
+
+```bash
+analystwatch serve --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000`, then choose **Add source**. The onboarding flow separates validation from persistence:
+
+1. define the source and the contracts AnalystWatch should enforce;
+2. run **Preflight**;
+3. AnalystWatch ingests and profiles the candidate without saving it;
+4. resolve any blocking contract errors;
+5. add the monitored source only when preflight reports **Ready**.
+
+Preflight validates, where configured:
+
+- source availability and non-empty data
+- numeric fields and their parseability
+- unique-key presence, nulls and duplicates
+- freshness-field presence and date parseability
+- whether a configured refresh expectation has usable freshness evidence
+
+A stale-but-structurally-valid source can surface a freshness warning without making the source contract invalid. Blocking errors prevent onboarding.
+
+Onboarding does not silently replace an existing source ID. Editing existing source definitions remains a separate workflow. A newly accepted source is saved without creating an observation or baseline; its first explicit/scheduled monitoring check establishes the baseline.
+
+The same operations are available through the local API:
+
+- `POST /api/preflight` — inspect a `SourceDefinition` without persistence
+- `POST /api/onboard` — re-run preflight and persist only when ready
 
 ## Add a source manually
 
@@ -93,11 +128,11 @@ analystwatch add-source \
   --infer-latest-date-field
 ```
 
-For source-specific parsing contracts such as `numeric_fields`, use `config/sources.json`; this keeps hosted test configuration explicit and reviewable.
+For source-specific parsing contracts such as `numeric_fields`, use the onboarding UI/API or `config/sources.json`; this keeps hosted test configuration explicit and reviewable.
 
 ## Baselines and signal quality
 
-The first successful observation becomes the baseline. To explicitly accept a later observation:
+The first successful monitoring observation becomes the baseline. To explicitly accept a later observation:
 
 ```bash
 analystwatch promote-baseline market_data
@@ -105,19 +140,13 @@ analystwatch promote-baseline market_data
 
 After enough recent Healthy observations exist, AnalystWatch uses their median as an operational reference for row count, null rate, numeric median and key-duplication checks. Findings still expose the explicit baseline so gradual healthy growth does not erase the approved reference point.
 
-## Local dashboard
-
-```bash
-analystwatch serve --host 127.0.0.1 --port 8000
-```
-
-Open `http://127.0.0.1:8000`.
-
 ## GitHub Pages test deployment
 
-GitHub Pages is static hosting, so FastAPI does not run there. `.github/workflows/pages.yml` runs AnalystWatch in GitHub Actions, stores the small test SQLite database on the dedicated `monitor-state` branch, renders `site/`, and deploys that read-only snapshot to Pages.
+GitHub Pages is static hosting, so FastAPI and onboarding do not run there. `.github/workflows/pages.yml` runs AnalystWatch in GitHub Actions, stores the small test SQLite database on the dedicated `monitor-state` branch, renders `site/`, and deploys that read-only snapshot to Pages.
 
 The repository is currently public. Therefore `monitor-state` is also public and **must contain only non-secret test state**. Do not store credentials, authenticated API headers, secret query parameters, or sensitive datasets in that branch/database. This branch-based persistence is temporary test infrastructure, not the production storage design.
+
+The Pages source detail exposes each monitored source's contract—check cadence, expected refresh, freshness field, record path/sheet, numeric fields and unique keys—without adding write controls.
 
 The workflow runs:
 
@@ -168,6 +197,9 @@ CI runs the same gate on pushes and pull requests.
 ## Architecture
 
 ```text
+candidate source -> preflight contract validation -> accept source
+                                                  |
+                                                  v
 source config -> schedule -> ingestion -> profile -> deterministic detectors
                                       |                 |
                                       |                 v
@@ -184,11 +216,12 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](do
 
 ## Current limitations
 
-- GitHub Pages is read-only and intended for testing.
+- GitHub Pages is read-only and intended for testing; onboarding is local/API only.
 - Test-state persistence on `monitor-state` is not the production storage design.
 - The current public repository means all branch-persisted test state is public.
 - GitHub cron execution can be delayed.
 - API authentication/secret storage is not implemented.
+- Existing-source editing does not yet have the same preflight workflow as new-source onboarding.
 - Date-field inference is opt-in and intentionally conservative.
 - Rename-looking schema changes are not inferred yet.
 - Historical context is a deterministic rolling Healthy median, not forecasting/ML.

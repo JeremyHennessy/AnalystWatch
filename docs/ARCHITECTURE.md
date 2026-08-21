@@ -1,17 +1,26 @@
-# AnalystWatch Core v0.2.1 Architecture
+# AnalystWatch Core v0.3 Architecture
 
 ## Decision
 
-Core v0.2.1 remains a Python modular monolith. FastAPI is the interactive local/API surface, while GitHub Pages is a generated read-only test surface. The monitoring engine remains authoritative; no detector logic is duplicated in browser JavaScript.
+Core v0.3 remains a Python modular monolith. FastAPI is the interactive local/API surface, while GitHub Pages is a generated read-only test surface. The monitoring engine remains authoritative; no detector logic is duplicated in browser JavaScript.
 
-SQLite persists source definitions, observations, findings, profiles, and the selected baseline. For the temporary GitHub-hosted test environment, a dedicated `monitor-state` branch retains the small SQLite database between scheduled GitHub Actions runs. This is intentionally a testing mechanism, not the production storage design.
+SQLite persists accepted source definitions, observations, findings, profiles, and the selected baseline. For the temporary GitHub-hosted test environment, a dedicated `monitor-state` branch retains the small SQLite database between scheduled GitHub Actions runs. This is intentionally a testing mechanism, not the production storage design.
 
 The repository is currently public, so `monitor-state` is public as well. It must contain only non-secret test state. Secret-bearing sources remain out of scope until storage and credential handling are designed explicitly.
 
 ## Data flow
 
+New-source onboarding and monitoring are deliberately separate transactions:
+
 ```text
-SourceDefinition
+Candidate SourceDefinition
+  -> ingest + profile (preflight only)
+  -> validate declared source contracts
+  -> Ready / Needs attention
+  -> accept definition only when Ready
+  -> first monitoring check later establishes baseline
+
+Accepted SourceDefinition
   -> schedule decision
   -> ingest (CSV / XLSX / JSON / REST JSON)
   -> pandas DataFrame
@@ -24,20 +33,44 @@ SourceDefinition
   -> static Pages export
 ```
 
+Preflight never writes a source, observation, or baseline. Onboarding re-runs preflight server-side before persistence rather than trusting a previous browser result.
+
 ## Components
 
 - `models.py` — source configuration, profiles, findings, observations, and schedule decisions.
 - `config.py` — validated JSON source-definition loading.
+- `preflight.py` — non-persistent candidate ingestion/profiling plus source-contract validation.
 - `scheduler.py` — monitor cadence decisions independent from source freshness expectations.
 - `ingest.py` — file/API acquisition; API responses retain HTTP status, timing, `Last-Modified`, and ETag evidence where available.
 - `profile.py` — structural, completeness, cardinality, numeric, categorical, explicit numeric-field coercion, and opt-in date-field inference.
 - `detectors.py` — deterministic comparisons against the selected baseline and, when enough trusted history exists, recent healthy-history reference windows.
 - `storage.py` — SQLite source definitions, observations, history, and baseline pointer.
-- `service.py` — monitoring transactions, due-source execution, and all-source execution.
-- `web.py` — interactive local FastAPI dashboard/API.
+- `service.py` — preflight/onboarding plus monitoring transactions, due-source execution, and all-source execution.
+- `web.py` — interactive local FastAPI dashboard/API and onboarding endpoints.
+- `templates/onboard.html` / `static/onboard.css` — local new-source workflow isolated from the shared dashboard stylesheet.
 - `pages.py` — read-only static dashboard exporter for GitHub Pages.
 - `scripts/live_source_smoke.py` — real-upstream contract validation used by CI.
 - `cli.py` — source sync, scheduling, checking, baseline promotion, Pages build, and local serving.
+
+## Onboarding contract preflight
+
+A source definition can be syntactically valid while still being analytically unsafe. Preflight therefore tests the candidate against actual source data before it enters monitoring.
+
+Blocking checks currently include:
+
+- source unavailable or unusable;
+- zero returned records;
+- configured numeric field missing or entirely empty;
+- fewer than 95% of non-null values in a configured numeric field parse numerically;
+- configured unique key missing, null, or duplicated;
+- configured freshness field missing or containing no parseable dates;
+- expected refresh configured with no usable freshness evidence.
+
+A numeric parse rate from 95% to below 100% is a warning rather than a blocker so imperfect but intentional feeds can be reviewed instead of silently rejected. Existing freshness-detector output is also surfaced during preflight as evidence. A currently stale source can therefore be structurally Ready while warning that its current data is old.
+
+`MonitorService.onboard_source` refuses an existing source ID. Editing existing definitions is intentionally separate so a new-source flow cannot silently rewrite an established monitoring contract.
+
+Successful onboarding saves only the definition. It does not reuse the preflight profile as a baseline because that would silently convert an inspection into a persisted monitoring event. The source is immediately due, and its first explicit/scheduled check establishes the baseline through the normal monitor transaction.
 
 ## Source contracts and numeric strings
 
@@ -83,7 +116,7 @@ The live-source smoke workflow complements deterministic tests with actual upstr
 - every configured numeric field exists and is profiled numerically;
 - every configured content freshness field yields a parseable latest date.
 
-The first run on August 21, 2026 verified Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny with 30 rows each and no contract failures. This establishes integration behavior at that point in time; it does not establish long-run false-positive/false-negative performance.
+The first run on August 21, 2026 verified Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny with 30 rows each and no contract failures. The v0.3 service changes were also run through the same smoke gate. This establishes integration behavior at those checkpoints; it does not establish long-run false-positive/false-negative performance.
 
 ## GitHub Pages test deployment
 
@@ -96,13 +129,16 @@ GitHub Pages cannot run FastAPI. The Pages workflow therefore:
 5. persists the updated database back to `monitor-state`;
 6. deploys only the generated static `site/` artifact to Pages.
 
+The Pages site does not expose onboarding/write controls. Source details do expose the configured monitoring contract so the hosted test surface remains inspectable.
+
 API query strings are removed from public static output to reduce accidental exposure. Authenticated/secret-bearing APIs are still out of scope.
 
 ## Tradeoffs / current limitations
 
 - The public `monitor-state` branch is acceptable only for small, non-secret test state; it creates Git history growth and is not a production database strategy.
 - GitHub scheduled workflows are not a real-time scheduler and can run later than the requested cron time.
-- Pages is read-only; interactive check/baseline actions require the local FastAPI app/API.
+- Pages is read-only; onboarding, interactive check, and baseline actions require the local FastAPI app/API.
+- New-source preflight does not yet extend to edits of existing source contracts.
 - Authentication and source secrets are intentionally out of scope.
 - Explicit numeric-field contracts require source-aware configuration; broad automatic numeric-string inference is intentionally avoided.
 - Schema rename inference is not implemented; removed/added fields are reported without claiming a rename.
