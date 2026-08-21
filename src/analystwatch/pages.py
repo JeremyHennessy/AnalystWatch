@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .incidents import latest_incident
-from .models import SourceDefinition, SourceType
+from .models import NotificationCandidate, SourceDefinition, SourceType
 from .scheduler import run_decision
 from .storage import Storage
 
@@ -23,12 +23,19 @@ def _public_location(source: SourceDefinition) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def _candidate_state_counts(candidates: list[NotificationCandidate]) -> dict[str, int]:
+    counts = {"Pending": 0, "Eligible": 0, "Suppressed": 0}
+    for candidate in candidates:
+        counts[candidate.state.value] = counts.get(candidate.state.value, 0) + 1
+    return counts
+
+
 def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -> dict[str, object]:
     latest = storage.get_latest(source.id)
     baseline = storage.get_baseline(source.id)
     last_successful = storage.get_last_successful(source.id)
     decision = run_decision(storage, source, now=now)
-    candidates = storage.list_notification_candidates(source.id, limit=20)
+    candidates = storage.list_notification_candidates(source.id, limit=100)
     return {
         "source": source,
         "public_location": _public_location(source),
@@ -39,6 +46,7 @@ def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -
         "incident": latest_incident(storage.list_observations(source.id, limit=200)),
         "notification_candidates": candidates,
         "notification_candidate_count": len(candidates),
+        "notification_candidate_states": _candidate_state_counts(candidates),
         "health": latest.health.value if latest else "Not checked",
         "schedule": decision,
     }
@@ -51,7 +59,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
         baseline = storage.get_baseline(source.id)
         review = storage.get_review(latest.id) if latest else None
         incident = latest_incident(storage.list_observations(source.id, limit=200))
-        candidates = storage.list_notification_candidates(source.id, limit=100)
+        candidates = storage.list_notification_candidates(source.id, limit=1000)
         sources.append(
             {
                 "id": source.id,
@@ -60,10 +68,14 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
                 "location": _public_location(source),
                 "enabled": source.enabled,
                 "monitor_interval_minutes": source.config.monitor_interval_minutes,
+                "notification_transitions": [
+                    item.value for item in source.config.notification_transitions
+                ],
                 "health": latest.health.value if latest else "Not checked",
                 "review_state": review.state.value if review else None,
                 "incident": incident.model_dump(mode="json") if incident else None,
                 "notification_candidate_count": len(candidates),
+                "notification_candidate_states": _candidate_state_counts(candidates),
                 "latest": json.loads(latest.model_dump_json()) if latest else None,
                 "baseline_id": baseline.id if baseline else None,
             }

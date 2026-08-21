@@ -250,6 +250,19 @@ class Storage:
             rows = db.execute(query, params).fetchall()
         return [NotificationCandidate.model_validate_json(row[0]) for row in rows]
 
+    def update_notification_candidate(
+        self,
+        candidate: NotificationCandidate,
+    ) -> NotificationCandidate:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE notification_candidates SET candidate_json = ? WHERE id = ?",
+                (candidate.model_dump_json(), candidate.id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Unknown notification candidate: {candidate.id}")
+        return candidate
+
     def promote_baseline(self, source_id: str, observation_id: str) -> Observation:
         observation = self._observation_by_id(observation_id)
         if observation is None or observation.source_id != source_id:

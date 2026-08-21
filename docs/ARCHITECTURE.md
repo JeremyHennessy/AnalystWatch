@@ -1,139 +1,143 @@
-# AnalystWatch Core v0.5 Architecture
+# AnalystWatch Core v0.6 Architecture
 
 ## Decision
 
-Core v0.5 remains a Python modular monolith. FastAPI is the interactive local/API surface; GitHub Pages is a generated read-only test surface. The deterministic monitoring engine remains authoritative. Review state and incident/notification metadata are downstream operational interpretations of immutable observation evidence; they do not rewrite Health or detector findings.
+Core v0.6 remains a Python modular monolith. FastAPI is the interactive local/API surface; GitHub Pages is a generated read-only test surface. The deterministic monitoring engine remains authoritative. Review state, incident state, and delivery-policy decisions are downstream interpretations of immutable observation evidence and do not rewrite detector Health/findings.
 
-SQLite persists accepted source definitions, observations, review state, transition notification candidates, profiles, and the selected baseline. The temporary GitHub-hosted test environment retains this database on `monitor-state`; because the repository is public, that branch must contain only non-secret test state.
+SQLite persists accepted source definitions, observations, review state, notification candidates, profiles, and the selected baseline. The temporary GitHub-hosted environment retains this database on the public `monitor-state` branch, which must contain only non-secret test state.
 
 ## Data flow
 
 ```text
-Candidate/new or edited SourceDefinition
-  -> ingest + profile preflight
-  -> validate source contracts
-  -> accept definition only when Ready
-
-Accepted SourceDefinition
-  -> schedule decision
-  -> ingest (runtime environment-backed API headers when configured)
+SourceDefinition
+  -> preflight for interactive create/edit
+  -> schedule
+  -> ingest
   -> profile
   -> deterministic detectors
   -> immutable Observation: Healthy / Warning / Critical
        |
-       +-> observation review state (Acknowledged / Reviewed)
-       +-> derive incident lifecycle from observation history
-       +-> meaningful transition? Opened / Escalated / Recovered
+       +-> review state: Acknowledged / Reviewed
+       +-> derive Incident: Opened / Escalated / Recovered
               |
-              +-> persist Pending NotificationCandidate atomically
-                  with the transition Observation
+              +-> NotificationCandidate
+                    |
+                    +-> evaluate source notification_transitions policy
+                           -> Eligible OR Suppressed
+                           -> snapshot policy + time + reason
        +-> guarded baseline review/promotion
   -> FastAPI/API read surfaces
-  -> read-only static Pages export
+  -> read-only Pages export
 ```
 
-There is no outbound notification delivery in v0.5.
+There is no outbound delivery in v0.6.
 
-## Components
+## Incident transitions
 
-- `models.py` — source, observation, review, incident and notification-candidate models.
-- `config.py` — validated JSON source-definition loading.
-- `preflight.py` — non-persistent candidate ingestion/profiling and contract validation.
-- `scheduler.py` — monitoring cadence decisions.
-- `ingest.py` — file/API acquisition and runtime environment-backed headers.
-- `profile.py` — structural/completeness/cardinality/numeric/categorical profiles and explicit contracts.
-- `detectors.py` — deterministic baseline/history comparisons and freshness checks.
-- `incidents.py` — pure transition and latest-incident derivation from observation history.
-- `storage.py` — SQLite definitions, observations, review state, notification candidates and baseline pointer.
-- `service.py` — monitoring transactions plus onboarding/edit/review/incident/baseline operations.
-- `web.py` — local FastAPI UI/API; incident and candidate endpoints are read-only.
-- `pages.py` — static redacted incident summary and candidate-count export.
-- `cli.py` — operational inspection commands; no notification delivery command exists.
+Incident state is derived from observation history rather than maintained as an independent mutable truth.
 
-## Incident lifecycle
+Transitions:
 
-Incident state is **derived**, not maintained as a mutable authoritative row. Given observations ordered newest-first, AnalystWatch identifies the latest contiguous unhealthy block and its immediately following Healthy recovery when present.
+- `Opened`: current is Warning/Critical and previous is absent or Healthy
+- `Escalated`: previous Warning → current Critical
+- `Recovered`: previous Warning/Critical → current Healthy
+- all other adjacent pairs create no transition
 
-Transitions are intentionally small and deterministic:
+Repeated unchanged-severity incident observations therefore create no candidate noise. The transition observation and its candidate are persisted in one SQLite transaction.
 
-- `Opened`: the current observation is Warning/Critical and the previous observation is absent or Healthy;
-- `Escalated`: previous is Warning and current is Critical;
-- `Recovered`: previous is Warning/Critical and current is Healthy;
-- all other adjacent health pairs produce no transition.
+## Delivery policy sandbox
 
-This means repeated Warning or repeated Critical observations do not generate repeated event noise. Critical→Warning remains the same open incident and does not create a separate de-escalation candidate in v0.5.
+`MonitoringConfig.notification_transitions` is an opt-in list of `Opened`, `Escalated`, and/or `Recovered`.
 
-A derived `IncidentSnapshot` records the opening observation/time, latest unhealthy observation, current status, current/peak Health, number of unhealthy observations, and recovery observation/time when recovered. A recovered incident remains reconstructable after later Healthy observations.
+Safe default:
 
-## Notification candidates
+```json
+{
+  "notification_transitions": []
+}
+```
 
-A `NotificationCandidate` represents a meaningful incident transition that a future delivery policy might send. Its state is `Pending` in v0.5.
+A new transition candidate is immediately policy-evaluated:
 
-Candidate creation is coupled to monitoring persistence:
+- transition in enabled list → `Eligible`
+- transition not enabled / empty list → `Suppressed`
 
-1. `MonitorService.check_source` captures the prior observation before checking;
-2. detector output determines the new observation Health;
-3. the pure transition function compares prior/new Health;
-4. if Opened/Escalated/Recovered, a deterministic candidate is created;
-5. `Storage.save_observation` writes the observation and candidate inside the same SQLite transaction.
+The candidate stores:
 
-The candidate cannot be committed without its transition observation, and repeated unchanged incident observations do not produce candidates.
+- the transition
+- previous/current Health
+- state
+- evaluation timestamp
+- snapshot of enabled transitions
+- human-readable policy reason
 
-Candidate storage is separate from review state. Acknowledging or reviewing an unhealthy observation does not close the incident, remove a candidate, or change Health.
+This makes the decision auditable and non-retroactive. Editing the source policy later does not rewrite existing candidates.
+
+## Legacy Pending candidates
+
+v0.5 candidates may exist with state `Pending`. They are not silently migrated at application startup. `evaluate_pending_notification_candidates` is an explicit operation that evaluates only Pending candidates against the current policy and persists the result.
+
+Already Eligible/Suppressed candidates are skipped, making repeat evaluation idempotent.
+
+This legacy evaluation is intentionally separate from the monitoring transaction because historical policy did not exist when those candidates were created.
 
 ## Delivery boundary
 
-Core v0.5 intentionally stops before delivery. There is no:
+Core v0.6 deliberately stops at policy eligibility. It has no:
 
-- email transport;
-- Slack/Teams transport;
-- webhook sender;
-- SMS provider;
-- retry/backoff worker;
-- delivery acknowledgement state;
-- destination configuration.
+- email/Slack/Teams/webhook/SMS provider
+- send endpoint or UI control
+- destination configuration
+- delivery attempt table
+- retry/backoff worker
+- Delivered/Failed lifecycle
 
-API/CLI only list candidates. Pages only shows incident summary and candidate count. This preserves a clean boundary for evaluating transition quality before introducing external side effects.
+`Eligible` means only “this transition matched the source policy.” It does not mean a message was or can be sent.
 
-## Credential-safe source configuration
+## Source contracts and secrets
 
-`request_header_env` continues to store header → environment-variable-name references only. Secret values are resolved immediately before a request and are not inserted into source definitions, SQLite definition JSON, Git history, or Pages state. Missing variables become availability evidence.
+Interactive/API source creation and editing remain preflight-protected. `sync-sources` remains the code-reviewed hosted configuration path.
 
-## Source creation/edit and preflight
-
-Interactive/API source creation and edits perform a fresh server-side preflight. A failed edit leaves the prior source definition, observations and baseline unchanged. `sync-sources` remains the explicit code-reviewed hosted configuration path.
+`request_header_env` stores header → environment-variable-name references only; secret values are resolved at request time and never stored in source definitions, SQLite definition JSON, Git history, or Pages output.
 
 ## Review and baseline semantics
 
-Warning/Critical observations may be independently marked `Acknowledged` or `Reviewed`; these workflow states never modify technical Health or incident status.
+Acknowledged/Reviewed is analyst workflow state only and does not resolve an incident or alter Health.
 
-Baseline promotion remains Healthy-only and guarded by the expected current baseline ID so stale reviews cannot overwrite a newer baseline.
+Baseline promotion remains Healthy-only and guarded by the expected current baseline ID to prevent stale review from overwriting a newer approved baseline.
 
 ## Scheduling and detector behavior
 
-`monitor_interval_minutes` controls check cadence; `expected_refresh_minutes` controls freshness expectation. Detector behavior and thresholds are unchanged in v0.5.
+`monitor_interval_minutes` controls check cadence; `expected_refresh_minutes` controls upstream freshness expectation. Detector algorithms and thresholds are unchanged in v0.6.
 
-The explicit baseline remains retained. Once sufficient recent Healthy observations exist, selected detectors can use the median of Healthy history as an operational comparison reference while preserving baseline evidence.
+## Pages and public state
 
-## GitHub Pages test deployment
+Pages remains read-only. It can display:
 
-Pages remains read-only. The Actions workflow restores branch-backed SQLite state, syncs repository source definitions, runs monitoring, renders static output, persists updated test state and deploys the generated artifact.
+- notification policy enabled transitions
+- incident summary
+- candidate totals
+- Pending / Eligible / Suppressed counts
 
-Public output includes incident summary and candidate counts but not candidate delivery actions. Existing redaction rules remain: API query strings are removed from display and request-header environment-variable names are not rendered into Pages output.
+It exposes no delivery control. Existing redaction rules remain: displayed API locations omit query strings and Pages does not render request-header environment-variable names.
 
 ## Verification boundary
 
-The v0.5 functional candidate passed Ruff, compile, **50 deterministic tests**, and the existing live-source smoke against the demo, Bank of Canada and U.S. Treasury sources. No detector, scheduler, hosted source configuration, secret handling, review semantics or baseline semantics were changed by the incident implementation.
+The verified v0.6 functional head passed Ruff, compile, **58 deterministic tests**, and live-source smoke against the demo, Bank of Canada and U.S. Treasury sources.
+
+CI caught one UI regression during development: the v0.5 metric label **“Notification candidates”** had been shortened. The change was reverted and the exact approved label restored before the functional head was accepted.
+
+No detector, scheduler, hosted source configuration, secret handling, review semantics, baseline semantics, Pages workflow, or shared CSS changed in v0.6.
 
 ## Tradeoffs / current limitations
 
-- `monitor-state` is test-only branch-backed persistence, not a production database.
-- Incident state is derived from recent history read into memory; production scale may require indexed/materialized incident state with equivalent semantics.
-- Pending notification candidates have no delivery lifecycle yet.
-- Authentication/workspace ownership is not implemented.
-- Environment-backed headers are a reference mechanism, not a multi-user secret vault.
-- GitHub scheduling is not real-time.
-- Pages is read-only.
-- Schema rename inference is not implemented.
-- Historical detector context remains deterministic rolling medians rather than forecasting/ML.
-- More real-source history is required before enabling delivery or tuning thresholds.
+- policy eligibility is not delivery
+- legacy Pending migration is explicit/manual
+- there is no production delivery attempt/retry/idempotency model yet
+- `monitor-state` is test-only branch-backed persistence
+- authentication/workspace ownership is not implemented
+- environment-backed headers are not a multi-user secret vault
+- GitHub scheduling is not real-time
+- Pages is read-only
+- incident derivation currently reads recent history into memory
+- more real transition history is required before any real provider integration

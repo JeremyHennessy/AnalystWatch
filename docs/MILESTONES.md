@@ -2,88 +2,74 @@
 
 ## Core v0.1 — complete
 
-Established the deterministic monitoring foundation:
-
-- CSV, XLSX, JSON and unauthenticated REST JSON ingestion
-- profiling and retained source history
-- availability, freshness, schema, row-count, null-rate, numeric, categorical and configured-key uniqueness detectors
-- Healthy / Warning / Critical classification
-- explicit baseline retention/promotion
-- CLI, JSON API and minimal dashboard
-- deliberately broken fixtures and false-positive controls
-- CI gate
+Deterministic monitoring foundation: ingestion, profiling, Health classification, baseline retention, CLI/API/dashboard, broken fixtures and CI.
 
 ## Core v0.2 — Scheduling & Signal Quality — complete
 
-Made the core continuously checkable without weakening detector trust:
-
-- independent monitoring cadence
-- due/not-due scheduling
-- repository source configuration sync
-- recent Healthy-history references alongside explicit baselines
-- conservative freshness inference
-- API HTTP evidence
-- read-only static dashboard export
-- scheduled GitHub Actions monitoring and Pages deployment
+Added independent monitoring cadence, due-source scheduling, repository source sync, Healthy-history references, freshness evidence, Pages export and scheduled GitHub Actions monitoring.
 
 ## Core v0.2.1 — Initial real-source validation — complete
 
-Validated Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny from GitHub Actions and added explicit `numeric_fields` contracts for APIs that publish numeric amounts as strings. No detector thresholds were changed.
+Validated Bank of Canada USD/CAD and U.S. Treasury Debt to the Penny from GitHub Actions and added explicit numeric-string contracts. No detector thresholds changed.
 
 ## Core v0.3 — Source onboarding & contract preflight — complete
 
-Added non-persistent candidate preflight, contract validation, local onboarding, server-side preflight before acceptance, duplicate-ID protection, and read-only Pages contract visibility. The clean gate reached 32 passing tests.
+Added non-persistent source preflight, contract validation, safe local onboarding/API creation and duplicate-ID protection. Clean gate: 32 tests.
 
 ## Core v0.4 — Operational review & secure source configuration — complete
 
-Added:
+Added environment-backed request headers, preflight-protected edits, Acknowledged/Reviewed state, guarded Healthy baseline promotion and public-output redaction. Clean gate: 41 tests.
 
-- environment-backed request-header references without storing secret values
-- preflight-protected source edits that preserve history/baselines
-- Acknowledged / Reviewed analyst state separate from observation Health
-- guarded Healthy-only baseline review and promotion
-- redacted Pages operational views
+## Core v0.5 — Incident transitions & notification readiness — complete
 
-The clean v0.4 functional gate reached 41 passing tests and live-source smoke remained green.
+Added derived incident lifecycle and atomic transition candidates:
 
-## Core v0.5 — Incident transitions & notification readiness — current
+- Opened
+- Escalated
+- Recovered
+- repeated same-severity incident checks suppressed as duplicate noise
+- candidate persisted atomically with transition observation
+- no outbound delivery
 
-Goal: prove meaningful incident transitions and notification-candidate semantics before introducing any outbound side effects.
+Clean gate: 50 tests; live-source smoke green.
+
+## Core v0.6 — Delivery policy sandbox — current
+
+Goal: determine whether a transition *would* be deliverable, without connecting any provider.
 
 Implemented and verified on the functional candidate:
 
-- incident lifecycle is derived deterministically from immutable observation history
-- `Opened`: Healthy/no prior state → Warning/Critical
-- `Escalated`: Warning → Critical inside an open incident
-- `Recovered`: Warning/Critical → Healthy
-- repeated Warning or repeated Critical observations do not create duplicate transition candidates
-- recovered incidents remain reconstructable through later Healthy checks
-- `IncidentSnapshot` exposes opening/recovery timing, current/peak Health, and incident observation count
-- each meaningful transition can create one `Pending` notification candidate
-- transition observation and candidate persist atomically in the same SQLite transaction
-- review state remains independent and cannot resolve an incident
-- API/CLI inspect incidents/candidates without write/delivery operations
-- Pages exposes incident summary and candidate count while remaining read-only
-- no email, Slack, webhook, SMS, retry worker, destination configuration, or delivery adapter exists
-- live source smoke remains green after the storage/service changes
-- clean functional gate reached **50 passing tests** before documentation/version closeout
+- per-source `notification_transitions` policy
+- safe default is no enabled transitions
+- new candidates immediately evaluate to `Eligible` or `Suppressed`
+- candidate snapshots enabled transitions, evaluation time and decision reason
+- later policy edits do not rewrite historical candidate decisions
+- legacy v0.5 `Pending` candidates are explicitly evaluated, not silently migrated
+- repeat legacy evaluation is idempotent
+- CLI/API expose policy evaluation and candidate state only
+- Pages exposes policy and Pending / Eligible / Suppressed counts
+- still no email, Slack, Teams, webhook, SMS, destination, retry worker or send control
+- approved **“Notification candidates”** UI label restored after CI caught a regression
+- clean functional gate reached **58 passing tests**
+- live-source smoke remained green
 
-No detector, scheduler, hosted source configuration, secret handling, review semantics, or baseline semantics were changed in v0.5.
+No detector, scheduler, hosted source configuration, secret handling, review semantics, baseline semantics, Pages workflow or shared CSS changed.
 
-## Candidate v0.6 — delivery policy sandbox & persistence readiness
+## Candidate v0.7 — delivery-attempt model & persistence readiness
 
-Before any real delivery:
+Before real provider integration:
 
-- accumulate real transition history and inspect candidate noise/coverage
-- define per-source transition policy (which Opened/Escalated/Recovered events should be deliverable)
-- add explicit candidate lifecycle such as Pending / Suppressed / Delivered / Failed without sending by default
-- define idempotency and retry semantics independently of monitoring transactions
+- add explicit delivery-attempt lifecycle independent from monitoring transactions
+- define idempotency key and retry/backoff semantics
+- add dry-run/sandbox destination abstraction with no external network side effect by default
+- preserve immutable candidate policy decisions
 - replace branch-backed SQLite test persistence with deployment-appropriate storage
-- define authentication/workspace ownership before remote write/delivery actions
-- introduce one sandbox delivery adapter only after candidate semantics are proven
+- define authentication/workspace ownership before remote delivery actions
+- accumulate real transition/candidate history to evaluate policy noise
 
 ## Later
 
+- first opt-in provider integration
 - production notification delivery
 - SourceGuard productization
 - ModelGuard

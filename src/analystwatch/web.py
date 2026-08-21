@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .models import ObservationReviewState, SourceDefinition, SourceType
+from .models import NotificationCandidate, ObservationReviewState, SourceDefinition, SourceType
 from .service import MonitorService
 from .storage import Storage
 
@@ -24,12 +24,19 @@ def _public_location(source: SourceDefinition) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def _candidate_state_counts(candidates: list[NotificationCandidate]) -> dict[str, int]:
+    counts = {"Pending": 0, "Eligible": 0, "Suppressed": 0}
+    for candidate in candidates:
+        counts[candidate.state.value] = counts.get(candidate.state.value, 0) + 1
+    return counts
+
+
 def create_app(db_path: str | Path | None = None) -> FastAPI:
     resolved_db = Path(db_path or os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"))
     storage = Storage(resolved_db)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.5.0")
+    app = FastAPI(title="AnalystWatch", version="0.6.0")
     app.state.storage = storage
     app.state.service = service
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
@@ -41,7 +48,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         last_successful = storage.get_last_successful(source.id)
         latest_review = storage.get_review(latest.id) if latest else None
         baseline_review = service.baseline_review(source.id) if latest and baseline else None
-        candidates = service.notification_candidates(source.id, limit=20)
+        candidates = service.notification_candidates(source.id, limit=100)
         return {
             "source": source,
             "public_location": _public_location(source),
@@ -53,6 +60,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             "incident": service.incident(source.id),
             "notification_candidates": candidates,
             "notification_candidate_count": len(candidates),
+            "notification_candidate_states": _candidate_state_counts(candidates),
             "health": latest.health.value if latest else "Not checked",
             "schedule": service.get_run_decision(source.id),
             "href": f"/sources/{source.id}",
@@ -193,6 +201,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def api_notification_candidates(source_id: str | None = None, limit: int = 100):
         try:
             return service.notification_candidates(source_id, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/notification-candidates/evaluate")
+    def api_evaluate_notification_candidates(source_id: str):
+        try:
+            return service.evaluate_pending_notification_candidates(source_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

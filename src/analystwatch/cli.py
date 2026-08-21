@@ -8,7 +8,7 @@ from pathlib import Path
 import uvicorn
 
 from .config import load_sources
-from .models import MonitoringConfig, SourceDefinition, SourceType
+from .models import IncidentTransition, MonitoringConfig, SourceDefinition, SourceType
 from .pages import build_pages_site
 from .service import MonitorService
 from .storage import Storage
@@ -50,6 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--json-record-path")
     add.add_argument("--unique-key", action="append", default=[])
     add.add_argument("--request-header-env", action="append", default=[])
+    add.add_argument(
+        "--notification-transition",
+        action="append",
+        default=[],
+        choices=[item.value for item in IncidentTransition],
+        help="Transition eligible for future notification delivery; repeat to enable multiple",
+    )
     add.add_argument("--history-window-size", type=int, default=5)
     add.add_argument("--min-history-observations", type=int, default=3)
 
@@ -69,10 +76,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     candidates = sub.add_parser(
         "notification-candidates",
-        help="List pending transition candidates; no delivery is performed",
+        help="List transition candidates; no delivery is performed",
     )
     candidates.add_argument("--source-id")
     candidates.add_argument("--limit", type=int, default=100)
+
+    evaluate = sub.add_parser(
+        "evaluate-notification-candidates",
+        help="Evaluate legacy Pending candidates against the current source policy",
+    )
+    evaluate.add_argument("source_id")
 
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
@@ -118,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
             json_record_path=args.json_record_path,
             unique_keys=args.unique_key,
             request_header_env=_parse_header_env(args.request_header_env),
+            notification_transitions=[
+                IncidentTransition(item) for item in args.notification_transition
+            ],
             history_window_size=args.history_window_size,
             min_history_observations=args.min_history_observations,
         )
@@ -182,6 +198,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "notification-candidates":
         items = service.notification_candidates(args.source_id, limit=args.limit)
+        print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
+        return 0
+
+    if args.command == "evaluate-notification-candidates":
+        items = service.evaluate_pending_notification_candidates(args.source_id)
         print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
         return 0
 

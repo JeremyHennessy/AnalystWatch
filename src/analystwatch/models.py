@@ -38,6 +38,8 @@ class IncidentTransition(str, Enum):
 
 class NotificationCandidateState(str, Enum):
     PENDING = "Pending"
+    ELIGIBLE = "Eligible"
+    SUPPRESSED = "Suppressed"
 
 
 class MonitoringConfig(BaseModel):
@@ -50,6 +52,7 @@ class MonitoringConfig(BaseModel):
     unique_keys: list[str] = Field(default_factory=list)
     numeric_fields: list[str] = Field(default_factory=list)
     request_header_env: dict[str, str] = Field(default_factory=dict)
+    notification_transitions: list[IncidentTransition] = Field(default_factory=list)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
 
     history_window_size: int = Field(default=5, ge=3, le=50)
@@ -84,6 +87,8 @@ class MonitoringConfig(BaseModel):
                 raise ValueError(
                     "request_header_env environment variable names must be non-empty and trimmed"
                 )
+        if len(set(self.notification_transitions)) != len(self.notification_transitions):
+            raise ValueError("notification_transitions must not contain duplicates")
         return self
 
 
@@ -201,3 +206,6 @@ class NotificationCandidate(BaseModel):
     created_at: datetime
     reason: str
     state: NotificationCandidateState = NotificationCandidateState.PENDING
+    evaluated_at: datetime | None = None
+    policy_enabled_transitions: list[IncidentTransition] = Field(default_factory=list)
+    policy_reason: str | None = None
