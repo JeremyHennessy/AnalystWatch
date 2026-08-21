@@ -41,45 +41,52 @@ Established that the v0.2 monitoring path works against real analyst-style publi
 - live-source smoke gate for availability and numeric/date contracts
 - numeric-string `/100` scaling remains detectable as Critical numeric drift
 
-Initial live smoke on August 21, 2026:
+No detector thresholds were tuned because the initial live observations did not provide evidence that tuning was necessary.
 
-- Bank of Canada: Healthy, 30 rows, latest date 2026-08-20, no contract failures
-- U.S. Treasury: Healthy, 30 rows, latest date 2026-08-19, no contract failures
+## Core v0.3 — Source onboarding & contract preflight — complete
 
-No detector thresholds were tuned because the first live observations did not provide evidence that tuning was necessary.
-
-## Core v0.3 — Source onboarding & contract preflight — current
-
-Goal: prevent invalid or misunderstood source contracts from entering monitoring silently.
-
-Implemented:
+Prevented invalid or misunderstood source contracts from entering monitoring silently:
 
 - read-only source preflight before persistence
-- validation for availability and empty datasets
-- numeric-field presence and parseability contracts
-- declared unique-key presence/null/duplicate validation
-- freshness-field presence/date-parseability validation
-- configured refresh expectations require usable freshness evidence
-- stale-but-valid sources can warn without automatically invalidating the contract
-- local FastAPI onboarding page plus `/api/preflight` and `/api/onboard`
-- onboarding re-runs preflight before accepting a source
-- duplicate source IDs are rejected rather than overwriting existing definitions
-- successful onboarding saves only the source definition; the first monitoring check establishes its baseline
-- GitHub Pages remains read-only while source details expose monitoring-contract configuration
-- onboarding-specific CSS isolated from the established dashboard stylesheet
-- focused onboarding regression coverage
+- availability, empty-data, numeric, unique-key and freshness contract validation
+- local FastAPI onboarding plus `/api/preflight` and `/api/onboard`
+- server-side preflight repeated before acceptance
+- duplicate source IDs rejected instead of overwritten
+- accepted definitions do not create an observation/baseline until normal monitoring runs
+- Pages remains read-only while exposing monitoring-contract configuration
+- isolated onboarding styling and regression coverage
 
-The clean GitHub functional gate reached 32 passing tests before the documentation/version closeout, and the live-source smoke remained green.
+The clean v0.3 GitHub gate reached 32 passing tests and the live-source smoke remained green.
 
-## Candidate v0.4 — Operational review & secure source configuration
+## Core v0.4 — Operational review & secure source configuration — current
 
-- accumulate real-source history and evaluate false positives/false negatives before changing detector thresholds
-- editing existing source contracts through the same preflight discipline
-- incident acknowledgement / review state
-- baseline-review and approval workflow
-- secure API headers/secrets and credential-safe source definitions
-- notification delivery only after signal quality proves trustworthy
-- replace branch-backed test-state persistence with deployment-appropriate storage before production SaaS work
+Goal: add operational controls and credential-safe configuration around the verified monitoring engine without weakening its evidence semantics.
+
+Implemented and verified on the functional candidate:
+
+- `request_header_env` maps API headers to runtime environment-variable names; secret values are never stored in source definitions
+- missing required environment variables become explicit availability evidence
+- safe source edits use the same preflight discipline as onboarding and preserve existing observations/baseline
+- interactive/API source creation is preflight-protected; `sync-sources` remains the code-reviewed hosted configuration path
+- Warning/Critical observations can be marked `Acknowledged` or `Reviewed` without changing health or claiming resolution
+- review state persists separately from observation evidence
+- baseline review only allows Healthy available candidates with profiles
+- baseline promotion is guarded by the expected current baseline ID to prevent stale-review promotion
+- Pages remains read-only and hides API query strings and request-header environment-variable names
+- CLI supports environment-backed headers, baseline review, and guarded promotion
+- live Bank of Canada/Treasury smoke remains green after the ingestion/service changes
+- clean functional gate reached 41 passing tests before documentation/version closeout
+
+No detector or scheduler thresholds were changed in this milestone.
+
+## Candidate v0.5 — persistence & notification readiness
+
+- accumulate more real-source history and quantify false positives/false negatives before changing thresholds
+- replace branch-backed SQLite test persistence with deployment-appropriate storage
+- define authentication/workspace ownership before exposing write actions remotely
+- add a dedicated secret-management boundary for multi-user/hosted authenticated sources
+- design incident notification rules around unreviewed Warning/Critical transitions
+- notification delivery only after signal quality and persistence semantics are trustworthy
 
 ## Later
 
