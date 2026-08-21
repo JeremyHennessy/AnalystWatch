@@ -1,0 +1,17 @@
+{
+  "sources": [
+    {
+      "id": "demo-market",
+      "name": "Demo Market Data",
+      "source_type": "csv",
+      "location": "samples/demo_market.csv",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 60,
+        "unique_keys": ["id"],
+        "history_window_size": 5,
+        "min_history_observations": 3
+      }
+    }
+  ]
+}

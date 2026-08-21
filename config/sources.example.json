@@ -1,0 +1,19 @@
+{
+  "sources": [
+    {
+      "id": "public-api",
+      "name": "Public API",
+      "source_type": "api",
+      "location": "https://example.test/data",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 60,
+        "expected_refresh_minutes": 1440,
+        "latest_date_field": "updated_at",
+        "history_window_size": 5,
+        "min_history_observations": 3,
+        "unique_keys": ["id"]
+      }
+    }
+  ]
+}
