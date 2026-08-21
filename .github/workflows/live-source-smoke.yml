@@ -1,0 +1,30 @@
+name: Live source smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "config/sources.json"
+      - "scripts/live_source_smoke.py"
+      - "src/analystwatch/ingest.py"
+      - "src/analystwatch/models.py"
+      - "src/analystwatch/profile.py"
+      - "src/analystwatch/service.py"
+
+permissions:
+  contents: read
+
+jobs:
+  live-source-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install AnalystWatch
+        run: python -m pip install -e .
+      - name: Validate live sources
+        run: python scripts/live_source_smoke.py config/sources.json

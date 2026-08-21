@@ -12,6 +12,46 @@
         "history_window_size": 5,
         "min_history_observations": 3
       }
+    },
+    {
+      "id": "bank-of-canada-usd-cad",
+      "name": "Bank of Canada USD/CAD Daily Rate",
+      "source_type": "api",
+      "location": "https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=30",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 180,
+        "expected_refresh_minutes": 5760,
+        "json_record_path": "observations",
+        "latest_date_field": "d",
+        "numeric_fields": ["FXUSDCAD.v"],
+        "history_window_size": 7,
+        "min_history_observations": 3,
+        "warning_row_change_pct": 0.20,
+        "critical_row_change_pct": 0.50
+      }
+    },
+    {
+      "id": "us-treasury-debt",
+      "name": "U.S. Treasury Debt to the Penny",
+      "source_type": "api",
+      "location": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny?sort=-record_date&format=json&page[number]=1&page[size]=30",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 180,
+        "expected_refresh_minutes": 5760,
+        "json_record_path": "data",
+        "latest_date_field": "record_date",
+        "numeric_fields": [
+          "debt_held_public_amt",
+          "intragov_hold_amt",
+          "tot_pub_debt_out_amt"
+        ],
+        "history_window_size": 7,
+        "min_history_observations": 3,
+        "warning_row_change_pct": 0.20,
+        "critical_row_change_pct": 0.50
+      }
     }
   ]
 }

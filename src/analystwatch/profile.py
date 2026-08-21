@@ -94,20 +94,28 @@ def profile_dataframe(
     latest_date_field: str | None = None,
     *,
     infer_latest_date_field: bool = False,
+    numeric_fields: list[str] | None = None,
 ) -> DatasetProfile:
     row_count = len(frame)
     columns: dict[str, ColumnProfile] = {}
+    forced_numeric = set(numeric_fields or [])
 
     for name in frame.columns:
-        series = frame[name]
-        dtype = _dtype_kind(series)
+        raw_series = frame[name]
+        field_name = str(name)
+        if field_name in forced_numeric:
+            series = pd.to_numeric(raw_series, errors="coerce")
+            dtype = "numeric"
+        else:
+            series = raw_series
+            dtype = _dtype_kind(series)
         null_count = int(series.isna().sum())
         non_null_count = max(row_count - null_count, 0)
         unique_count = int(series.nunique(dropna=True))
         duplicate_count = max(non_null_count - unique_count, 0)
         duplicate_pct = duplicate_count / non_null_count if non_null_count else 0.0
 
-        columns[str(name)] = ColumnProfile(
+        columns[field_name] = ColumnProfile(
             dtype=dtype,
             null_count=null_count,
             null_pct=(null_count / row_count) if row_count else 0.0,
