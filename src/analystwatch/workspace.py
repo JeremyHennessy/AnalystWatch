@@ -242,7 +242,9 @@ class WorkspaceStore:
         reconciled_by: str | None = None,
     ) -> DeliveryAttempt:
         if self.get_delivery_attempt(attempt_id) is None:
-            raise KeyError(f"Unknown delivery attempt in workspace {self.workspace_id}: {attempt_id}")
+            raise KeyError(
+                f"Unknown delivery attempt in workspace {self.workspace_id}: {attempt_id}"
+            )
         return self.delegate.reconcile_prepared_delivery_attempt(
             attempt_id,
             outcome,
