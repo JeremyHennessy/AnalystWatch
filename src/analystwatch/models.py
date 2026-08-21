@@ -110,6 +110,7 @@ class MonitoringConfig(BaseModel):
 
 class SourceDefinition(BaseModel):
     id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
+    workspace_id: str = Field(default="local", min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
     name: str = Field(min_length=1)
     source_type: SourceType
     location: str = Field(min_length=1)
