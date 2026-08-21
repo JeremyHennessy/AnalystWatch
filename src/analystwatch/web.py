@@ -10,7 +10,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .models import NotificationCandidate, ObservationReviewState, SourceDefinition, SourceType
+from .models import (
+    DeliveryAttempt,
+    NotificationCandidate,
+    ObservationReviewState,
+    SourceDefinition,
+    SourceType,
+)
 from .service import MonitorService
 from .storage import Storage
 
@@ -28,6 +34,13 @@ def _candidate_state_counts(candidates: list[NotificationCandidate]) -> dict[str
     counts = {"Pending": 0, "Eligible": 0, "Suppressed": 0}
     for candidate in candidates:
         counts[candidate.state.value] = counts.get(candidate.state.value, 0) + 1
+    return counts
+
+
+def _attempt_state_counts(attempts: list[DeliveryAttempt]) -> dict[str, int]:
+    counts = {"Prepared": 0, "Succeeded": 0, "Failed": 0}
+    for attempt in attempts:
+        counts[attempt.state.value] = counts.get(attempt.state.value, 0) + 1
     return counts
 
 
@@ -49,6 +62,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         latest_review = storage.get_review(latest.id) if latest else None
         baseline_review = service.baseline_review(source.id) if latest and baseline else None
         candidates = service.notification_candidates(source.id, limit=100)
+        attempts = service.delivery_attempts(source_id=source.id, limit=100)
         return {
             "source": source,
             "public_location": _public_location(source),
@@ -61,6 +75,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             "notification_candidates": candidates,
             "notification_candidate_count": len(candidates),
             "notification_candidate_states": _candidate_state_counts(candidates),
+            "delivery_attempts": attempts,
+            "delivery_attempt_count": len(attempts),
+            "delivery_attempt_states": _attempt_state_counts(attempts),
             "health": latest.health.value if latest else "Not checked",
             "schedule": service.get_run_decision(source.id),
             "href": f"/sources/{source.id}",
@@ -210,6 +227,30 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             return service.evaluate_pending_notification_candidates(source_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/delivery-attempts")
+    def api_delivery_attempts(
+        candidate_id: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ):
+        try:
+            return service.delivery_attempts(
+                candidate_id=candidate_id,
+                source_id=source_id,
+                limit=limit,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/delivery-attempts/dry-run")
+    def api_dry_run_delivery(candidate_id: str, idempotency_key: str):
+        try:
+            return service.dry_run_delivery(candidate_id, idempotency_key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/sources/{source_id}/baseline-review")
     def api_baseline_review(source_id: str, observation_id: str | None = None):
