@@ -8,6 +8,7 @@ import httpx
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
 from .ingest import ingest_source
 from .models import Finding, HealthStatus, Observation, RunDecision, SourceDefinition
+from .preflight import SourcePreflight, preflight_source
 from .profile import profile_dataframe
 from .scheduler import run_decision
 from .storage import Storage
@@ -26,6 +27,33 @@ class MonitorService:
         for source in sources:
             self.add_source(source)
         return sources
+
+    def preflight_source(
+        self,
+        source: SourceDefinition,
+        *,
+        client: httpx.Client | None = None,
+        now: datetime | None = None,
+    ) -> SourcePreflight:
+        return preflight_source(source, client=client, now=now)
+
+    def onboard_source(
+        self,
+        source: SourceDefinition,
+        *,
+        client: httpx.Client | None = None,
+        now: datetime | None = None,
+    ) -> SourcePreflight:
+        if self.storage.get_source(source.id) is not None:
+            raise ValueError(
+                f"Source ID already exists: {source.id}. "
+                "Editing existing sources is a separate workflow."
+            )
+        preflight = self.preflight_source(source, client=client, now=now)
+        if not preflight.ready:
+            return preflight
+        self.add_source(source)
+        return preflight.model_copy(update={"accepted": True})
 
     def get_run_decision(
         self,
