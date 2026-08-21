@@ -39,6 +39,7 @@
         <div><dt>Record path / sheet</dt><dd>{{ source.config.json_record_path or source.config.sheet_name or 'Default' }}</dd></div>
         <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
         <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
+        <div><dt>Request headers</dt><dd>{% if source.config.request_header_env %}{% if static_mode %}{{ source.config.request_header_env|length }} environment-backed header{{ '' if source.config.request_header_env|length == 1 else 's' }} configured; values are not stored{% else %}{% for header, env_name in source.config.request_header_env.items() %}<code>{{ header }}</code> ← <code>{{ env_name }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}{% else %}None configured{% endif %}</dd></div>
       </dl>
     </section>
 
@@ -49,6 +50,35 @@
         <div class="panel metric-card"><span>Baseline</span><strong>{% if baseline %}{{ baseline.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}Not established{% endif %}</strong></div>
         <div class="panel metric-card"><span>Next scheduled check</span><strong>{% if schedule.next_check_at %}{{ schedule.next_check_at.strftime('%Y-%m-%d %H:%M UTC') }}{% elif schedule.due %}Due now{% else %}Disabled{% endif %}</strong></div>
       </section>
+
+      {% if latest.health.value != 'Healthy' %}
+      <section class="panel">
+        <div class="section-title"><h2>Operational review</h2><span>{% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed{% endif %}</span></div>
+        <p class="muted">Review state records analyst attention only. It does not claim the upstream issue is fixed.</p>
+        {% if not static_mode %}
+        <div class="detail-actions">
+          <form method="post" action="/sources/{{ source.id }}/review?state=Acknowledged"><button type="submit">Acknowledge</button></form>
+          <form method="post" action="/sources/{{ source.id }}/review?state=Reviewed"><button type="submit">Mark reviewed</button></form>
+        </div>
+        {% endif %}
+      </section>
+      {% endif %}
+
+      {% if baseline_review and baseline_review.candidate and baseline_review.current_baseline and baseline_review.candidate.id != baseline_review.current_baseline.id %}
+      <section class="panel">
+        <div class="section-title"><h2>Baseline review</h2><span>{{ 'Ready' if baseline_review.ready else 'Blocked' }}</span></div>
+        <div class="grid two">
+          <div class="metric-card"><span>Current baseline</span><strong>{{ baseline_review.current_baseline.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
+          <div class="metric-card"><span>Candidate</span><strong>{{ baseline_review.candidate.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
+        </div>
+        {% if baseline_review.blockers %}
+          <p class="muted">{{ baseline_review.blockers|join(' ') }}</p>
+        {% elif not static_mode %}
+          <p class="muted">The candidate is Healthy. Promotion is guarded against the current baseline changing after this review.</p>
+          <form method="post" action="/sources/{{ source.id }}/baseline?candidate_id={{ baseline_review.candidate.id }}&expected_current_baseline_id={{ baseline_review.current_baseline.id }}"><button type="submit">Promote reviewed baseline</button></form>
+        {% endif %}
+      </section>
+      {% endif %}
 
       <section class="panel">
         <div class="section-title"><h2>Findings</h2><span>{{ latest.findings|length }}</span></div>

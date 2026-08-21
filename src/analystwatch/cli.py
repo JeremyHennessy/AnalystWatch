@@ -18,6 +18,16 @@ def _service(db: str) -> MonitorService:
     return MonitorService(Storage(db))
 
 
+def _parse_header_env(items: list[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for item in items:
+        header, separator, env_name = item.partition("=")
+        if not separator or not header.strip() or not env_name.strip():
+            raise SystemExit("--request-header-env must use Header-Name=ENV_VAR syntax")
+        result[header.strip()] = env_name.strip()
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="analystwatch")
     parser.add_argument(
@@ -27,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    add = sub.add_parser("add-source", help="Create or update a monitored source")
+    add = sub.add_parser("add-source", help="Preflight and add/update a monitored source")
     add.add_argument("--id", required=True)
     add.add_argument("--name", required=True)
     add.add_argument("--type", required=True, choices=[item.value for item in SourceType])
@@ -39,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--sheet-name")
     add.add_argument("--json-record-path")
     add.add_argument("--unique-key", action="append", default=[])
+    add.add_argument("--request-header-env", action="append", default=[])
     add.add_argument("--history-window-size", type=int, default=5)
     add.add_argument("--min-history-observations", type=int, default=3)
 
@@ -53,9 +64,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("schedule", help="Show current due/next-check decisions")
     sub.add_parser("list", help="List monitored sources")
 
-    baseline = sub.add_parser("promote-baseline", help="Promote an observation to baseline")
+    baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
+    baseline_review.add_argument("source_id")
+    baseline_review.add_argument("--observation-id")
+
+    baseline = sub.add_parser(
+        "promote-baseline",
+        help="Promote a reviewed Healthy observation to baseline",
+    )
     baseline.add_argument("source_id")
     baseline.add_argument("--observation-id")
+    baseline.add_argument("--expected-baseline-id", required=True)
 
     pages = sub.add_parser("build-pages", help="Render a read-only static GitHub Pages site")
     pages.add_argument("--output", default="site")
@@ -88,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             sheet_name=args.sheet_name,
             json_record_path=args.json_record_path,
             unique_keys=args.unique_key,
+            request_header_env=_parse_header_env(args.request_header_env),
             history_window_size=args.history_window_size,
             min_history_observations=args.min_history_observations,
         )
@@ -98,9 +118,12 @@ def main(argv: list[str] | None = None) -> int:
             location=args.location,
             config=config,
         )
-        service.add_source(source)
-        print(source.model_dump_json(indent=2))
-        return 0
+        if service.storage.get_source(source.id) is None:
+            result = service.onboard_source(source)
+        else:
+            result = service.update_source(source.id, source)
+        print(result.model_dump_json(indent=2))
+        return 0 if result.ready and result.accepted else 2
 
     if args.command == "sync-sources":
         sources = load_sources(args.path)
@@ -142,12 +165,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{source.id}\t{status}\t{next_check}\t{source.name}\t{source.location}")
         return 0
 
+    if args.command == "baseline-review":
+        review = service.baseline_review(args.source_id, args.observation_id)
+        print(review.model_dump_json(indent=2))
+        return 0 if review.ready else 2
+
     if args.command == "promote-baseline":
         latest = service.storage.get_latest(args.source_id)
         target = args.observation_id or (latest.id if latest else None)
         if target is None:
             raise SystemExit("No observation available to promote")
-        observation = service.storage.promote_baseline(args.source_id, target)
+        observation = service.promote_baseline_after_review(
+            args.source_id,
+            target,
+            args.expected_baseline_id,
+        )
         print(json.dumps({"source_id": args.source_id, "baseline": observation.id}, indent=2))
         return 0
 

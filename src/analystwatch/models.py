@@ -20,6 +20,11 @@ class HealthStatus(str, Enum):
     CRITICAL = "Critical"
 
 
+class ObservationReviewState(str, Enum):
+    ACKNOWLEDGED = "Acknowledged"
+    REVIEWED = "Reviewed"
+
+
 class MonitoringConfig(BaseModel):
     expected_refresh_minutes: int | None = Field(default=None, gt=0)
     monitor_interval_minutes: int = Field(default=60, gt=0)
@@ -29,6 +34,7 @@ class MonitoringConfig(BaseModel):
     json_record_path: str | None = None
     unique_keys: list[str] = Field(default_factory=list)
     numeric_fields: list[str] = Field(default_factory=list)
+    request_header_env: dict[str, str] = Field(default_factory=dict)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
 
     history_window_size: int = Field(default=5, ge=3, le=50)
@@ -56,6 +62,13 @@ class MonitoringConfig(BaseModel):
             raise ValueError("warning_category_tvd must not exceed critical_category_tvd")
         if self.min_history_observations > self.history_window_size:
             raise ValueError("min_history_observations must not exceed history_window_size")
+        for header, env_name in self.request_header_env.items():
+            if not header or header != header.strip():
+                raise ValueError("request_header_env header names must be non-empty and trimmed")
+            if not env_name or env_name != env_name.strip():
+                raise ValueError(
+                    "request_header_env environment variable names must be non-empty and trimmed"
+                )
         return self
 
 
@@ -132,3 +145,18 @@ class RunDecision(BaseModel):
     reason: str
     last_checked_at: datetime | None = None
     next_check_at: datetime | None = None
+
+
+class ObservationReview(BaseModel):
+    observation_id: str
+    source_id: str
+    state: ObservationReviewState
+    updated_at: datetime
+
+
+class BaselineReview(BaseModel):
+    source_id: str
+    current_baseline: Observation | None = None
+    candidate: Observation | None = None
+    ready: bool
+    blockers: list[str] = Field(default_factory=list)
