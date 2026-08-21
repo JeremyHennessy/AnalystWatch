@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add source · AnalystWatch</title>
+  <link rel="stylesheet" href="{{ static_css }}">
+</head>
+<body>
+  <main class="shell narrow">
+    <a class="back" href="{{ home_href }}">← All sources</a>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">SOURCE ONBOARDING</p>
+        <h1>Validate before monitoring.</h1>
+        <p class="muted">Preflight reads and profiles the source without saving it. AnalystWatch only accepts it after the declared contracts pass.</p>
+      </div>
+    </header>
+
+    <section class="panel">
+      <form id="source-form" class="form-grid">
+        <label><span>Source ID</span><input id="source-id" required pattern="[A-Za-z0-9_.-]+" placeholder="supplier-pricing"></label>
+        <label><span>Name</span><input id="source-name" required placeholder="Supplier Pricing"></label>
+        <label><span>Type</span><select id="source-type"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option><option value="api">REST API</option></select></label>
+        <label class="span-two"><span>Path or URL</span><input id="source-location" required placeholder="https://example.com/data.json"></label>
+
+        <div class="form-section span-two"><strong>Run policy</strong><span>How often AnalystWatch checks is separate from how often the source should refresh.</span></div>
+        <label><span>Check every (minutes)</span><input id="monitor-interval" type="number" min="1" value="60"></label>
+        <label><span>Expected refresh (minutes)</span><input id="refresh-interval" type="number" min="1" placeholder="Optional"></label>
+
+        <div class="form-section span-two"><strong>Structure contract</strong><span>Only declare fields you expect AnalystWatch to enforce.</span></div>
+        <label><span>JSON record path</span><input id="json-path" placeholder="data or observations"></label>
+        <label><span>XLSX sheet</span><input id="sheet-name" placeholder="Optional"></label>
+        <label><span>Freshness date field</span><input id="latest-date" placeholder="record_date"></label>
+        <label class="check-label"><input id="infer-date" type="checkbox"><span>Infer a conservative date field if none is configured</span></label>
+        <label class="span-two"><span>Numeric fields</span><input id="numeric-fields" placeholder="amount, total_value"></label>
+        <label class="span-two"><span>Unique keys</span><input id="unique-keys" placeholder="id, record_id"></label>
+
+        <div class="form-actions span-two">
+          <button id="preflight-button" type="submit">Run preflight</button>
+          <button id="accept-button" class="secondary" type="button" disabled>Add monitored source</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="preflight-panel" class="panel" hidden>
+      <div class="section-title"><h2>Preflight evidence</h2><span id="preflight-status"></span></div>
+      <div id="preflight-summary" class="grid three"></div>
+      <div id="preflight-issues" class="contract-issues"></div>
+    </section>
+  </main>
+
+<script>
+const form = document.getElementById('source-form');
+const acceptButton = document.getElementById('accept-button');
+const preflightButton = document.getElementById('preflight-button');
+const panel = document.getElementById('preflight-panel');
+let lastPreflight = null;
+
+function value(id) { return document.getElementById(id).value.trim(); }
+function list(id) { return value(id).split(',').map(v => v.trim()).filter(Boolean); }
+function optionalNumber(id) { const raw = value(id); return raw ? Number(raw) : null; }
+
+function sourcePayload() {
+  return {
+    id: value('source-id'),
+    name: value('source-name'),
+    source_type: value('source-type'),
+    location: value('source-location'),
+    enabled: true,
+    config: {
+      monitor_interval_minutes: Number(value('monitor-interval') || 60),
+      expected_refresh_minutes: optionalNumber('refresh-interval'),
+      latest_date_field: value('latest-date') || null,
+      infer_latest_date_field: document.getElementById('infer-date').checked,
+      sheet_name: value('sheet-name') || null,
+      json_record_path: value('json-path') || null,
+      numeric_fields: list('numeric-fields'),
+      unique_keys: list('unique-keys')
+    }
+  };
+}
+
+function render(result) {
+  lastPreflight = result;
+  panel.hidden = false;
+  acceptButton.disabled = !result.ready;
+  const status = document.getElementById('preflight-status');
+  status.textContent = result.ready ? 'Ready' : 'Needs attention';
+  status.className = result.ready ? 'text-healthy' : 'text-critical';
+  const summary = document.getElementById('preflight-summary');
+  summary.innerHTML = '';
+  const metrics = [
+    ['Availability', result.available ? 'Available' : 'Unavailable'],
+    ['Rows', result.profile ? result.profile.row_count : '—'],
+    ['Columns', result.profile ? result.profile.column_count : '—']
+  ];
+  for (const [label, metric] of metrics) {
+    const card = document.createElement('div');
+    card.className = 'metric-card';
+    const span = document.createElement('span'); span.textContent = label;
+    const strong = document.createElement('strong'); strong.textContent = metric;
+    card.append(span, strong); summary.append(card);
+  }
+  const issues = document.getElementById('preflight-issues');
+  issues.innerHTML = '';
+  if (!result.issues.length) {
+    const note = document.createElement('div');
+    note.className = 'healthy-note';
+    note.innerHTML = '<strong>Contracts verified.</strong><p>No onboarding blockers were found.</p>';
+    issues.append(note);
+  } else {
+    for (const issue of result.issues) {
+      const item = document.createElement('div');
+      item.className = `contract-issue issue-${issue.level}`;
+      const title = document.createElement('strong'); title.textContent = issue.code.replaceAll('_', ' ');
+      const text = document.createElement('span'); text.textContent = issue.message;
+      item.append(title, text); issues.append(item);
+    }
+  }
+}
+
+async function postJson(url) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(sourcePayload())
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status}: ${body}`);
+  }
+  return response.json();
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  preflightButton.disabled = true;
+  acceptButton.disabled = true;
+  try { render(await postJson('/api/preflight')); }
+  catch (error) { render({ready:false, available:false, profile:null, issues:[{level:'error', code:'request_error', message:String(error)}]}); }
+  finally { preflightButton.disabled = false; }
+});
+
+acceptButton.addEventListener('click', async () => {
+  if (!lastPreflight || !lastPreflight.ready) return;
+  acceptButton.disabled = true;
+  try {
+    const result = await postJson('/api/onboard');
+    render(result);
+    if (result.accepted) window.location.assign(`/sources/${encodeURIComponent(result.source.id)}`);
+  } catch (error) {
+    render({ready:false, available:false, profile:null, issues:[{level:'error', code:'request_error', message:String(error)}]});
+  }
+});
+</script>
+</body>
+</html>
