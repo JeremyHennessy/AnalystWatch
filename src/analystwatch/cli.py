@@ -8,7 +8,13 @@ from pathlib import Path
 import uvicorn
 
 from .config import load_sources
-from .models import IncidentTransition, MonitoringConfig, SourceDefinition, SourceType
+from .models import (
+    DeliveryReconciliationOutcome,
+    IncidentTransition,
+    MonitoringConfig,
+    SourceDefinition,
+    SourceType,
+)
 from .pages import build_pages_site
 from .service import MonitorService
 from .storage import Storage
@@ -57,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[item.value for item in IncidentTransition],
         help="Transition eligible for future notification delivery; repeat to enable multiple",
     )
+    add.add_argument(
+        "--delivery-retry-minutes",
+        type=int,
+        default=0,
+        help="Delay after a Failed delivery attempt before a new key may retry",
+    )
     add.add_argument("--history-window-size", type=int, default=5)
     add.add_argument("--min-history-observations", type=int, default=3)
 
@@ -89,11 +101,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     attempts = sub.add_parser(
         "delivery-attempts",
-        help="List persisted delivery attempts; v0.7 supports dry-run attempts only",
+        help="List persisted delivery attempts; dry-run attempts only",
     )
     attempts.add_argument("--candidate-id")
     attempts.add_argument("--source-id")
     attempts.add_argument("--limit", type=int, default=100)
+
+    retry_status = sub.add_parser(
+        "delivery-retry-status",
+        help="Show retry readiness independently from source monitoring cadence",
+    )
+    retry_status.add_argument("candidate_id")
 
     dry_run = sub.add_parser(
         "dry-run-delivery",
@@ -101,6 +119,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dry_run.add_argument("candidate_id")
     dry_run.add_argument("--idempotency-key", required=True)
+
+    reconcile = sub.add_parser(
+        "reconcile-delivery-attempt",
+        help="Resolve a Prepared attempt after explicit review",
+    )
+    reconcile.add_argument("attempt_id")
+    reconcile.add_argument(
+        "--outcome",
+        required=True,
+        choices=[item.value for item in DeliveryReconciliationOutcome],
+    )
+    reconcile.add_argument("--note", required=True)
 
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
@@ -149,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             notification_transitions=[
                 IncidentTransition(item) for item in args.notification_transition
             ],
+            delivery_retry_minutes=args.delivery_retry_minutes,
             history_window_size=args.history_window_size,
             min_history_observations=args.min_history_observations,
         )
@@ -230,10 +261,24 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps([item.model_dump(mode="json") for item in items], indent=2))
         return 0
 
+    if args.command == "delivery-retry-status":
+        decision = service.delivery_retry_decision(args.candidate_id)
+        print(decision.model_dump_json(indent=2))
+        return 0 if decision.due else 2
+
     if args.command == "dry-run-delivery":
         attempt = service.dry_run_delivery(args.candidate_id, args.idempotency_key)
         print(attempt.model_dump_json(indent=2))
         return 0 if attempt.state.value == "Succeeded" else 2
+
+    if args.command == "reconcile-delivery-attempt":
+        attempt = service.reconcile_delivery_attempt(
+            args.attempt_id,
+            DeliveryReconciliationOutcome(args.outcome),
+            args.note,
+        )
+        print(attempt.model_dump_json(indent=2))
+        return 0
 
     if args.command == "baseline-review":
         review = service.baseline_review(args.source_id, args.observation_id)
