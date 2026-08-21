@@ -374,7 +374,9 @@ class Storage:
             attempt_number = 1
             if latest is not None:
                 if latest.state != DeliveryAttemptState.FAILED:
-                    raise ValueError("A new delivery attempt requires the previous attempt to have Failed")
+                    raise ValueError(
+                        "A new delivery attempt requires the previous attempt to have Failed"
+                    )
                 if latest.completed_at is None:
                     raise ValueError("Failed delivery attempt is missing its completion timestamp")
                 next_retry_at = latest.completed_at + timedelta(minutes=retry_minutes)
