@@ -68,7 +68,8 @@
         {% endif %}
         <p class="muted">Candidate policy: {{ notification_candidate_states.Eligible }} Eligible · {{ notification_candidate_states.Suppressed }} Suppressed · {{ notification_candidate_states.Pending }} Pending.</p>
         <p class="muted">Dry-run attempts: {{ delivery_attempt_count }} total · {{ delivery_attempt_states.Succeeded }} Succeeded · {{ delivery_attempt_states.Failed }} Failed · {{ delivery_attempt_states.Prepared }} Prepared.</p>
-        <p class="muted">Eligible means the transition matches the source policy only. Core v0.7 dry-run attempts perform no external delivery or network request.</p>
+        <p class="muted">Eligible means the transition matches the source policy only. Core v0.6 still does not send email, Slack, webhooks, or other outbound notifications.</p>
+        <p class="muted">Core v0.7 dry-run attempts perform no external delivery or network request.</p>
       </section>
       {% endif %}
 
