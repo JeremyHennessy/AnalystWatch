@@ -4,28 +4,28 @@
 
 AnalystWatch detects silent changes in CSV, Excel, JSON and REST API inputs that analysts depend on: stale data, schema changes, unexpected row loss, null explosions, numerical scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
 
-## Core v0.4 status
+## Core v0.5 status
 
-Core v0.4 is a test-ready Python modular monolith with scheduled monitoring, a GitHub Pages test surface, real-source validation, contract preflight, and an operational review layer. It supports:
+Core v0.5 is a test-ready Python modular monolith with scheduled monitoring, GitHub Pages test hosting, real-source validation, source-contract preflight, operational review controls, and deterministic incident transitions. It supports:
 
 - CSV, XLSX, JSON and HTTP GET JSON sources
-- source profiles for schema, row count, nulls, cardinality, numeric distributions and material categories
-- explicit `numeric_fields` contracts for APIs that publish numeric values as strings
 - deterministic availability, freshness, schema, row-count, null-rate, numeric, categorical and configured-key uniqueness checks
+- explicit `numeric_fields` for APIs that publish numeric values as strings
 - explicit baseline plus recent Healthy-history comparison context
-- independent check cadence and source-freshness expectations
-- retained observations and guarded baseline promotion
-- Healthy / Warning / Critical state with evidence-backed findings
-- source preflight that validates a candidate without saving it or creating a baseline
-- preflight-protected creation and editing of source definitions
-- environment-backed API request headers without storing secret values in source definitions
-- Acknowledged / Reviewed operational state for unhealthy observations
-- local onboarding UI, JSON API and FastAPI dashboard
-- generated read-only GitHub Pages dashboard
-- scheduled GitHub Actions monitoring for testing
-- a live-source smoke gate for repository-configured sources
+- independent monitoring cadence and upstream freshness expectations
+- source preflight before interactive/API creation or editing
+- environment-backed API request headers without persisting secret values
+- Acknowledged / Reviewed analyst review state for unhealthy observations
+- guarded Healthy-only baseline promotion
+- deterministic incident lifecycle: Opened, Escalated, Recovered
+- persisted Pending notification **candidates** for meaningful incident transitions
+- suppression of repeated notification candidates while an incident remains at the same severity
+- local FastAPI dashboard/API and read-only GitHub Pages views
+- scheduled GitHub Actions monitoring and live-source smoke validation
 
-It does **not** include user authentication, billing, notification delivery, enterprise warehouses, BI integrations, or LLM-dependent detection.
+Core v0.5 does **not** send notifications. There is no email, Slack, webhook, SMS, retry worker, or external delivery adapter in this milestone.
+
+It also does not yet include user authentication, billing, enterprise warehouses, BI integrations, or LLM-dependent detection.
 
 ## Setup
 
@@ -53,9 +53,9 @@ The hosted test configuration currently includes:
 - `bank-of-canada-usd-cad` — Bank of Canada USD/CAD daily observations
 - `us-treasury-debt` — U.S. Treasury Debt to the Penny
 
-The Treasury API publishes numeric amounts as JSON strings. Those amount fields are explicitly listed in `numeric_fields`, so AnalystWatch profiles them numerically and can detect scaling/distribution changes without automatically treating numeric-looking IDs or codes as numbers.
+The Treasury API publishes numeric amounts as JSON strings. Those amount fields are explicitly listed in `numeric_fields`, so AnalystWatch profiles them numerically without broadly coercing numeric-looking identifiers.
 
-The live-source smoke gate has repeatedly verified the Bank of Canada and U.S. Treasury sources from GitHub Actions. That establishes integration behavior at those checkpoints, not long-term false-positive or false-negative performance.
+The live-source smoke gate has repeatedly verified the Bank of Canada and U.S. Treasury sources from GitHub Actions. That establishes integration behavior at those checkpoints, not long-run false-positive/false-negative performance.
 
 ## Add, validate and edit a source locally
 
@@ -71,25 +71,17 @@ Open `http://127.0.0.1:8000`, then choose **Add source**. The onboarding flow se
 2. run **Preflight**;
 3. AnalystWatch ingests and profiles the candidate without saving it;
 4. resolve blocking contract errors;
-5. add the monitored source only when preflight reports **Ready**.
+5. add the source only when preflight reports **Ready**.
 
-Preflight validates, where configured:
+Preflight validates source availability/non-empty data and, where configured, numeric fields, unique keys, and freshness evidence. A stale-but-structurally-valid source may produce a freshness warning without becoming an invalid source contract.
 
-- source availability and non-empty data
-- numeric fields and their parseability
-- unique-key presence, nulls and duplicates
-- freshness-field presence and date parseability
-- whether a configured refresh expectation has usable freshness evidence
+Existing source definitions can be replaced through `PUT /api/sources/{source_id}` or the CLI only after the replacement definition passes the same preflight. A failed edit leaves the previous definition, observations and baseline unchanged. Source IDs cannot change during an edit.
 
-A stale-but-structurally-valid source can surface a freshness warning without making the contract invalid. Blocking errors prevent onboarding.
-
-Existing source definitions can be replaced through `PUT /api/sources/{source_id}` or the CLI only after the replacement definition passes the same preflight checks. A failed edit leaves the existing definition, observations and baseline unchanged. Source IDs cannot change during an edit.
-
-A newly accepted source is saved without creating an observation or baseline; its first explicit/scheduled monitoring check establishes the baseline.
+A newly accepted source is stored without creating an observation or baseline. Its first normal monitoring check establishes the baseline.
 
 ## Environment-backed API headers
 
-Secret values are not stored in `SourceDefinition`, SQLite source JSON, Git branches, or Pages output. A source can instead map an HTTP header to an environment variable name:
+Secret values are not stored in `SourceDefinition`, SQLite source JSON, Git branches, or Pages output. A source maps a header to an environment-variable name:
 
 ```json
 {
@@ -100,9 +92,7 @@ Secret values are not stored in `SourceDefinition`, SQLite source JSON, Git bran
 }
 ```
 
-At request time AnalystWatch reads those environment variables and sends their values as headers. If a required environment variable is missing, the source becomes unavailable with explicit evidence rather than crashing the monitor.
-
-For CLI configuration:
+At request time AnalystWatch reads those environment variables and sends their values as HTTP headers. If a configured environment variable is missing, the source becomes unavailable with explicit evidence rather than crashing the monitor.
 
 ```bash
 analystwatch add-source \
@@ -113,17 +103,51 @@ analystwatch add-source \
   --request-header-env Authorization=ANALYSTWATCH_API_TOKEN
 ```
 
-The current repository and `monitor-state` branch are public. Environment-variable **names** may appear in local source configuration, but secret **values must never be committed or written to `monitor-state`**. Hosted authenticated sources should use GitHub Actions secrets/environment variables when that workflow is intentionally configured for them.
+The repository and `monitor-state` branch are currently public. Secret **values must never be committed or written to `monitor-state`**. Hosted authenticated sources should use intentionally configured GitHub Actions secrets/environment variables.
 
 ## Operational review
 
-An unhealthy observation may be marked **Acknowledged** or **Reviewed**. This records analyst attention only; it does **not** change the observation health or claim that the upstream problem is resolved.
+A Warning/Critical observation may be marked **Acknowledged** or **Reviewed**. This records analyst attention only. It does not alter the observation's Health, findings, incident state, or claim that the source problem is resolved.
 
-The local source-detail page exposes this workflow for Warning/Critical observations. Pages remains read-only and may display the review state.
+## Incident transitions
+
+Core v0.5 derives the latest incident from immutable observation history rather than maintaining a separately mutable incident record.
+
+Meaningful transitions are:
+
+- **Opened** — Healthy/no prior observation → Warning or Critical
+- **Escalated** — Warning → Critical within an open incident
+- **Recovered** — Warning/Critical → Healthy
+
+Repeated Warning or repeated Critical observations inside the same ongoing incident do not create another transition candidate. A recovered incident remains reconstructable even after later Healthy checks.
+
+Inspect the derived incident:
+
+```bash
+analystwatch incident market_data
+```
+
+## Notification candidates — no delivery
+
+Each Opened, Escalated, or Recovered transition can create one `Pending` notification candidate. The candidate and the transition observation are persisted in the **same SQLite transaction** so one cannot be committed without the other.
+
+Inspect candidates:
+
+```bash
+analystwatch notification-candidates
+analystwatch notification-candidates --source-id market_data
+```
+
+Candidates are evidence that a future delivery policy *could* act. Core v0.5 does not deliver them anywhere. The API endpoints are read-only:
+
+- `GET /api/sources/{source_id}/incident`
+- `GET /api/notification-candidates`
+
+The source detail page and static Pages view show incident lifecycle and candidate counts but provide no send controls.
 
 ## Baseline review
 
-The first successful monitoring observation becomes the baseline. A later baseline change is now a guarded review operation:
+The first successful monitoring observation becomes the baseline. A later baseline change is guarded:
 
 ```bash
 analystwatch baseline-review market_data
@@ -132,17 +156,17 @@ analystwatch promote-baseline market_data \
   --expected-baseline-id <current-baseline-id>
 ```
 
-Only a Healthy, available observation with a profile can be promoted. Promotion also verifies that the current baseline is still the baseline that was reviewed; if it changed in the meantime, the operation stops and requires a fresh review.
+Only a Healthy, available observation with a profile can be promoted. Promotion verifies the current baseline is still the baseline that was reviewed; a changed baseline requires a fresh review.
 
-After enough recent Healthy observations exist, AnalystWatch uses their median as an operational reference for row count, null rate, numeric median and key-duplication checks. Findings still expose the explicit baseline so gradual healthy growth does not erase the approved reference point.
+After enough recent Healthy observations exist, AnalystWatch can use their median as the operational reference for row count, null rate, numeric median and key duplication while still retaining/exposing the explicit approved baseline.
 
 ## GitHub Pages test deployment
 
-GitHub Pages is static hosting, so FastAPI and write operations do not run there. `.github/workflows/pages.yml` runs AnalystWatch in GitHub Actions, stores the small test SQLite database on the dedicated `monitor-state` branch, renders `site/`, and deploys that read-only snapshot to Pages.
+GitHub Pages is static hosting, so FastAPI and write operations do not run there. `.github/workflows/pages.yml` runs AnalystWatch in GitHub Actions, stores the small test SQLite database on the dedicated `monitor-state` branch, renders `site/`, and deploys that read-only snapshot.
 
-The repository is currently public. Therefore `monitor-state` is also public and **must contain only non-secret test state**. This branch-backed persistence is temporary test infrastructure, not the production storage design.
+The repository is currently public. Therefore `monitor-state` is public and **must contain only non-secret test state**. Branch-backed persistence is temporary test infrastructure, not a production database design.
 
-The Pages source detail exposes the monitoring contract and operational review state. API query strings are stripped from displayed API locations, and environment-variable names for configured request headers are not exposed in static Pages output.
+Pages exposes monitoring contracts, review state, derived incident summaries, and candidate counts. API query strings are stripped from displayed API locations, request-header environment-variable names are not exposed in static Pages output, and no delivery action is available.
 
 The workflow runs:
 
@@ -161,14 +185,9 @@ python -m http.server 8080 --directory site
 
 Pull requests that change live-source configuration or relevant ingestion/profile/service code run `.github/workflows/live-source-smoke.yml`.
 
-The smoke gate checks each enabled configured source and fails when:
+The smoke gate verifies that enabled configured sources remain available, profile successfully, do not become Critical on their initial smoke observation, preserve configured numeric contracts, and expose parseable configured freshness dates.
 
-- the source is unavailable or produces no profile
-- the source resolves to Critical on its first observation
-- a configured numeric field is missing or is not profiled numerically
-- a configured freshness field has no parseable date
-
-This complements deterministic mocked tests; it does not replace them.
+This complements deterministic tests; it does not replace them.
 
 ## Demonstrate the core signal
 
@@ -186,7 +205,7 @@ python -m compileall -q src tests scripts
 pytest -q
 ```
 
-CI runs the same gate on pushes and pull requests.
+The v0.5 functional candidate passed Ruff, compile, **50 tests**, and the live-source smoke gate. CI runs the same repository gate on pushes and pull requests.
 
 ## Architecture
 
@@ -201,11 +220,15 @@ source config -> schedule -> ingestion -> profile -> deterministic detectors
                                       v                 |
                                   SQLite <--------------+
                                       |
-                         review state + baseline guard
-                                      |
-                      +---------------+----------------+
-                      |                                |
-                 FastAPI local                  static Pages export
+                  immutable observation history
+                     |            |             |
+                  review       incident      guarded
+                   state       derivation     baseline
+                                  |
+                       transition candidate
+                    (atomic with observation)
+                                  |
+                        NO DELIVERY IN v0.5
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).
@@ -213,12 +236,13 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](do
 ## Current limitations
 
 - GitHub Pages is read-only and intended for testing.
-- Test-state persistence on `monitor-state` is not the production storage design.
+- `monitor-state` branch persistence is not a production database design.
 - The current public repository means all branch-persisted test state is public.
 - GitHub cron execution can be delayed.
-- Environment-backed API headers are implemented, but there is not yet a multi-user secret-management service or credentials UI.
+- Environment-backed API headers are implemented, but there is no multi-user secret-management service or credentials UI.
+- Notification candidates are persisted but **not delivered**.
+- Authentication/workspace ownership is not implemented.
 - Date-field inference is opt-in and intentionally conservative.
-- Rename-looking schema changes are not inferred yet.
+- Schema rename inference is not implemented.
 - Historical context is a deterministic rolling Healthy median, not forecasting/ML.
 - Real-source history is still insufficient to quantify long-run false-positive/false-negative rates.
-- Notifications remain deferred until signal quality is validated further.
