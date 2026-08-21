@@ -79,7 +79,9 @@ def evaluate_notification_candidate(
     else:
         state = NotificationCandidateState.SUPPRESSED
         if enabled_snapshot:
-            reason = f"{candidate.transition.value} is not enabled by the source notification policy."
+            reason = (
+                f"{candidate.transition.value} is not enabled by the source notification policy."
+            )
         else:
             reason = "No notification transitions are enabled for this source."
     return candidate.model_copy(
