@@ -18,10 +18,11 @@ from .models import (
 from .pages import build_pages_site
 from .service import MonitorService
 from .storage import Storage
+from .workspace import DEFAULT_WORKSPACE_ID, create_workspace_service
 
 
-def _service(db: str) -> MonitorService:
-    return MonitorService(Storage(db))
+def _service(db: str, workspace_id: str) -> MonitorService:
+    return create_workspace_service(Storage(db), workspace_id)
 
 
 def _parse_header_env(items: list[str]) -> dict[str, str]:
@@ -40,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--db",
         default=os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"),
         help="SQLite database path",
+    )
+    parser.add_argument(
+        "--workspace-id",
+        default=os.environ.get("ANALYSTWATCH_WORKSPACE_ID", DEFAULT_WORKSPACE_ID),
+        help="Workspace bound to monitoring commands (default: local)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -193,12 +199,12 @@ def main(argv: list[str] | None = None) -> int:
         print(result.model_dump_json(indent=2))
         return 0
 
-    service = _service(args.db)
-
     if args.command == "backup-state":
-        result = service.storage.backup_to(args.destination)
+        result = Storage(args.db).backup_to(args.destination)
         print(result.model_dump_json(indent=2))
         return 0
+
+    service = _service(args.db, args.workspace_id)
 
     if args.command == "add-source":
         config = MonitoringConfig(
@@ -219,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         source = SourceDefinition(
             id=args.id,
+            workspace_id=args.workspace_id,
             name=args.name,
             source_type=SourceType(args.type),
             location=args.location,
@@ -344,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         os.environ["ANALYSTWATCH_DB"] = str(Path(args.db))
+        os.environ["ANALYSTWATCH_WORKSPACE_ID"] = args.workspace_id
         uvicorn.run("analystwatch.web:app", host=args.host, port=args.port, reload=False)
         return 0
 
