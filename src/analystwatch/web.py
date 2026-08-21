@@ -60,7 +60,7 @@ def create_app(
     storage = WorkspaceStore(raw_storage, resolved_workspace)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.11.0")
+    app = FastAPI(title="AnalystWatch", version="0.12.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.service = service

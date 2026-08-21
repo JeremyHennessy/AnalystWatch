@@ -44,38 +44,47 @@ Added stable storage identity/schema metadata, read-only integrity verification,
 
 Added structural `MonitoringStore`, backward-compatible default-local source ownership and `WorkspaceStore` isolation without changing the SQLite schema. Clean gate: 92 tests; hosted state verified after merge.
 
-## Core v0.11 — Runtime workspace binding & store conformance — current
+## Core v0.11 — Runtime workspace binding & store conformance — complete
+
+Added independent `MemoryStore`, shared conformance coverage, default-local CLI/FastAPI workspace binding and runtime isolation. Clean gate: 113 tests; hosted state verified after merge.
+
+## Core v0.12 — Workspace-aware persistent identity proof — current
 
 Implemented and verified on the functional checkpoint:
 
-- independent `MemoryStore` implementation that does not inherit/wrap SQLite
-- shared persistence conformance scenarios across SQLite and MemoryStore
-- CLI global `--workspace-id`, default `local`
-- CLI monitoring/list/check/Pages paths use workspace-bound storage
-- SQLite verify/backup/restore remain raw maintenance paths
-- FastAPI bound to one workspace, default `local`
-- cross-workspace source writes blocked before preflight/persistence
-- raw `app.state.storage` compatibility handle retained while HTTP/service paths use `workspace_storage`
-- scheduler typed against `MonitoringStore`
-- 16 parametrized cross-store conformance cases
-- 5 workspace-runtime regression cases
-- clean functional checkpoint reached **113 passing tests**
+- separate `NamespacedStorage` persistent adapter using schema version 2
+- composite workspace identity across sources, observations, reviews, candidates and attempts
+- workspace-local idempotency-key uniqueness
+- workspace-local candidate/adapter attempt numbering
+- same source/candidate/attempt IDs can coexist in different workspaces in one database
+- same idempotency value can coexist in different workspaces
+- adapter remains bound to one validated workspace per instance
+- adapter satisfies the existing `MonitoringStore` contract
+- read-only verified import from legacy schema-v1 snapshots
+- selected-workspace import only
+- imported baseline, review, candidate and delivery-attempt state preserved
+- import destination is create-only and never overwritten
+- imported schema-v2 database receives a new storage identity
+- corrupt or non-v1 sources are rejected before a target is retained
+- current hosted legacy runtime remains unchanged
+- eight new regressions
+- clean functional checkpoint reached **121 passing tests**
 
-The live-source PR workflow is intentionally path-filtered to ingestion/model/profile/service changes, so it does not run for this runtime/store-only milestone. Hosted `monitor-state` advancement after merge is the deployment compatibility gate.
+The live-source PR workflow is path-filtered to ingestion/model/profile/service changes and therefore does not run for this new-adapter-only milestone. Post-merge `monitor-state` advancement is the deployment compatibility gate for the unchanged legacy runtime.
 
-## Candidate v0.12 — workspace-aware persistent identity proof
+## Candidate v0.13 — controlled backend selection & migration rehearsal
 
-Before selecting a production database:
+Before any production database selection:
 
-- implement a separate persistent store schema keyed by workspace + source identity
-- prove two workspaces can use the same source ID without collisions
-- carry workspace identity through observations, reviews, candidates and attempts
-- add verified import from a legacy SQLite snapshot into one selected workspace
-- keep current hosted SQLite runtime unchanged until the new schema is independently proven
+- add explicit runtime backend selection with safe legacy default
+- reject schema/backend mismatches before initialization
+- add a local CLI wrapper for verified legacy-to-namespaced import
+- rehearse legacy snapshot → schema-v2 import → FastAPI startup → Pages rendering
+- prove source/history/candidate/attempt continuity after import
+- keep hosted deployment on legacy until the rehearsal is independently green
 
 ## Later
 
-- controlled runtime backend selection and migration rehearsal
 - deployment-appropriate production database adapter
 - authenticated workspace/user authorization
 - retention/audit policy for observations, candidates and attempts
