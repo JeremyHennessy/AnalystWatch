@@ -49,7 +49,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     storage = Storage(resolved_db)
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.6.0")
+    app = FastAPI(title="AnalystWatch", version="0.7.0")
     app.state.storage = storage
     app.state.service = service
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
