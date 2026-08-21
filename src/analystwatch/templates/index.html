@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AnalystWatch</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">ANALYSTWATCH</p>
+        <h1>Can I trust my data today?</h1>
+        <p class="muted">Reliability monitoring for analyst-owned files and APIs.</p>
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="section-title">
+        <h2>My data</h2>
+        <span>{{ sources|length }} source{{ '' if sources|length == 1 else 's' }}</span>
+      </div>
+      {% if sources %}
+        <div class="source-list">
+          {% for item in sources %}
+          <a class="source-row" href="/sources/{{ item.source.id }}">
+            <div>
+              <strong>{{ item.source.name }}</strong>
+              <span class="source-meta">{{ item.source.source_type.value|upper }} · {{ item.source.location }}</span>
+            </div>
+            <span class="status status-{{ item.health|lower|replace(' ', '-') }}">
+              <span class="dot"></span>{{ item.health }}
+            </span>
+          </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">
+          <h3>No monitored sources yet</h3>
+          <p>Add a source with the CLI or <code>POST /api/sources</code>, then run its first check to establish a baseline.</p>
+        </div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
