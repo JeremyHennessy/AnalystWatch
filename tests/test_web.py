@@ -35,13 +35,21 @@ def test_dashboard_renders_source_health_and_evidence(tmp_path: Path):
     assert home.status_code == 200
     assert "Market Data" in home.text
     assert "Healthy" in home.text
+    assert "WORKSPACE OVERVIEW" in home.text
+    assert "Sources healthy" in home.text
+    assert "Needs attention" in home.text
+    assert "Monitored sources" in home.text
 
     detail = client.get("/sources/market")
     assert detail.status_code == 200
+    assert "Data verified" in detail.text
     assert "Baseline" in detail.text
     assert "Last successful update" in detail.text
     assert "Current profile" in detail.text
     assert "No material reliability findings" in detail.text
+    assert "WHAT CHANGED?" in detail.text
+    assert "Recent health history" in detail.text
+    assert "Monitoring contract" in detail.text
 
 
 def test_source_api_returns_history(tmp_path: Path):
@@ -83,3 +91,5 @@ def test_detail_renders_after_first_check_is_unavailable(tmp_path: Path):
     assert "Critical" in detail.text
     assert "No successful observation" in detail.text
     assert "Not established" in detail.text
+    assert "WHAT HAPPENED?" in detail.text
+    assert "Suggested next check" in detail.text
