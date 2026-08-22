@@ -212,7 +212,9 @@ def test_oversized_row_diff_is_explicit_and_does_not_change_health(tmp_path: Pat
     assert "limit is 2" in observation.row_diff.snapshot_reason
 
 
-def test_static_pages_keep_counts_but_hide_row_keys_and_values(tmp_path: Path) -> None:
+def test_static_pages_strip_row_diff_raw_payloads_but_keep_aggregate_evidence(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "customers.csv"
     _frame_one().to_csv(path, index=False)
     service = MonitorService(Storage(tmp_path / "public.db"))
@@ -224,14 +226,18 @@ def test_static_pages_keep_counts_but_hide_row_keys_and_values(tmp_path: Path) -
     current.to_csv(path, index=False)
     latest = service.check_source("customers")
     assert latest.row_diff is not None and latest.row_diff.previous is not None
+    assert latest.row_diff.previous.changed_samples
 
     output = build_pages_site(service.storage, tmp_path / "site")
-    detail = (output / "sources" / "customers" / "index.html").read_text(encoding="utf-8")
     raw_state = (output / "state.json").read_text(encoding="utf-8")
     state = json.loads(raw_state)["sources"][0]["latest"]
 
-    assert "SECRET-CANCELLED-VALUE" not in detail
-    assert "SECRET-CANCELLED-VALUE" not in raw_state
-    assert '"row_snapshot": null' in raw_state
+    assert state["row_snapshot"] is None
     assert state["row_diff"]["previous"]["changed_count"] == 1
+    assert state["row_diff"]["previous"]["added_count"] == 1
+    assert state["row_diff"]["previous"]["removed_count"] == 1
     assert state["row_diff"]["previous"]["changed_samples"] == []
+    assert state["row_diff"]["previous"]["added_samples"] == []
+    assert state["row_diff"]["previous"]["removed_samples"] == []
+    # Existing deterministic findings retain their established public evidence policy;
+    # v0.18 specifically prevents its new raw row snapshots/samples from being published.
