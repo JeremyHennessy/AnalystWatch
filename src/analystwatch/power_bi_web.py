@@ -78,7 +78,6 @@ def configure_power_bi_web(
         definition = service.get_guard(guard_id)
         if definition is None:
             raise HTTPException(status_code=404, detail="Power BI Guard not found")
-        latest = service.latest_snapshot(guard_id)
         return templates.TemplateResponse(
             request=request,
             name="power_bi_detail.html",
@@ -110,7 +109,10 @@ def configure_power_bi_web(
         if guard_id != definition.id:
             raise HTTPException(status_code=409, detail="Guard ID does not match request path")
         if definition.workspace_id != workspace_id:
-            raise HTTPException(status_code=409, detail="Power BI Guard belongs to another workspace")
+            raise HTTPException(
+                status_code=409,
+                detail="Power BI Guard belongs to another workspace",
+            )
         return service.upsert_guard(definition)
 
     @app.post("/api/power-bi/guards/{guard_id}/check")
