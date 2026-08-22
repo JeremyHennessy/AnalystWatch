@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .dependencies import AssetKind
 from .scorecard_service import ReliabilityScorecardService
 from .scorecards import ReliabilityScorecard
-
-router = APIRouter()
 
 
 class DownstreamImpactSummary(BaseModel):
@@ -20,10 +18,6 @@ class ReliabilityScorecardResponse(BaseModel):
     downstream_impact: DownstreamImpactSummary
 
 
-@router.get(
-    "/api/sources/{source_id}/scorecard",
-    response_model=ReliabilityScorecardResponse,
-)
 def api_source_scorecard(request: Request, source_id: str) -> ReliabilityScorecardResponse:
     service = ReliabilityScorecardService(request.app.state.workspace_storage)
     try:
@@ -47,4 +41,13 @@ def api_source_scorecard(request: Request, source_id: str) -> ReliabilityScoreca
     return ReliabilityScorecardResponse(
         scorecard=scorecard,
         downstream_impact=impact,
+    )
+
+
+def configure_scorecard_web(app: FastAPI) -> None:
+    app.add_api_route(
+        "/api/sources/{source_id}/scorecard",
+        api_source_scorecard,
+        methods=["GET"],
+        response_model=ReliabilityScorecardResponse,
     )
