@@ -52,47 +52,55 @@ Added independent `MemoryStore`, shared conformance coverage, default-local CLI/
 
 Added separate schema-v2 `NamespacedStorage`, composite workspace/domain keys, workspace-local idempotency and verified selected-workspace import from legacy snapshots. Clean gate: 121 tests; hosted legacy state verified after merge.
 
-## Core v0.13 — Controlled backend selection & migration rehearsal — current
+## Core v0.13 — Controlled backend selection & migration rehearsal — complete
+
+Added safe `legacy` / `namespaced` runtime selection, pre-initialization schema checks, backend-aware verification, local legacy → namespaced import and full migrated FastAPI/Pages rehearsal. Clean gate: 129 tests; hosted default-legacy state verified after merge.
+
+## Core v0.14 — PostgreSQL production persistence proof — current
 
 Implemented and verified on the functional checkpoint:
 
-- shared runtime storage factory for `legacy` and `namespaced` modes
-- safe default remains `legacy`
-- existing databases inspected read-only before runtime initialization
-- schema version 1 accepted only by `legacy`
-- schema version 2 accepted only by `namespaced`
-- corrupt or AnalystWatch-unknown existing state rejected without mutation
-- global CLI `--storage-backend` and `ANALYSTWATCH_STORAGE_BACKEND`
-- backend-aware `verify-state`
-- legacy backup/restore explicitly remain legacy-only
-- local `import-namespaced-state` command wraps the create-only v1 → v2 import
-- FastAPI accepts explicit/environment backend selection
-- FastAPI records selected backend in app state
-- end-to-end migration rehearsal starts from operational legacy state
-- rehearsal verifies Healthy baseline, later Critical history, Reviewed state, Eligible candidate and completed dry-run attempt
-- verified legacy snapshot imported into schema-v2
-- migrated state successfully opened through namespaced FastAPI
-- source/history/candidate/attempt continuity verified through API reads
-- migrated state successfully rendered through static Pages
-- eight new backend/migration regressions
-- clean functional checkpoint reached **129 passing tests**
+- deployment-grade `PostgresStorage` implementation of `MonitoringStore`
+- PostgreSQL schema namespace `analystwatch`
+- backend-specific PostgreSQL schema/storage identity metadata
+- composite workspace identity for sources, observations, reviews, candidates and attempts
+- workspace-local idempotency-key uniqueness
+- workspace-local candidate/adapter attempt numbering
+- deterministic insertion ordering for timestamp ties
+- PostgreSQL `FOR UPDATE` row locking for delivery claim and Prepared reconciliation safety
+- shared conformance suite now runs across SQLite, `MemoryStore` and PostgreSQL
+- real PostgreSQL 16 service added to GitHub CI; PostgreSQL is not mocked
+- `psycopg` production driver dependency
+- explicit runtime backend `postgres`; safe default remains `legacy`
+- PostgreSQL requires an explicit DSN via CLI/environment/FastAPI
+- backend-aware PostgreSQL verification
+- explicit namespaced schema-v2 → empty PostgreSQL workspace import
+- imported source/history/baseline/review/candidate/attempt state preserved
+- concurrent same-candidate claim regression proves row-lock serialization
+- cross-workspace duplicate domain IDs and idempotency values proven safe in PostgreSQL
+- CLI `import-postgres-state` cutover rehearsal
+- FastAPI successfully starts and reads imported PostgreSQL operational state
+- hosted workflow remains on legacy SQLite; no production DSN is committed
+- clean functional checkpoint reached **143 passing tests** against PostgreSQL 16
 
-The live-source PR workflow is path-filtered to ingestion/model/profile/service changes and does not run for this runtime-only milestone. Post-merge `monitor-state` advancement remains the deployment compatibility gate proving the hosted default-legacy path still operates normally.
+v0.14 is a production-persistence **contract proof**, not a managed PostgreSQL deployment. Managed provisioning, backups/PITR, retention, operational observability and an actual hosted cutover remain separate deployment work.
 
-## Candidate v0.14 — production persistence & authenticated workspace boundary
+## Candidate v0.15 — authenticated workspace authorization
 
 Before enabling real external delivery:
 
-- select a deployment-grade persistent database behind the proven `MonitoringStore` contract
-- implement workspace-aware identity equivalent to the schema-v2 proof
-- define authenticated user/session identity
-- define workspace membership and authorization rules for remote reads/writes
-- define production migration/cutover from verified local snapshots
-- define managed backup/retention/audit policy
-- keep real notification delivery disabled until persistence/auth boundaries are proven
+- define a provider-neutral authenticated principal/session model
+- define persisted workspace membership and role semantics
+- distinguish read-only, operational-write and administrative capabilities
+- enforce workspace membership on remote FastAPI reads and writes
+- never trust a user-supplied workspace identifier without authenticated membership
+- preserve explicit local/CLI operation without silently pretending it is remote authentication
+- add negative tests for cross-workspace reads, writes, candidate operations and baseline/review operations
+- keep notification delivery disabled until the authorization boundary is independently green
 
 ## Later
 
+- managed PostgreSQL deployment/cutover, backups/PITR and retention policy
 - first opt-in provider integration behind the proven attempt abstraction
 - production notification delivery
 - SourceGuard productization
