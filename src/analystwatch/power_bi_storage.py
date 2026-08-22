@@ -111,7 +111,11 @@ class SQLitePowerBIGuardStore:
 
     def save_snapshot(self, snapshot: PowerBIGuardSnapshot) -> PowerBIGuardSnapshot:
         if self.get_guard(snapshot.guard_id) is None:
-            raise KeyError(f"Unknown Power BI Guard in workspace {self.workspace_id}: {snapshot.guard_id}")
+            message = (
+                f"Unknown Power BI Guard in workspace {self.workspace_id}: "
+                f"{snapshot.guard_id}"
+            )
+            raise KeyError(message)
         checked_at = snapshot.checked_at.isoformat()
         with self.connect() as db:
             db.execute(
@@ -238,7 +242,11 @@ class PostgresPowerBIGuardStore:
 
     def save_snapshot(self, snapshot: PowerBIGuardSnapshot) -> PowerBIGuardSnapshot:
         if self.get_guard(snapshot.guard_id) is None:
-            raise KeyError(f"Unknown Power BI Guard in workspace {self.workspace_id}: {snapshot.guard_id}")
+            message = (
+                f"Unknown Power BI Guard in workspace {self.workspace_id}: "
+                f"{snapshot.guard_id}"
+            )
+            raise KeyError(message)
         with self.connect() as db:
             db.execute(
                 f"""
