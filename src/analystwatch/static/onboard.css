@@ -17,9 +17,18 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .issue-error { border-left-color: #d74343; background: #fff8f8; }
 .issue-warning { border-left-color: #d69800; background: #fffaf0; }
 .issue-info { border-left-color: #6689b5; background: #f7faff; }
+.data-rule-list { display: grid; gap: 12px; }
+.data-rule-card { border: 1px solid #e0e5e9; border-radius: 11px; background: #fafbfc; padding: 14px; }
+.data-rule-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 14px; }
+.data-rule-header strong { font-size: .84rem; }
+.data-rule-card .form-grid { gap: 12px; }
+.data-rule-card small { color: #7a858f; font-weight: 500; line-height: 1.35; }
+.rule-remove { padding: 7px 10px; font-size: .75rem; }
+.rule-empty { color: #7a858f; font-size: .8rem; border: 1px dashed #d9dfe4; border-radius: 9px; padding: 13px; }
 @media (max-width: 700px) {
   .form-grid { grid-template-columns: 1fr; }
   .span-two { grid-column: auto; }
   .form-section { flex-direction: column; }
   .check-label { padding-top: 0; }
+  .data-rule-header { align-items: flex-start; }
 }
