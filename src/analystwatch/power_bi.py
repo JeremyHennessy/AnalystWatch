@@ -144,10 +144,14 @@ def correlate_power_bi_trust(
 ) -> tuple[HealthStatus, str, str]:
     missing = [source_id for source_id, health in upstream_health.items() if health is None]
     critical = [
-        source_id for source_id, health in upstream_health.items() if health == HealthStatus.CRITICAL
+        source_id
+        for source_id, health in upstream_health.items()
+        if health == HealthStatus.CRITICAL
     ]
     warning = [
-        source_id for source_id, health in upstream_health.items() if health == HealthStatus.WARNING
+        source_id
+        for source_id, health in upstream_health.items()
+        if health == HealthStatus.WARNING
     ]
 
     if latest_refresh is None:
@@ -207,7 +211,10 @@ def correlate_power_bi_trust(
         return (
             HealthStatus.HEALTHY,
             "refresh_completed_upstream_healthy",
-            "Power BI refresh completed and all configured upstream AnalystWatch sources are Healthy.",
+            (
+                "Power BI refresh completed and all configured upstream "
+                "AnalystWatch sources are Healthy."
+            ),
         )
 
     return (
@@ -320,7 +327,9 @@ def read_power_bi_guard(
         )
         if reports_response is not None:
             last_status = reports_response.status_code
-        report_items = reports_response.json().get("value", []) if reports_response is not None else []
+        report_items = (
+            reports_response.json().get("value", []) if reports_response is not None else []
+        )
         reports = []
         if isinstance(report_items, list):
             for item in report_items:
@@ -329,11 +338,12 @@ def read_power_bi_guard(
                 report_id = item.get("id")
                 name = item.get("name")
                 if isinstance(report_id, str) and isinstance(name, str):
+                    web_url = item.get("webUrl")
                     reports.append(
                         PowerBIReportEvidence(
                             id=report_id,
                             name=name,
-                            web_url=item.get("webUrl") if isinstance(item.get("webUrl"), str) else None,
+                            web_url=web_url if isinstance(web_url, str) else None,
                         )
                     )
 
