@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 import pytest
 
@@ -98,6 +99,7 @@ def test_power_bi_snapshot_discovers_source_model_and_report_edges() -> None:
     )
     snapshot = PowerBIGuardSnapshot(
         guard_id="guard",
+        checked_at=datetime(2026, 8, 22, tzinfo=timezone.utc),
         available=True,
         health=HealthStatus.HEALTHY,
         trust_case="healthy",
