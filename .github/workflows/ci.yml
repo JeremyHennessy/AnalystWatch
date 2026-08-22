@@ -9,6 +9,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: analystwatch
+          POSTGRES_PASSWORD: analystwatch
+          POSTGRES_DB: analystwatch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U analystwatch -d analystwatch_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ANALYSTWATCH_TEST_POSTGRES_DSN: postgresql://analystwatch:analystwatch@127.0.0.1:5432/analystwatch_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
