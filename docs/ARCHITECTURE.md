@@ -1,112 +1,132 @@
-# AnalystWatch Core v0.12 Architecture
+# AnalystWatch Core v0.13 Architecture
 
 ## Decision
 
-Core v0.12 proves a persistent workspace-aware identity model without changing the verified hosted runtime. The existing legacy SQLite `Storage + WorkspaceStore` path remains the default for CLI, FastAPI, Pages and `monitor-state`.
+Core v0.13 introduces controlled runtime persistence selection while keeping the verified hosted deployment on the legacy schema-v1 SQLite path by default.
 
-A separate `NamespacedStorage` adapter introduces schema version 2 and satisfies the existing `MonitoringStore` contract. This keeps migration risk isolated from detector, incident, notification-policy and delivery-attempt semantics.
+The milestone does not change detector behavior, incident derivation, notification policy, delivery-attempt semantics, legacy schema-v1 storage or namespaced schema-v2 storage. Instead it adds one shared construction boundary that decides which already-proven store may start.
 
-## Schema-v2 identity model
+## Runtime storage factory
 
-Every operational table is physically namespaced by workspace.
+`src/analystwatch/runtime_storage.py` is the authoritative runtime selection seam.
 
-### Sources
+Supported backends:
 
-Primary key: `(workspace_id, id)`.
+- `legacy` — schema version 1;
+- `namespaced` — schema version 2.
 
-### Observations
+`legacy` is the default.
 
-Primary key: `(workspace_id, id)` with composite foreign key to `(workspace_id, source_id)`.
+The factory returns:
 
-### Observation reviews
+- the selected raw persistence implementation;
+- the `MonitoringStore` used by `MonitorService`;
+- the normalized backend name.
 
-Primary key: `(workspace_id, observation_id)` with workspace-scoped foreign keys to observation and source.
+For legacy mode the domain store is `WorkspaceStore(Storage(...), workspace_id)`. For namespaced mode the already workspace-bound `NamespacedStorage` is used directly.
 
-### Notification candidates
+## Read-only pre-initialization verification
 
-Primary key: `(workspace_id, id)` and unique `(workspace_id, observation_id)`.
+Existing database files are inspected before store construction/initialization.
 
-### Delivery attempts
+The sequence is:
 
-Primary key: `(workspace_id, id)` with:
+1. if the path does not exist, allow the explicitly selected backend to create it later;
+2. if the path exists, use the existing read-only SQLite verifier;
+3. reject failed integrity checks;
+4. require AnalystWatch schema metadata;
+5. require schema version 1 for `legacy` or schema version 2 for `namespaced`;
+6. only after the check succeeds construct the selected persistence implementation.
 
-- unique `(workspace_id, idempotency_key)`
-- unique `(workspace_id, candidate_id, adapter, attempt_number)`
-- workspace-scoped foreign keys to candidate and source
+This prevents a schema-v1 process from attempting to initialize schema-v2 state, and vice versa. It also prevents an unknown or corrupt existing SQLite file from being opportunistically converted into AnalystWatch state.
 
-Consequently two workspaces can reuse the same source, observation, candidate and attempt IDs and the same idempotency key in one database without collision.
+## CLI boundary
 
-## Bound-store behavior
+Global selection:
 
-`NamespacedStorage(path, workspace_id)` is bound to exactly one validated workspace. All domain queries include that workspace key and source writes must match the bound workspace.
-
-Multiple instances can share one SQLite file while remaining isolated:
-
-```python
-team_a = NamespacedStorage("state.db", "team-a")
-team_b = NamespacedStorage("state.db", "team-b")
+```text
+--storage-backend legacy|namespaced
 ```
 
-The adapter implements the same `MonitoringStore` surface used by `MonitorService` and the previously proven `Storage` / `MemoryStore` implementations.
+Environment equivalent:
 
-## Legacy import boundary
+```text
+ANALYSTWATCH_STORAGE_BACKEND
+```
 
-`NamespacedStorage.import_legacy_snapshot(...)` is a create-only migration primitive.
+The normal monitoring/list/check/Pages paths all construct `MonitorService` through the shared runtime factory.
 
-Import sequence:
+`verify-state` is backend-aware and rejects a mismatched schema.
 
-1. require source and destination to differ;
-2. reject an existing destination;
-3. verify the source read-only with the legacy schema-v1 verifier;
-4. require schema version 1;
-5. select only source definitions whose `workspace_id` matches the requested workspace;
-6. create a new schema-v2 destination with a new `storage_id`;
-7. copy selected source rows and their observations, reviews, candidates and attempts;
-8. preserve baseline observation references;
-9. verify the destination after import;
-10. remove only the newly-created destination on failure.
+`backup-state` and `restore-state` remain explicitly legacy-only. v0.13 does not imply namespaced snapshot parity that has not been implemented.
 
-The imported database deliberately receives a new logical storage identity. Migration is not a clone/restore operation and does not impersonate the legacy database.
+## Migration command
 
-## Runtime boundary
+`import-namespaced-state` wraps the v0.12 create-only migration primitive:
 
-Core v0.12 does **not** add runtime backend selection. The current application continues to construct legacy `Storage` and wrap it in `WorkspaceStore`.
+- source must be a verified legacy schema-v1 snapshot;
+- one selected workspace is imported;
+- destination must not exist;
+- destination is schema-v2 with a new storage identity;
+- source/history/baseline/review/candidate/attempt state is retained for that workspace;
+- no runtime or hosted cutover occurs automatically.
 
-This means schema-v2 code can be independently tested without changing the deployment state or requiring a live migration.
+The migration command is deliberately separate from runtime selection so importing data and choosing to run against it are two explicit actions.
 
-## Compatibility
+## FastAPI boundary
 
-No changes are made to:
+`create_app(...)` accepts `storage_backend=` and otherwise reads `ANALYSTWATCH_STORAGE_BACKEND`, defaulting to `legacy`.
 
-- legacy `Storage` schema or persistence semantics
-- detector logic or thresholds
-- incident derivation
-- notification policy
-- delivery retry/reconciliation state machine
-- CLI/FastAPI runtime backend selection
-- hosted source configuration
-- Pages templates/CSS
-- GitHub Actions workflows
+FastAPI uses the same runtime factory as CLI. `app.state.storage_backend` records the resolved backend, `app.state.storage` is the selected raw implementation, and `app.state.workspace_storage` is the domain `MonitoringStore` used by the service/read paths.
+
+All previously verified workspace guards remain in place.
+
+## End-to-end migration rehearsal
+
+The v0.13 acceptance suite creates legacy operational state containing:
+
+- a Healthy baseline observation;
+- a later Critical observation;
+- a Reviewed observation state;
+- an Eligible Opened notification candidate;
+- a successful dry-run delivery attempt.
+
+The suite then:
+
+1. snapshots the legacy database with the verified schema-v1 backup path;
+2. imports workspace `local` into a new schema-v2 database;
+3. starts FastAPI with `storage_backend="namespaced"`;
+4. reads source/history/candidate/attempt continuity through API endpoints;
+5. renders static Pages from the migrated namespaced store and verifies aggregate candidate/attempt state.
+
+This proves that a migrated schema-v2 database is runnable by the application, not merely structurally valid.
+
+## Hosted deployment boundary
+
+No workflow or hosted configuration selects the namespaced backend in v0.13. With `ANALYSTWATCH_STORAGE_BACKEND` unset, the hosted pipeline continues on `legacy`.
+
+Post-merge `monitor-state` advancement is therefore the deployment compatibility gate: it proves the new runtime factory did not break the existing hosted legacy path.
 
 ## Verification
 
-The verified v0.12 functional checkpoint passed Ruff, compile and **121 deterministic tests**.
+The verified v0.13 functional checkpoint passed Ruff, compile and **129 deterministic tests**.
 
-The new regressions prove:
+New regressions prove:
 
-- `NamespacedStorage` satisfies `MonitoringStore`;
-- duplicate IDs and idempotency values coexist across workspaces;
-- foreign workspace rows are not exposed;
-- foreign source writes are blocked;
-- selected-workspace legacy import preserves baseline/review/candidate/attempt state;
-- import never overwrites an existing target;
-- schema-v2 input is rejected as a legacy source;
-- corrupt sources fail before a destination is created.
+- default legacy initialization;
+- explicit namespaced initialization;
+- mismatch rejection in both schema directions;
+- corrupt/unknown existing state rejection without mutation;
+- FastAPI startup refusal on mismatch;
+- CLI import and backend-aware verification;
+- legacy-only backup/restore boundary;
+- complete legacy snapshot → schema-v2 → FastAPI → Pages rehearsal.
 
 ## Limitations
 
-- schema-v2 is not yet selectable by the application runtime
-- there is no authenticated user/session authorization
-- import has no CLI wrapper yet
-- current hosted state remains legacy branch-backed SQLite test persistence
-- no real outbound notification provider exists
+- hosted state still uses branch-backed legacy SQLite test persistence;
+- there is no automatic migration/cutover coordinator;
+- namespaced backup/restore parity is not implemented;
+- there is no authenticated workspace/user authorization layer;
+- no deployment-grade production database adapter exists yet;
+- no real outbound notification provider exists.

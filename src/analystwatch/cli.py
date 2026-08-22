@@ -15,14 +15,22 @@ from .models import (
     SourceDefinition,
     SourceType,
 )
+from .namespaced_storage import NamespacedStorage
 from .pages import build_pages_site
+from .runtime_storage import (
+    DEFAULT_STORAGE_BACKEND,
+    SUPPORTED_STORAGE_BACKENDS,
+    create_runtime_storage,
+    verify_runtime_database,
+)
 from .service import MonitorService
 from .storage import Storage
-from .workspace import DEFAULT_WORKSPACE_ID, create_workspace_service
+from .workspace import DEFAULT_WORKSPACE_ID
 
 
-def _service(db: str, workspace_id: str) -> MonitorService:
-    return create_workspace_service(Storage(db), workspace_id)
+def _service(db: str, workspace_id: str, storage_backend: str) -> MonitorService:
+    runtime = create_runtime_storage(db, workspace_id, storage_backend)
+    return MonitorService(runtime.monitoring_store)
 
 
 def _parse_header_env(items: list[str]) -> dict[str, str]:
@@ -46,6 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace-id",
         default=os.environ.get("ANALYSTWATCH_WORKSPACE_ID", DEFAULT_WORKSPACE_ID),
         help="Workspace bound to monitoring commands (default: local)",
+    )
+    parser.add_argument(
+        "--storage-backend",
+        default=os.environ.get("ANALYSTWATCH_STORAGE_BACKEND", DEFAULT_STORAGE_BACKEND),
+        choices=SUPPORTED_STORAGE_BACKENDS,
+        help="Runtime persistence backend (default: legacy)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -142,19 +156,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "verify-state",
-        help="Verify an existing SQLite state database without modifying it",
+        help="Verify the selected backend's existing state without modifying it",
     )
     backup = sub.add_parser(
         "backup-state",
-        help="Create and verify a new SQLite snapshot of the active state database",
+        help="Create and verify a new legacy SQLite snapshot of the active state database",
     )
     backup.add_argument("destination")
     restore = sub.add_parser(
         "restore-state",
-        help="Restore a verified snapshot into a new destination database only",
+        help="Restore a verified legacy snapshot into a new destination database only",
     )
     restore.add_argument("snapshot")
     restore.add_argument("destination")
+    migrate = sub.add_parser(
+        "import-namespaced-state",
+        help="Import one workspace from a verified legacy snapshot into a new schema-v2 database",
+    )
+    migrate.add_argument("snapshot")
+    migrate.add_argument("destination")
 
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
@@ -186,25 +206,41 @@ def _print_observations(observations) -> None:
     )
 
 
+def _require_legacy_maintenance(storage_backend: str, command: str) -> None:
+    if storage_backend != "legacy":
+        raise SystemExit(f"{command} is available only with --storage-backend legacy")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "verify-state":
-        verification = Storage.verify_database(args.db)
+        verification = verify_runtime_database(args.db, args.storage_backend)
         print(verification.model_dump_json(indent=2))
-        return 0 if verification.integrity_ok else 2
+        return 0
 
     if args.command == "restore-state":
+        _require_legacy_maintenance(args.storage_backend, "restore-state")
         result = Storage.restore_snapshot(args.snapshot, args.destination)
         print(result.model_dump_json(indent=2))
         return 0
 
     if args.command == "backup-state":
+        _require_legacy_maintenance(args.storage_backend, "backup-state")
         result = Storage(args.db).backup_to(args.destination)
         print(result.model_dump_json(indent=2))
         return 0
 
-    service = _service(args.db, args.workspace_id)
+    if args.command == "import-namespaced-state":
+        result = NamespacedStorage.import_legacy_snapshot(
+            args.snapshot,
+            args.destination,
+            workspace_id=args.workspace_id,
+        )
+        print(result.model_dump_json(indent=2))
+        return 0
+
+    service = _service(args.db, args.workspace_id, args.storage_backend)
 
     if args.command == "add-source":
         config = MonitoringConfig(
@@ -352,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         os.environ["ANALYSTWATCH_DB"] = str(Path(args.db))
         os.environ["ANALYSTWATCH_WORKSPACE_ID"] = args.workspace_id
+        os.environ["ANALYSTWATCH_STORAGE_BACKEND"] = args.storage_backend
         uvicorn.run("analystwatch.web:app", host=args.host, port=args.port, reload=False)
         return 0
 
