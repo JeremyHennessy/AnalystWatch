@@ -4,7 +4,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -17,6 +17,10 @@ PACKAGE_DIR = Path(__file__).parent
 
 
 def _public_location(source: SourceDefinition) -> str:
+    if source.source_type == SourceType.MICROSOFT_EXCEL:
+        parsed = urlparse(source.location)
+        table_name = (parse_qs(parsed.query).get("table") or [""])[0].strip()
+        return f"Microsoft 365 Excel · {table_name}" if table_name else "Microsoft 365 Excel"
     if source.source_type != SourceType.API:
         return source.location
     parts = urlsplit(source.location)
