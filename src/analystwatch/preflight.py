@@ -7,6 +7,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from .data_rules import evaluate_data_rules
 from .detectors import detect_freshness
 from .ingest import ingest_source
 from .models import DatasetProfile, HealthStatus, SourceDefinition
@@ -159,6 +160,18 @@ def preflight_source(
                         f"{duplicate_rows} row(s) participate in duplicates."
                     ),
                     field,
+                )
+            )
+
+    for rule in source.config.data_rules:
+        rule_findings = evaluate_data_rules(frame, [rule])
+        for finding in rule_findings:
+            issues.append(
+                _issue(
+                    "error",
+                    "data_rule_failed",
+                    f"{finding.description} {finding.why_flagged}",
+                    rule.field,
                 )
             )
 
