@@ -72,7 +72,9 @@ def build_row_snapshot(
             f"{config.row_diff_max_rows}.",
         )
 
-    requested_fields = list(config.row_diff_fields) if config.row_diff_fields else list(dataframe.columns)
+    requested_fields = (
+        list(config.row_diff_fields) if config.row_diff_fields else list(dataframe.columns)
+    )
     missing_fields = [field for field in requested_fields if field not in dataframe.columns]
     if missing_fields:
         return None, f"Configured row-diff fields are missing: {', '.join(missing_fields)}."
@@ -100,9 +102,13 @@ def build_row_snapshot(
         "value_fields": value_fields,
         "rows": [row.model_dump(mode="json") for row in rows],
     }
-    serialized_bytes = len(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    )
+    serialized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    serialized_bytes = len(serialized)
     if serialized_bytes > config.row_diff_max_snapshot_bytes:
         return (
             None,
