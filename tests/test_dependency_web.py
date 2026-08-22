@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 
 from analystwatch.dependencies import AssetKind, AssetRef, DependencyEdge
+from analystwatch.models import HealthStatus, Observation, SourceDefinition, SourceType
 from analystwatch.web import create_app
 
 
@@ -25,8 +28,29 @@ def _edge(workspace_id: str = "team-a") -> DependencyEdge:
     )
 
 
+def _seed_source(app) -> None:
+    storage = app.state.workspace_storage
+    source = SourceDefinition(
+        id="orders",
+        workspace_id="team-a",
+        name="Orders API",
+        source_type=SourceType.JSON,
+        location="orders.json",
+    )
+    observation = Observation(
+        id="orders-healthy",
+        source_id=source.id,
+        observed_at=datetime(2026, 8, 22, 15, 30, tzinfo=timezone.utc),
+        available=True,
+        health=HealthStatus.HEALTHY,
+    )
+    storage.upsert_source(source)
+    storage.save_observation(observation)
+
+
 def test_dependency_api_persists_edges_and_exposes_blast_radius(tmp_path) -> None:
     app = create_app(tmp_path / "state.db", workspace_id="team-a")
+    _seed_source(app)
     client = TestClient(app)
 
     create = client.put(
@@ -38,6 +62,8 @@ def test_dependency_api_persists_edges_and_exposes_blast_radius(tmp_path) -> Non
         params={"kind": "source", "asset_id": "orders"},
     )
     page = client.get("/dependencies")
+    source_page = client.get("/sources/orders")
+    source_api = client.get("/api/sources/orders")
 
     assert create.status_code == 200
     assert radius.status_code == 200
@@ -47,6 +73,12 @@ def test_dependency_api_persists_edges_and_exposes_blast_radius(tmp_path) -> Non
     assert "What breaks downstream if this changes?" in page.text
     assert "Orders API" in page.text
     assert "Sales Model" in page.text
+    assert source_page.status_code == 200
+    assert "DOWNSTREAM IMPACT" in source_page.text
+    assert "1 downstream asset" in source_page.text
+    assert "Semantic Model" in source_page.text
+    assert source_api.status_code == 200
+    assert source_api.json()["downstream_impact"]["downstream"][0]["name"] == "Sales Model"
 
 
 def test_dependency_api_rejects_cross_workspace_edge(tmp_path) -> None:
