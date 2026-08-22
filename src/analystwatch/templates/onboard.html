@@ -13,32 +13,45 @@
     <header class="page-header">
       <div>
         <p class="eyebrow">SOURCE ONBOARDING</p>
-        <h1>Validate before monitoring.</h1>
-        <p class="muted">Preflight reads and profiles the source without saving it. AnalystWatch only accepts it after the declared contracts pass.</p>
+        <h1>Connect data you depend on.</h1>
+        <p class="muted">AnalystWatch reads the source first, shows what it found, and only starts monitoring after preflight passes.</p>
       </div>
     </header>
 
     <section class="panel">
       <form id="source-form" class="form-grid">
-        <label><span>Source ID</span><input id="source-id" required pattern="[A-Za-z0-9_.-]+" placeholder="supplier-pricing"></label>
-        <label><span>Name</span><input id="source-name" required placeholder="Supplier Pricing"></label>
-        <label><span>Type</span><select id="source-type"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option><option value="api">REST API</option></select></label>
-        <label class="span-two"><span>Path or URL</span><input id="source-location" required placeholder="https://example.com/data.json"></label>
+        <label><span>Source ID</span><input id="source-id" required pattern="[A-Za-z0-9_.-]+" placeholder="monthly-sales"></label>
+        <label><span>Name</span><input id="source-name" required placeholder="Monthly Sales"></label>
+        <label><span>Source type</span><select id="source-type"><option value="csv">CSV file</option><option value="xlsx">Excel file</option><option value="json">JSON file</option><option value="api">REST API</option><option value="microsoft_excel">Microsoft 365 Excel</option></select></label>
+        <label id="generic-location-field" class="span-two"><span>Path or URL</span><input id="source-location" placeholder="https://example.com/data.json"></label>
+
+        <div id="microsoft-fields" class="span-two" hidden>
+          <div class="form-section"><strong>Microsoft 365 workbook</strong><span>Use a SharePoint or OneDrive workbook that contains an Excel Table. AnalystWatch uses delegated Microsoft Graph access and does not store the bearer token in the source definition.</span></div>
+          <div class="form-grid microsoft-grid">
+            <label><span>Drive ID</span><input id="microsoft-drive-id" placeholder="SharePoint / OneDrive drive ID"></label>
+            <label><span>Workbook item ID</span><input id="microsoft-item-id" placeholder="Drive item ID for the .xlsx file"></label>
+            <label><span>Excel table</span><input id="microsoft-table" placeholder="SalesTable"></label>
+            <label><span>Worksheet <small>optional</small></span><input id="microsoft-worksheet" placeholder="Data"></label>
+            <label class="span-two"><span>Microsoft token environment variable</span><input id="microsoft-token-env" value="ANALYSTWATCH_MICROSOFT_AUTHORIZATION" placeholder="ANALYSTWATCH_MICROSOFT_AUTHORIZATION"><small>Set this environment variable to the delegated authorization value, for example <code>Bearer …</code>. The secret value is never saved by AnalystWatch.</small></label>
+          </div>
+        </div>
 
         <div class="form-section span-two"><strong>Run policy</strong><span>How often AnalystWatch checks is separate from how often the source should refresh.</span></div>
         <label><span>Check every (minutes)</span><input id="monitor-interval" type="number" min="1" value="60"></label>
         <label><span>Expected refresh (minutes)</span><input id="refresh-interval" type="number" min="1" placeholder="Optional"></label>
 
-        <div class="form-section span-two"><strong>Structure contract</strong><span>Only declare fields you expect AnalystWatch to enforce.</span></div>
-        <label><span>JSON record path</span><input id="json-path" placeholder="data or observations"></label>
-        <label><span>XLSX sheet</span><input id="sheet-name" placeholder="Optional"></label>
+        <div class="form-section span-two"><strong>Data contract</strong><span>Only declare fields you expect AnalystWatch to enforce. You can start simple and tighten this later.</span></div>
+        <label id="json-path-field"><span>JSON record path</span><input id="json-path" placeholder="data or observations"></label>
+        <label id="sheet-name-field"><span>Local XLSX sheet</span><input id="sheet-name" placeholder="Optional"></label>
         <label><span>Freshness date field</span><input id="latest-date" placeholder="record_date"></label>
         <label class="check-label"><input id="infer-date" type="checkbox"><span>Infer a conservative date field if none is configured</span></label>
         <label class="span-two"><span>Numeric fields</span><input id="numeric-fields" placeholder="amount, total_value"></label>
         <label class="span-two"><span>Unique keys</span><input id="unique-keys" placeholder="id, record_id"></label>
 
-        <div class="form-section span-two"><strong>API secrets</strong><span>Enter header → environment-variable references only. Secret values are never stored in the source definition.</span></div>
-        <label class="span-two"><span>Request header environment refs</span><input id="request-header-env" placeholder="Authorization=ANALYSTWATCH_API_TOKEN, X-Api-Key=VENDOR_API_KEY"></label>
+        <div id="api-secret-section" class="span-two">
+          <div class="form-section"><strong>API secrets</strong><span>Enter header → environment-variable references only. Secret values are never stored in the source definition.</span></div>
+          <label class="span-two"><span>Request header environment refs</span><input id="request-header-env" placeholder="Authorization=ANALYSTWATCH_API_TOKEN, X-Api-Key=VENDOR_API_KEY"></label>
+        </div>
 
         <div class="form-actions span-two">
           <button id="preflight-button" type="submit">Run preflight</button>
@@ -59,6 +72,7 @@ const form = document.getElementById('source-form');
 const acceptButton = document.getElementById('accept-button');
 const preflightButton = document.getElementById('preflight-button');
 const panel = document.getElementById('preflight-panel');
+const sourceType = document.getElementById('source-type');
 let lastPreflight = null;
 
 function value(id) { return document.getElementById(id).value.trim(); }
@@ -78,25 +92,60 @@ function mapping(id) {
   return result;
 }
 
+function microsoftLocation() {
+  const drive = value('microsoft-drive-id');
+  const item = value('microsoft-item-id');
+  const table = value('microsoft-table');
+  if (!drive || !item || !table) throw new Error('Microsoft 365 Excel requires Drive ID, Workbook item ID, and Excel table.');
+  const params = new URLSearchParams({table});
+  const worksheet = value('microsoft-worksheet');
+  if (worksheet) params.set('worksheet', worksheet);
+  return `m365://${drive}/${item}?${params.toString()}`;
+}
+
 function sourcePayload() {
+  const isMicrosoft = value('source-type') === 'microsoft_excel';
+  let headers = mapping('request-header-env');
+  let location = value('source-location');
+  if (isMicrosoft) {
+    const tokenEnv = value('microsoft-token-env');
+    if (!tokenEnv) throw new Error('Microsoft token environment variable is required.');
+    headers = {Authorization: tokenEnv};
+    location = microsoftLocation();
+  }
+  if (!location) throw new Error('A path or URL is required.');
   return {
     id: value('source-id'),
     name: value('source-name'),
     source_type: value('source-type'),
-    location: value('source-location'),
+    location,
     enabled: true,
     config: {
       monitor_interval_minutes: Number(value('monitor-interval') || 60),
       expected_refresh_minutes: optionalNumber('refresh-interval'),
       latest_date_field: value('latest-date') || null,
       infer_latest_date_field: document.getElementById('infer-date').checked,
-      sheet_name: value('sheet-name') || null,
-      json_record_path: value('json-path') || null,
+      sheet_name: isMicrosoft ? null : (value('sheet-name') || null),
+      json_record_path: isMicrosoft ? null : (value('json-path') || null),
       numeric_fields: list('numeric-fields'),
       unique_keys: list('unique-keys'),
-      request_header_env: mapping('request-header-env')
+      request_header_env: headers
     }
   };
+}
+
+function updateSourceFields() {
+  const type = value('source-type');
+  const isMicrosoft = type === 'microsoft_excel';
+  document.getElementById('microsoft-fields').hidden = !isMicrosoft;
+  document.getElementById('generic-location-field').hidden = isMicrosoft;
+  document.getElementById('api-secret-section').hidden = isMicrosoft;
+  document.getElementById('json-path-field').hidden = type !== 'json';
+  document.getElementById('sheet-name-field').hidden = type !== 'xlsx';
+  document.getElementById('source-location').required = !isMicrosoft;
+  for (const id of ['microsoft-drive-id', 'microsoft-item-id', 'microsoft-table', 'microsoft-token-env']) {
+    document.getElementById(id).required = isMicrosoft;
+  }
 }
 
 function render(result) {
@@ -150,6 +199,9 @@ async function postJson(url) {
   }
   return response.json();
 }
+
+sourceType.addEventListener('change', updateSourceFields);
+updateSourceFields();
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
