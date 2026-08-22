@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .auth_storage import MembershipStore
+from .dependency_web import configure_dependency_web
 from .models import (
     DeliveryAttempt,
     DeliveryReconciliationOutcome,
@@ -22,6 +23,8 @@ from .models import (
 from .power_bi_web import configure_power_bi_web
 from .runtime_storage import DEFAULT_STORAGE_BACKEND, create_runtime_storage
 from .service import MonitorService
+from .teams_delivery import TeamsWorkflowAdapter
+from .teams_web import configure_teams_web
 from .web_auth import configure_web_authorization
 from .workspace import DEFAULT_WORKSPACE_ID, validate_workspace_id
 
@@ -58,6 +61,7 @@ def create_app(
     auth_secret: str | None = None,
     membership_store: MembershipStore | None = None,
     auth_db_path: str | Path | None = None,
+    teams_adapter: TeamsWorkflowAdapter | None = None,
 ) -> FastAPI:
     resolved_db = Path(db_path or os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"))
     resolved_workspace = validate_workspace_id(
@@ -85,7 +89,7 @@ def create_app(
     storage = runtime.monitoring_store
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.19.0")
+    app = FastAPI(title="AnalystWatch", version="0.20.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.storage_backend = runtime.backend
@@ -376,6 +380,14 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    dependency_service = configure_dependency_web(
+        app,
+        templates=templates,
+        db_path=resolved_db,
+        workspace_id=resolved_workspace,
+        storage_backend=runtime.backend,
+        postgres_dsn=resolved_postgres_dsn,
+    )
     configure_power_bi_web(
         app,
         templates=templates,
@@ -384,6 +396,12 @@ def create_app(
         workspace_id=resolved_workspace,
         storage_backend=runtime.backend,
         postgres_dsn=resolved_postgres_dsn,
+        dependency_service=dependency_service,
+    )
+    configure_teams_web(
+        app,
+        monitoring_service=service,
+        adapter=teams_adapter,
     )
     configure_web_authorization(
         app,
