@@ -60,6 +60,93 @@ class DeliveryMode(str, Enum):
     LIVE = "live"
 
 
+class DataRuleKind(str, Enum):
+    NOT_NULL = "not_null"
+    ALLOWED_VALUES = "allowed_values"
+    NUMERIC_RANGE = "numeric_range"
+    ROW_COUNT_RANGE = "row_count_range"
+
+
+class DataRule(BaseModel):
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
+    name: str = Field(min_length=1)
+    kind: DataRuleKind
+    severity: HealthStatus = HealthStatus.CRITICAL
+    field: str | None = None
+    allowed_values: list[str] = Field(default_factory=list)
+    minimum: float | None = None
+    maximum: float | None = None
+    likely_impact: str | None = None
+    suggested_investigation: str | None = None
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> "DataRule":
+        if self.severity == HealthStatus.HEALTHY:
+            raise ValueError("Data rule severity must be Warning or Critical")
+        if not self.name or self.name != self.name.strip():
+            raise ValueError("Data rule name must be non-empty and trimmed")
+        if self.field is not None and (not self.field or self.field != self.field.strip()):
+            raise ValueError("Data rule field must be non-empty and trimmed")
+        for optional_text, label in (
+            (self.likely_impact, "likely_impact"),
+            (self.suggested_investigation, "suggested_investigation"),
+        ):
+            if optional_text is not None and (
+                not optional_text or optional_text != optional_text.strip()
+            ):
+                raise ValueError(f"Data rule {label} must be non-empty and trimmed")
+
+        if self.kind == DataRuleKind.NOT_NULL:
+            if self.field is None:
+                raise ValueError("not_null data rules require field")
+            if self.allowed_values or self.minimum is not None or self.maximum is not None:
+                raise ValueError("not_null data rules accept only field and severity parameters")
+            return self
+
+        if self.kind == DataRuleKind.ALLOWED_VALUES:
+            if self.field is None:
+                raise ValueError("allowed_values data rules require field")
+            if not self.allowed_values:
+                raise ValueError("allowed_values data rules require at least one allowed value")
+            if any(not value or value != value.strip() for value in self.allowed_values):
+                raise ValueError("allowed_values entries must be non-empty and trimmed")
+            if len(set(self.allowed_values)) != len(self.allowed_values):
+                raise ValueError("allowed_values entries must not contain duplicates")
+            if self.minimum is not None or self.maximum is not None:
+                raise ValueError("allowed_values data rules do not accept numeric bounds")
+            return self
+
+        if self.kind == DataRuleKind.NUMERIC_RANGE:
+            if self.field is None:
+                raise ValueError("numeric_range data rules require field")
+            if self.allowed_values:
+                raise ValueError("numeric_range data rules do not accept allowed_values")
+            if self.minimum is None and self.maximum is None:
+                raise ValueError("numeric_range data rules require minimum and/or maximum")
+            if self.minimum is not None and self.maximum is not None:
+                if self.minimum > self.maximum:
+                    raise ValueError("Data rule minimum must not exceed maximum")
+            return self
+
+        if self.kind == DataRuleKind.ROW_COUNT_RANGE:
+            if self.field is not None or self.allowed_values:
+                raise ValueError("row_count_range data rules do not accept field or allowed_values")
+            if self.minimum is None and self.maximum is None:
+                raise ValueError("row_count_range data rules require minimum and/or maximum")
+            if self.minimum is not None:
+                if self.minimum < 0 or not float(self.minimum).is_integer():
+                    raise ValueError("row_count_range minimum must be a non-negative integer")
+            if self.maximum is not None:
+                if self.maximum < 0 or not float(self.maximum).is_integer():
+                    raise ValueError("row_count_range maximum must be a non-negative integer")
+            if self.minimum is not None and self.maximum is not None:
+                if self.minimum > self.maximum:
+                    raise ValueError("Data rule minimum must not exceed maximum")
+            return self
+
+        return self
+
+
 class MonitoringConfig(BaseModel):
     expected_refresh_minutes: int | None = Field(default=None, gt=0)
     monitor_interval_minutes: int = Field(default=60, gt=0)
@@ -69,6 +156,7 @@ class MonitoringConfig(BaseModel):
     json_record_path: str | None = None
     unique_keys: list[str] = Field(default_factory=list)
     numeric_fields: list[str] = Field(default_factory=list)
+    data_rules: list[DataRule] = Field(default_factory=list)
     request_header_env: dict[str, str] = Field(default_factory=dict)
     notification_transitions: list[IncidentTransition] = Field(default_factory=list)
     delivery_retry_minutes: int = Field(default=0, ge=0)
@@ -115,6 +203,9 @@ class MonitoringConfig(BaseModel):
                 raise ValueError(f"{field_name} values must be non-empty and trimmed")
             if len(set(values)) != len(values):
                 raise ValueError(f"{field_name} must not contain duplicates")
+        rule_ids = [rule.id for rule in self.data_rules]
+        if len(set(rule_ids)) != len(rule_ids):
+            raise ValueError("data_rules must not contain duplicate IDs")
         for header, env_name in self.request_header_env.items():
             if not header or header != header.strip():
                 raise ValueError("request_header_env header names must be non-empty and trimmed")
