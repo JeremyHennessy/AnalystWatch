@@ -12,12 +12,12 @@ from analystwatch.dependencies import (
     power_bi_dependency_edges,
 )
 from analystwatch.dependency_storage import PostgresDependencyStore, SQLiteDependencyStore
+from analystwatch.models import HealthStatus
 from analystwatch.power_bi import (
     PowerBIGuardDefinition,
     PowerBIGuardSnapshot,
     PowerBIReportEvidence,
 )
-from analystwatch.models import HealthStatus
 
 
 def _asset(kind: AssetKind, asset_id: str, name: str) -> AssetRef:
