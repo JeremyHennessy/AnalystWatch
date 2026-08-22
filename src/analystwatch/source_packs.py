@@ -141,7 +141,9 @@ def _not_null(
         severity=severity,
         field_role=field_role,
         likely_impact=impact,
-        suggested_investigation="Check the upstream export or transformation that populates this field.",
+        suggested_investigation=(
+            "Check the upstream export or transformation that populates this field."
+        ),
     )
 
 
@@ -152,8 +154,12 @@ def _non_empty_rows() -> SourcePackRuleTemplate:
         kind=DataRuleKind.ROW_COUNT_RANGE,
         severity=HealthStatus.CRITICAL,
         minimum=1,
-        likely_impact="An empty business dataset can make a downstream report look complete while carrying no usable records.",
-        suggested_investigation="Check whether the upstream extract, query, filter, or scheduled refresh returned zero rows.",
+        likely_impact=(
+            "An empty business dataset can make a report look complete with no usable records."
+        ),
+        suggested_investigation=(
+            "Check whether the upstream extract, query, filter, or refresh returned zero rows."
+        ),
     )
 
 
@@ -161,13 +167,37 @@ _PACKS: dict[SourcePackId, SourcePack] = {
     SourcePackId.FP_AND_A_FORECAST: SourcePack(
         id=SourcePackId.FP_AND_A_FORECAST,
         name="FP&A Forecast",
-        description="Forecast or planning extracts where row identity, as-of date and modeled amounts must remain trustworthy.",
+        description=(
+            "Forecast extracts where row identity, as-of date and modeled amounts must stay trusted."
+        ),
         roles=[
-            _role("record_key", "Forecast row key", "Field that uniquely identifies one forecast row."),
-            _role("as_of_date", "As-of / update date", "Field that proves how current the forecast extract is."),
-            _role("amount", "Forecast amount", "Primary numeric amount used in forecast analysis."),
-            _role("period", "Forecast period", "Business period being forecast.", required=False),
-            _role("scenario", "Scenario", "Scenario such as budget, base, upside or downside.", required=False),
+            _role(
+                "record_key",
+                "Forecast row key",
+                "Field that uniquely identifies one forecast row.",
+            ),
+            _role(
+                "as_of_date",
+                "As-of / update date",
+                "Field that proves how current the forecast extract is.",
+            ),
+            _role(
+                "amount",
+                "Forecast amount",
+                "Primary numeric amount used in forecast analysis.",
+            ),
+            _role(
+                "period",
+                "Forecast period",
+                "Business period being forecast.",
+                required=False,
+            ),
+            _role(
+                "scenario",
+                "Scenario",
+                "Scenario such as budget, base, upside or downside.",
+                required=False,
+            ),
         ],
         monitor_interval_minutes=240,
         expected_refresh_minutes=1440,
@@ -181,7 +211,9 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "record_key_required",
                 "Forecast row key is required",
                 "record_key",
-                impact="Missing row identity can make additions, removals and changed forecast lines ambiguous.",
+                impact=(
+                    "Missing row identity can make added, removed or changed forecast lines ambiguous."
+                ),
             ),
             _not_null(
                 "as_of_date_required",
@@ -194,19 +226,38 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "amount_required",
                 "Forecast amount is required",
                 "amount",
-                impact="Missing modeled amounts can silently understate or distort forecast totals.",
+                impact="Missing modeled amounts can distort forecast totals.",
             ),
         ],
     ),
     SourcePackId.SALES_PIPELINE: SourcePack(
         id=SourcePackId.SALES_PIPELINE,
         name="Sales Pipeline",
-        description="Opportunity exports where row identity, update recency, stage and optional deal value drive pipeline reporting.",
+        description=(
+            "Opportunity exports where identity, recency and stage drive pipeline reporting."
+        ),
         roles=[
-            _role("opportunity_id", "Opportunity ID", "Unique opportunity or deal identifier."),
-            _role("updated_at", "Last updated date", "Timestamp or date showing when the opportunity was last refreshed."),
-            _role("stage", "Pipeline stage", "Current opportunity stage used in funnel reporting."),
-            _role("amount", "Opportunity amount", "Optional deal value or expected revenue field.", required=False),
+            _role(
+                "opportunity_id",
+                "Opportunity ID",
+                "Unique opportunity or deal identifier.",
+            ),
+            _role(
+                "updated_at",
+                "Last updated date",
+                "Timestamp or date showing when the opportunity was refreshed.",
+            ),
+            _role(
+                "stage",
+                "Pipeline stage",
+                "Current opportunity stage used in funnel reporting.",
+            ),
+            _role(
+                "amount",
+                "Opportunity amount",
+                "Optional deal value or expected revenue field.",
+                required=False,
+            ),
         ],
         monitor_interval_minutes=60,
         expected_refresh_minutes=1440,
@@ -233,19 +284,30 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "stage_required",
                 "Pipeline stage is required",
                 "stage",
-                impact="Missing stage values can distort funnel, conversion and forecast reporting.",
+                impact="Missing stage values can distort funnel and forecast reporting.",
             ),
         ],
     ),
     SourcePackId.CLAIMS_REGISTER: SourcePack(
         id=SourcePackId.CLAIMS_REGISTER,
         name="Claims Register",
-        description="Claims or case registers where record identity, recency, status and optional incurred value feed risk reporting.",
+        description=(
+            "Claims registers where identity, recency and status feed risk and operations reporting."
+        ),
         roles=[
             _role("claim_id", "Claim ID", "Unique claim or case identifier."),
-            _role("updated_at", "Last updated date", "Timestamp or date showing when the claim record was refreshed."),
+            _role(
+                "updated_at",
+                "Last updated date",
+                "Timestamp or date showing when the claim record was refreshed.",
+            ),
             _role("status", "Claim status", "Current claim or case status."),
-            _role("incurred_amount", "Incurred amount", "Optional incurred, reserve or loss amount.", required=False),
+            _role(
+                "incurred_amount",
+                "Incurred amount",
+                "Optional incurred, reserve or loss amount.",
+                required=False,
+            ),
         ],
         monitor_interval_minutes=60,
         expected_refresh_minutes=1440,
@@ -266,25 +328,44 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "Claim update date is required",
                 "updated_at",
                 severity=HealthStatus.WARNING,
-                impact="Missing update dates weaken evidence that claim reporting reflects current handling activity.",
+                impact="Missing update dates weaken evidence that claim reporting is current.",
             ),
             _not_null(
                 "status_required",
                 "Claim status is required",
                 "status",
-                impact="Missing status can distort open/closed inventory and operational workload reporting.",
+                impact="Missing status can distort open/closed claim inventory.",
             ),
         ],
     ),
     SourcePackId.OPERATIONS_ORDERS: SourcePack(
         id=SourcePackId.OPERATIONS_ORDERS,
         name="Operations Orders",
-        description="Order or work-item feeds where identity, update recency and operational status should remain stable between checks.",
+        description=(
+            "Order feeds where identity, recency and workflow status drive operational reporting."
+        ),
         roles=[
-            _role("order_id", "Order ID", "Unique order, job or work-item identifier."),
-            _role("updated_at", "Last updated date", "Timestamp or date showing when the operational record changed."),
-            _role("status", "Order status", "Current workflow or fulfillment status."),
-            _role("quantity", "Quantity", "Optional units, items or workload quantity.", required=False),
+            _role(
+                "order_id",
+                "Order ID",
+                "Unique order, job or work-item identifier.",
+            ),
+            _role(
+                "updated_at",
+                "Last updated date",
+                "Timestamp or date showing when the operational record changed.",
+            ),
+            _role(
+                "status",
+                "Order status",
+                "Current workflow or fulfillment status.",
+            ),
+            _role(
+                "quantity",
+                "Quantity",
+                "Optional units, items or workload quantity.",
+                required=False,
+            ),
         ],
         monitor_interval_minutes=30,
         expected_refresh_minutes=120,
@@ -298,14 +379,14 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "order_id_required",
                 "Order ID is required",
                 "order_id",
-                impact="Missing order identity can make operational changes impossible to reconcile reliably.",
+                impact="Missing order identity makes operational changes hard to reconcile.",
             ),
             _not_null(
                 "updated_at_required",
                 "Order update date is required",
                 "updated_at",
                 severity=HealthStatus.WARNING,
-                impact="Missing update dates weaken evidence that operational reporting is current.",
+                impact="Missing update dates weaken evidence that operations reporting is current.",
             ),
             _not_null(
                 "status_required",
@@ -318,13 +399,37 @@ _PACKS: dict[SourcePackId, SourcePack] = {
     SourcePackId.FINANCE_CLOSE: SourcePack(
         id=SourcePackId.FINANCE_CLOSE,
         name="Finance Close",
-        description="Close or ledger extracts where entry identity, recency and amounts support period-end reporting and reconciliation.",
+        description=(
+            "Close extracts where entry identity, recency and amounts support reconciliation."
+        ),
         roles=[
-            _role("entry_id", "Entry ID", "Unique journal, ledger or close-workflow record identifier."),
-            _role("updated_at", "Last updated date", "Timestamp or date proving the close extract is current."),
-            _role("amount", "Amount", "Primary financial amount used in reconciliation or close reporting."),
-            _role("posting_date", "Posting date", "Optional accounting posting or effective date.", required=False),
-            _role("close_status", "Close status", "Optional workflow or reconciliation status.", required=False),
+            _role(
+                "entry_id",
+                "Entry ID",
+                "Unique journal, ledger or close-workflow record identifier.",
+            ),
+            _role(
+                "updated_at",
+                "Last updated date",
+                "Timestamp or date proving the close extract is current.",
+            ),
+            _role(
+                "amount",
+                "Amount",
+                "Primary financial amount used in close reporting.",
+            ),
+            _role(
+                "posting_date",
+                "Posting date",
+                "Optional accounting posting or effective date.",
+                required=False,
+            ),
+            _role(
+                "close_status",
+                "Close status",
+                "Optional workflow or reconciliation status.",
+                required=False,
+            ),
         ],
         monitor_interval_minutes=60,
         expected_refresh_minutes=1440,
@@ -338,32 +443,52 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "entry_id_required",
                 "Finance entry ID is required",
                 "entry_id",
-                impact="Missing entry identity weakens reconciliation and can hide duplicate or changed close records.",
+                impact="Missing entry identity weakens close reconciliation.",
             ),
             _not_null(
                 "updated_at_required",
                 "Finance update date is required",
                 "updated_at",
                 severity=HealthStatus.WARNING,
-                impact="Missing update dates weaken evidence that close reporting uses the current extract.",
+                impact="Missing update dates weaken evidence that close reporting is current.",
             ),
             _not_null(
                 "amount_required",
                 "Finance amount is required",
                 "amount",
-                impact="Missing financial amounts can silently distort close totals and reconciliations.",
+                impact="Missing financial amounts can distort close totals.",
             ),
         ],
     ),
     SourcePackId.CUSTOMER_EXPORT: SourcePack(
         id=SourcePackId.CUSTOMER_EXPORT,
         name="Customer Export",
-        description="Customer or account exports where stable identity and update recency support reporting, segmentation and downstream models.",
+        description=(
+            "Customer exports where stable identity and update recency support downstream reporting."
+        ),
         roles=[
-            _role("customer_id", "Customer ID", "Unique customer or account identifier."),
-            _role("updated_at", "Last updated date", "Timestamp or date proving the customer extract is current."),
-            _role("status", "Customer status", "Optional lifecycle or account status.", required=False),
-            _role("customer_value", "Customer value", "Optional numeric value such as ARR, balance or lifetime value.", required=False),
+            _role(
+                "customer_id",
+                "Customer ID",
+                "Unique customer or account identifier.",
+            ),
+            _role(
+                "updated_at",
+                "Last updated date",
+                "Timestamp or date proving the customer extract is current.",
+            ),
+            _role(
+                "status",
+                "Customer status",
+                "Optional lifecycle or account status.",
+                required=False,
+            ),
+            _role(
+                "customer_value",
+                "Customer value",
+                "Optional numeric value such as ARR, balance or lifetime value.",
+                required=False,
+            ),
         ],
         monitor_interval_minutes=240,
         expected_refresh_minutes=1440,
@@ -377,7 +502,7 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "customer_id_required",
                 "Customer ID is required",
                 "customer_id",
-                impact="Missing customer identity can duplicate or orphan records in downstream reporting.",
+                impact="Missing customer identity can duplicate or orphan downstream records.",
             ),
             _not_null(
                 "updated_at_required",
@@ -418,11 +543,15 @@ def materialize_source_pack(
     normalized_mapping: dict[str, str] = {}
     for role_id, field_name in role_mapping.items():
         if not field_name or field_name != field_name.strip():
-            raise ValueError(f"Role mapping {role_id!r} must use a non-empty trimmed field name")
+            raise ValueError(
+                f"Role mapping {role_id!r} must use a non-empty trimmed field name"
+            )
         normalized_mapping[role_id] = field_name
 
     missing = [
-        role.id for role in pack.roles if role.required and role.id not in normalized_mapping
+        role.id
+        for role in pack.roles
+        if role.required and role.id not in normalized_mapping
     ]
     if missing:
         raise ValueError(f"Missing required role mappings for {pack.name}: {', '.join(missing)}")
@@ -454,7 +583,15 @@ def materialize_source_pack(
         )
 
     def mapped(role_ids: list[str]) -> list[str]:
-        return [normalized_mapping[role_id] for role_id in role_ids if role_id in normalized_mapping]
+        return [
+            normalized_mapping[role_id]
+            for role_id in role_ids
+            if role_id in normalized_mapping
+        ]
+
+    row_diff_fields = mapped(pack.row_diff_roles)
+    if not row_diff_fields:
+        row_diff_fields = mapped(pack.unique_key_roles)
 
     config = MonitoringConfig(
         monitor_interval_minutes=(
@@ -464,11 +601,13 @@ def materialize_source_pack(
             resolved_overrides.expected_refresh_minutes or pack.expected_refresh_minutes
         ),
         latest_date_field=(
-            normalized_mapping.get(pack.latest_date_role) if pack.latest_date_role else None
+            normalized_mapping.get(pack.latest_date_role)
+            if pack.latest_date_role
+            else None
         ),
         unique_keys=mapped(pack.unique_key_roles),
         numeric_fields=mapped(pack.numeric_roles),
-        row_diff_fields=mapped(pack.row_diff_roles),
+        row_diff_fields=row_diff_fields,
         data_rules=data_rules,
     )
     return SourcePackMaterialization(
