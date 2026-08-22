@@ -16,6 +16,7 @@ from analystwatch.models import (
     SourceDefinition,
     SourceType,
 )
+from analystwatch.pages import build_pages_site
 from analystwatch.web import create_app
 from analystwatch.web_auth import required_role
 
@@ -204,6 +205,21 @@ def test_authenticated_reconciliation_api_records_operator_identity(tmp_path: Pa
     assert reconciled is not None
     assert reconciled.state.value == "Failed"
     assert reconciled.reconciled_by == "operator"
+
+
+def test_delivery_ops_navigation_is_dynamic_only(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "state.db")
+    client = TestClient(app)
+
+    dynamic = client.get("/")
+    output = build_pages_site(app.state.storage, tmp_path / "site", generated_at=NOW)
+    static_html = (output / "index.html").read_text(encoding="utf-8")
+
+    assert dynamic.status_code == 200
+    assert 'href="/reconciliation"' in dynamic.text
+    assert "Delivery Ops" in dynamic.text
+    assert 'href="/reconciliation"' not in static_html
+    assert "Delivery Ops" not in static_html
 
 
 def test_reconciliation_role_boundaries() -> None:
