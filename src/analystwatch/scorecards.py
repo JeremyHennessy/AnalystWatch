@@ -38,6 +38,7 @@ class ReliabilityScorecard(BaseModel):
     current_health: HealthStatus | None = None
     badge: TrustBadge
     latest_observation_at: datetime | None = None
+    history_complete: bool = True
     window_7d: ReliabilityWindow
     window_30d: ReliabilityWindow
 
@@ -75,13 +76,17 @@ def _is_data_rule_occurrence(observation: Observation) -> bool:
 
 def _incident_events(
     observations: list[tuple[datetime, Observation]],
+    *,
+    history_complete: bool,
 ) -> list[tuple[datetime, IncidentTransition, float | None]]:
     events: list[tuple[datetime, IncidentTransition, float | None]] = []
     previous: Observation | None = None
     opened_at: datetime | None = None
 
-    for observed_at, observation in observations:
+    for index, (observed_at, observation) in enumerate(observations):
         transition = incident_transition(previous, observation)
+        if index == 0 and not history_complete and observation.health != HealthStatus.HEALTHY:
+            transition = None
         if transition == IncidentTransition.OPENED:
             opened_at = observed_at
             events.append((observed_at, transition, None))
@@ -148,6 +153,7 @@ def build_reliability_scorecard(
     observations: list[Observation],
     *,
     as_of: datetime,
+    history_complete: bool = True,
 ) -> ReliabilityScorecard:
     """Derive an explainable reliability scorecard from existing observation evidence.
 
@@ -166,7 +172,7 @@ def build_reliability_scorecard(
 
     normalized.sort(key=lambda item: (item[0], item[1].id))
     latest = normalized[-1] if normalized else None
-    events = _incident_events(normalized)
+    events = _incident_events(normalized, history_complete=history_complete)
 
     return ReliabilityScorecard(
         source_id=source_id,
@@ -174,6 +180,7 @@ def build_reliability_scorecard(
         current_health=latest[1].health if latest else None,
         badge=_badge_for_health(latest[1].health if latest else None),
         latest_observation_at=latest[0] if latest else None,
+        history_complete=history_complete,
         window_7d=_window(normalized, events, as_of=as_of_utc, days=7),
         window_30d=_window(normalized, events, as_of=as_of_utc, days=30),
     )
