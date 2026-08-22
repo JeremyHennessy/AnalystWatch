@@ -64,44 +64,61 @@ Added workspace-aware PostgreSQL persistence behind `MonitoringStore`, PostgreSQ
 
 Added provider-neutral authenticated principals, signed-bearer mode, persistent SQLite/PostgreSQL workspace memberships, Viewer/Operator/Admin authorization, fail-closed FastAPI enforcement and cross-workspace/security-negative tests. Clean gate: 156 tests; hosted local-auth compatibility verified after merge.
 
-## Core v0.16 — Managed runtime + first live email delivery — current candidate
+## Core v0.16 — Managed runtime + first live email delivery — complete
+
+Added environment-backed managed-runtime validation, PostgreSQL startup/membership bootstrap, dedicated managed PostgreSQL recovery validation and a Resend live-email adapter behind the existing delivery-attempt state machine. Clean gate: 164 tests plus live-source smoke; hosted legacy/local compatibility verified after merge.
+
+Still not implied by v0.16: production app cutover to managed PostgreSQL or a verified real Resend side effect.
+
+## Product v0.16.1 — UI & Product Foundation — complete
+
+Reworked the existing user-visible shell without changing monitoring behavior:
+
+- workspace reliability overview and health KPIs
+- needs-attention triage queue
+- clearer monitored-source list
+- incident-first source detail hierarchy
+- visual health history
+- compact profile/review/baseline actions
+- monitoring contract under progressive disclosure
+- responsive/mobile improvements
+- static Pages parity
+- preservation of established public-output safety/status guarantees
+
+The UI change was limited to templates, shared CSS and UI regression coverage. Hosted monitoring state advanced after merge.
+
+## Product v0.17 — Microsoft 365 Excel connector — current release candidate
 
 Implemented and verified on the functional checkpoint:
 
-- `DeliveryMode.LIVE` without changing the existing dry-run path
-- Resend email adapter behind the existing Eligible-candidate delivery-attempt contract
-- provider idempotency header using the AnalystWatch idempotency key
-- live attempt state persisted before external I/O
-- provider acceptance → Succeeded
-- definitive provider rejection → Failed
-- transport uncertainty remains Prepared for explicit reconciliation
-- same-key replay does not execute a second provider request
-- analyst-oriented email content with source/workspace/transition/severity/findings/impact/investigation/link
-- secret/DSN/idempotency-key redaction from email and stored result/error surfaces
-- environment-backed managed-runtime configuration
-- PostgreSQL schema/startup verification
-- PostgreSQL workspace-membership initialization
-- trusted first-Admin bootstrap with non-Admin conflict refusal
-- dedicated external managed PostgreSQL validation project
-- isolated managed-database recovery rehearsal with state removal and reset-from-parent recovery
-- temporary recovery branches cleaned up after verification
-- clean functional checkpoint: **164 tests**, Ruff/compile green, PostgreSQL 16 CI green
-- live-source smoke green
+- `microsoft_excel` source type
+- internal `m365://<drive>/<item>?table=<name>` descriptor
+- optional worksheet and page-size selectors
+- delegated Microsoft Graph Authorization via existing environment-backed header references
+- DriveItem modified-time and ETag evidence
+- Excel Table column/header discovery
+- paged Excel Table row ingestion
+- normalization into the existing DataFrame/profile/detector pipeline
+- preflight and normal source onboarding reuse
+- Microsoft 365 fields in the analyst-facing onboarding page
+- no token value persisted in the source definition
+- public Pages/state redaction of drive ID, workbook item ID and token environment-variable name
+- deterministic Graph pagination/error/auth/preflight tests
+- clean functional checkpoint: **172 tests**, Ruff/compile green, PostgreSQL 16 CI green
+- live-source smoke green on the unchanged public-source set
 
-Still intentionally not claimed by the candidate:
+Explicitly not claimed by v0.17:
 
-- the existing GitHub-hosted app has not been cut over from legacy SQLite/local auth;
-- no production application deployment target is configured;
-- no real Resend credential/sender has been configured through this repository session;
-- therefore a successful real external email side effect is not yet claimed.
+- no real Microsoft tenant credential was used in this repository session;
+- no live SharePoint/OneDrive tenant check was performed;
+- no application-permission support is claimed for the Excel workbook/table Graph APIs used here;
+- the full `Connect Microsoft 365 → browse site/drive/workbook/table` OAuth selection flow is not yet implemented;
+- no detector, storage, incident or notification semantics changed.
 
-The managed PostgreSQL validation environment proves infrastructure/storage recovery mechanics, not production application deployment.
-
-## Product roadmap after Core v0.16
+## Product roadmap after v0.17
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.17 — SharePoint / OneDrive Excel connector
 - Product v0.18 — row-level / key-level change analysis
 - Product v0.19 — Power BI Guard
 - Product v0.20 — Microsoft Teams + lightweight dependency graph / blast radius
