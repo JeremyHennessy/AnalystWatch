@@ -22,6 +22,7 @@ from .models import (
     SourceType,
 )
 from .power_bi_web import configure_power_bi_web
+from .reconciliation_web import configure_reconciliation_web
 from .runtime_storage import DEFAULT_STORAGE_BACKEND, create_runtime_storage
 from .service import MonitorService
 from .teams_delivery import TeamsWorkflowAdapter
@@ -90,7 +91,7 @@ def create_app(
     storage = runtime.monitoring_store
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.20.0")
+    app = FastAPI(title="AnalystWatch", version="0.21.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.storage_backend = runtime.backend
@@ -329,12 +330,20 @@ def create_app(
 
     @app.post("/api/delivery-attempts/{attempt_id}/reconcile")
     def api_reconcile_delivery_attempt(
+        request: Request,
         attempt_id: str,
         outcome: DeliveryReconciliationOutcome,
         note: str,
     ):
+        auth_context = getattr(request.state, "auth_context", None)
+        reviewer = auth_context.principal.user_id if auth_context is not None else None
         try:
-            return service.reconcile_delivery_attempt(attempt_id, outcome, note)
+            return service.reconcile_delivery_attempt(
+                attempt_id,
+                outcome,
+                note,
+                reviewer=reviewer,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -414,6 +423,11 @@ def create_app(
         app,
         monitoring_service=service,
         adapter=teams_adapter,
+    )
+    configure_reconciliation_web(
+        app,
+        templates=templates,
+        monitoring_service=service,
     )
     configure_web_authorization(
         app,

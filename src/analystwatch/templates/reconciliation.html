@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reconciliation Monitor · AnalystWatch</title>
+  <link rel="stylesheet" href="{{ static_css }}">
+  <link rel="stylesheet" href="{{ forms_css }}">
+</head>
+<body>
+  <main class="shell app-shell">
+    <nav class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark">AW</div>
+        <div><strong>AnalystWatch</strong><span>Delivery operations</span></div>
+      </div>
+      <div class="topnav">
+        <a href="{{ home_href }}">SourceGuard</a>
+        <a href="/power-bi">Power BI Guard</a>
+        <a href="/dependencies">Dependency Map</a>
+        <a class="active" href="/reconciliation">Reconciliation</a>
+      </div>
+    </nav>
+
+    <header class="product-hero">
+      <div>
+        <p class="eyebrow">DELIVERY OPERATIONS · RECONCILIATION</p>
+        <h1>Which delivery outcomes are still unresolved?</h1>
+        <p class="hero-copy">Prepared attempts are deliberately neither success nor failure. AnalystWatch keeps retry blocked until an operator resolves the outcome from external evidence.</p>
+      </div>
+      <div class="hero-status">
+        {% if queue.stale_count %}
+          <span class="status status-warning"><span class="dot"></span>{{ queue.stale_count }} stale unresolved</span>
+        {% elif queue.prepared_count %}
+          <span class="status status-not-checked"><span class="dot"></span>{{ queue.prepared_count }} awaiting evidence</span>
+        {% else %}
+          <span class="status status-healthy"><span class="dot"></span>No unresolved attempts</span>
+        {% endif %}
+      </div>
+    </header>
+
+    <section class="summary-grid">
+      <article class="summary-card primary-summary">
+        <span class="summary-label">Prepared</span>
+        <strong>{{ queue.prepared_count }}</strong>
+        <p>Unresolved attempts found in the bounded delivery scan.</p>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Stale</span>
+        <strong>{{ queue.stale_count }}</strong>
+        <p>Prepared for at least {{ queue.stale_after_minutes }} minutes.</p>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Threshold</span>
+        <strong>{{ queue.stale_after_minutes }}m</strong>
+        <p>Age used to flag operator follow-up.</p>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Scan cap</span>
+        <strong>{{ queue.scan_limit }}</strong>
+        <p>{% if queue.scan_limit_reached %}Cap reached; older attempts may exist outside this scan.{% else %}Cap not reached in this scan.{% endif %}</p>
+      </article>
+    </section>
+
+    {% if queue.scan_limit_reached %}
+      <div class="deployment-note compact">
+        <strong>Bounded scan reached its cap.</strong>
+        <span>The counts on this page describe the scanned attempts only; AnalystWatch is not claiming the queue is exhaustive.</span>
+      </div>
+    {% endif %}
+    {% if queue.item_limit_reached %}
+      <div class="deployment-note compact">
+        <strong>Queue display limit reached.</strong>
+        <span>Showing the oldest {{ queue.item_limit }} of {{ queue.prepared_count }} Prepared attempts found in the scan.</span>
+      </div>
+    {% endif %}
+
+    <section class="panel">
+      <div class="section-title">
+        <div><p class="section-kicker">AMBIGUOUS OUTCOMES</p><h2>Prepared attempts requiring evidence</h2></div>
+        <span>Showing {{ queue.items|length }} of {{ queue.prepared_count }} · oldest first</span>
+      </div>
+
+      {% if queue.items %}
+        <div class="source-list product-source-list">
+          {% for item in queue.items %}
+          <article class="source-row product-source-row">
+            <div class="source-identity">
+              <span class="source-icon">{{ item.adapter[:2]|upper }}</span>
+              <div>
+                <strong><a href="/sources/{{ item.source_id }}">{{ item.source_name }}</a></strong>
+                <span class="source-meta">{{ item.adapter }} · {{ item.mode.value }} · attempt {{ item.attempt_id }}</span>
+                <span class="source-location">Prepared {{ item.created_at.strftime('%b %d · %H:%M UTC') }} · {{ item.age_minutes }} min unresolved{% if item.transition %} · {{ item.transition.value }} candidate{% endif %}</span>
+              </div>
+            </div>
+            <div class="source-signal">
+              {% if item.current_health %}<span class="status status-{{ item.current_health.value|lower }}">{{ item.current_health.value }}</span>{% endif %}
+              {% if item.stale %}<span class="status status-warning"><span class="dot"></span>Stale</span>{% else %}<span class="status status-not-checked"><span class="dot"></span>Prepared</span>{% endif %}
+            </div>
+          </article>
+          <form class="form-grid" method="post" action="/reconciliation/{{ item.attempt_id }}/resolve">
+            <label class="span-two">Evidence note
+              <input type="text" name="note" required maxlength="2000" autocomplete="off" placeholder="Record the provider log, receipt, audit event, or other evidence used to resolve this attempt.">
+            </label>
+            <div class="form-actions span-two">
+              <button class="secondary" type="submit" name="outcome" value="Failed">Confirm failed</button>
+              <button type="submit" name="outcome" value="Succeeded">Confirm succeeded</button>
+            </div>
+          </form>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="all-clear">
+          <span class="all-clear-icon">✓</span>
+          <strong>No Prepared attempts need reconciliation</strong>
+          <p>There is currently no unresolved external delivery outcome in the scanned delivery-attempt history.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel quick-guide">
+      <p class="section-kicker">SAFETY MODEL</p>
+      <h2>Reconciliation resolves evidence; it does not guess</h2>
+      <div class="guide-row"><span class="dot guide-amber"></span><div><strong>Prepared</strong><p>The attempt was claimed but does not have a definitive recorded outcome. Retry remains blocked.</p></div></div>
+      <div class="guide-row"><span class="dot guide-green"></span><div><strong>Confirm succeeded</strong><p>Use only when durable external evidence shows the provider accepted or completed the delivery.</p></div></div>
+      <div class="guide-row"><span class="dot guide-red"></span><div><strong>Confirm failed</strong><p>Use only when evidence shows the provider did not accept or complete the delivery. Existing retry policy then determines when another attempt is allowed.</p></div></div>
+    </section>
+  </main>
+</body>
+</html>
