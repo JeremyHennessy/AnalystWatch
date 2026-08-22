@@ -52,7 +52,7 @@ def test_google_sheets_ingestion_reads_range_with_stable_rendering(monkeypatch) 
         requests.append(request)
         assert request.headers["Authorization"] == "Bearer oauth-token"
         assert request.url.path.endswith(
-            "/spreadsheets/spreadsheet-1/values/Data%21A1%3AD100"
+            "/spreadsheets/spreadsheet-1/values/Data!A1:D100"
         )
         assert request.url.params["majorDimension"] == "ROWS"
         assert request.url.params["valueRenderOption"] == "UNFORMATTED_VALUE"
