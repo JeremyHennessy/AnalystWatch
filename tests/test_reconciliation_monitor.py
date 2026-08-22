@@ -133,8 +133,11 @@ def test_reconciliation_queue_reports_output_limit_and_scan_cap_separately(servi
     capped = build_delivery_reconciliation_queue(service.storage, now=NOW, scan_limit=1)
 
     assert limited.prepared_count == 2
+    assert limited.item_limit == 1
+    assert limited.item_limit_reached is True
     assert len(limited.items) == 1
     assert limited.scan_limit_reached is False
+    assert capped.item_limit_reached is False
     assert capped.scan_limit_reached is True
 
 
