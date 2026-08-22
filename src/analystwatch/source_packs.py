@@ -168,7 +168,7 @@ _PACKS: dict[SourcePackId, SourcePack] = {
         id=SourcePackId.FP_AND_A_FORECAST,
         name="FP&A Forecast",
         description=(
-            "Forecast extracts where row identity, as-of date and modeled amounts must stay trusted."
+            "Forecast extracts where row identity, as-of date and amounts must stay trusted."
         ),
         roles=[
             _role(
@@ -211,9 +211,7 @@ _PACKS: dict[SourcePackId, SourcePack] = {
                 "record_key_required",
                 "Forecast row key is required",
                 "record_key",
-                impact=(
-                    "Missing row identity can make added, removed or changed forecast lines ambiguous."
-                ),
+                impact="Missing row identity can make forecast-line changes ambiguous.",
             ),
             _not_null(
                 "as_of_date_required",
@@ -291,9 +289,7 @@ _PACKS: dict[SourcePackId, SourcePack] = {
     SourcePackId.CLAIMS_REGISTER: SourcePack(
         id=SourcePackId.CLAIMS_REGISTER,
         name="Claims Register",
-        description=(
-            "Claims registers where identity, recency and status feed risk and operations reporting."
-        ),
+        description="Claims registers where identity, recency and status feed risk reporting.",
         roles=[
             _role("claim_id", "Claim ID", "Unique claim or case identifier."),
             _role(
@@ -464,7 +460,7 @@ _PACKS: dict[SourcePackId, SourcePack] = {
         id=SourcePackId.CUSTOMER_EXPORT,
         name="Customer Export",
         description=(
-            "Customer exports where stable identity and update recency support downstream reporting."
+            "Customer exports where identity and update recency support downstream reporting."
         ),
         roles=[
             _role(
