@@ -14,6 +14,7 @@ from .incidents import latest_incident
 from .models import DeliveryAttempt, NotificationCandidate, SourceDefinition, SourceType
 from .row_diff import strip_row_diff_raw_payloads
 from .scheduler import run_decision
+from .scorecard_service import ReliabilityScorecardService
 from .storage import Storage
 
 PACKAGE_DIR = Path(__file__).parent
@@ -187,7 +188,11 @@ def _public_observation(observation, *, private_fields: set[str] | None = None):
 
 
 def _source_view(
-    storage: Storage, source: SourceDefinition, *, now: datetime
+    storage: Storage,
+    source: SourceDefinition,
+    *,
+    now: datetime,
+    scorecard_service: ReliabilityScorecardService,
 ) -> dict[str, object]:
     latest = storage.get_latest(source.id)
     baseline = storage.get_baseline(source.id)
@@ -209,12 +214,18 @@ def _source_view(
         "notification_candidate_states": _candidate_state_counts(candidates),
         "delivery_attempt_count": len(attempts),
         "delivery_attempt_states": _attempt_state_counts(attempts),
+        "scorecard": scorecard_service.scorecard(source.id, as_of=now),
         "health": latest.health.value if latest else "Not checked",
         "schedule": decision,
     }
 
 
-def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, object]:
+def _public_state(
+    storage: Storage,
+    *,
+    generated_at: datetime,
+    scorecard_service: ReliabilityScorecardService,
+) -> dict[str, object]:
     sources: list[dict[str, object]] = []
     for source in storage.list_sources():
         latest = storage.get_latest(source.id)
@@ -225,6 +236,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
         incident = latest_incident(storage.list_observations(source.id, limit=200))
         candidates = storage.list_notification_candidates(source.id, limit=1000)
         attempts = storage.list_delivery_attempts(source_id=source.id, limit=1000)
+        scorecard = scorecard_service.scorecard(source.id, as_of=generated_at)
         sources.append(
             {
                 "id": source.id,
@@ -245,6 +257,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
                 "delivery_attempt_count": len(attempts),
                 "delivery_attempt_states": _attempt_state_counts(attempts),
                 "latest": json.loads(public_latest.model_dump_json()) if public_latest else None,
+                "scorecard": scorecard.model_dump(mode="json"),
                 "baseline_id": baseline.id if baseline else None,
             }
         )
@@ -261,6 +274,7 @@ def build_pages_site(
     generated = generated_at or datetime.now(timezone.utc)
     if generated.tzinfo is None:
         generated = generated.replace(tzinfo=timezone.utc)
+    scorecard_service = ReliabilityScorecardService(storage)
 
     if output.exists():
         shutil.rmtree(output)
@@ -278,7 +292,12 @@ def build_pages_site(
 
     source_views: list[dict[str, object]] = []
     for source in storage.list_sources():
-        view = _source_view(storage, source, now=generated)
+        view = _source_view(
+            storage,
+            source,
+            now=generated,
+            scorecard_service=scorecard_service,
+        )
         view["href"] = f"sources/{source.id}/"
         source_views.append(view)
 
@@ -302,7 +321,14 @@ def build_pages_site(
     )
     (output / "index.html").write_text(index, encoding="utf-8")
     (output / "state.json").write_text(
-        json.dumps(_public_state(storage, generated_at=generated), indent=2),
+        json.dumps(
+            _public_state(
+                storage,
+                generated_at=generated,
+                scorecard_service=scorecard_service,
+            ),
+            indent=2,
+        ),
         encoding="utf-8",
     )
     return output

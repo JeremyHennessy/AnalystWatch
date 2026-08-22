@@ -1,0 +1,26 @@
+{% if not static_mode %}{% set scorecard = reliability_scorecard_for(source.id) %}{% endif %}
+<section class="panel" id="reliability-scorecard">
+  <div class="section-title">
+    <div><p class="section-kicker">RELIABILITY SCORECARD</p><h2>Recent reliability</h2></div>
+    <span class="status status-{{ scorecard.current_health.value|lower|replace(' ', '-') }}"><span class="dot"></span>{{ scorecard.badge.value }}</span>
+  </div>
+  <p class="muted">The badge mirrors current Health. Historical metrics explain recent reliability and do not reclassify this source.</p>
+  {% if not scorecard.history_complete %}
+  <div class="deployment-note compact"><strong>Partial history</strong><span>The bounded history cap was reached. Incident starts and MTTR are not fabricated when earlier context is unavailable.</span></div>
+  {% endif %}
+  <div class="finding-list">
+    {% for window in [scorecard.window_7d, scorecard.window_30d] %}
+    <article class="finding">
+      <div class="finding-top"><strong>{{ window.days }} days</strong><span>{{ window.check_count }} check{{ '' if window.check_count == 1 else 's' }}</span></div>
+      <div class="profile-grid">
+        <div><span>Healthy checks</span><strong>{% if window.healthy_check_pct is not none %}{{ (window.healthy_check_pct * 100)|round(1) }}%{% else %}—{% endif %}</strong></div>
+        <div><span>Successful checks</span><strong>{% if window.successful_check_pct is not none %}{{ (window.successful_check_pct * 100)|round(1) }}%{% else %}—{% endif %}</strong></div>
+        <div><span>Incidents opened</span><strong>{{ window.incident_count }}</strong></div>
+        <div><span>Stale occurrences</span><strong>{{ window.stale_occurrence_count }}</strong></div>
+        <div><span>Rule-failure occurrences</span><strong>{{ window.data_rule_failure_occurrence_count }}</strong></div>
+        <div><span>MTTR</span><strong>{% if window.mttr_minutes is not none %}{{ (window.mttr_minutes / 60)|round(1) }} h{% else %}—{% endif %}</strong></div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>

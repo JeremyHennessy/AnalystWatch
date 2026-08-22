@@ -4,7 +4,6 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .dependencies import AssetKind
-from .scorecard_service import ReliabilityScorecardService
 from .scorecards import ReliabilityScorecard
 
 
@@ -19,7 +18,7 @@ class ReliabilityScorecardResponse(BaseModel):
 
 
 def api_source_scorecard(request: Request, source_id: str) -> ReliabilityScorecardResponse:
-    service = ReliabilityScorecardService(request.app.state.workspace_storage)
+    service = request.app.state.scorecard_service
     try:
         scorecard = service.scorecard(source_id)
     except KeyError as exc:
