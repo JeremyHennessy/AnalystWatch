@@ -19,6 +19,7 @@ from .models import (
     SourceDefinition,
     SourceType,
 )
+from .power_bi_web import configure_power_bi_web
 from .runtime_storage import DEFAULT_STORAGE_BACKEND, create_runtime_storage
 from .service import MonitorService
 from .web_auth import configure_web_authorization
@@ -375,6 +376,15 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    configure_power_bi_web(
+        app,
+        templates=templates,
+        monitoring_store=storage,
+        db_path=resolved_db,
+        workspace_id=resolved_workspace,
+        storage_backend=runtime.backend,
+        postgres_dsn=resolved_postgres_dsn,
+    )
     configure_web_authorization(
         app,
         workspace_id=resolved_workspace,
