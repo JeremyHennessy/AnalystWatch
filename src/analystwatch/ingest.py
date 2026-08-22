@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pandas as pd
 
+from .microsoft_excel import read_microsoft_excel_table
 from .models import SourceDefinition, SourceType
 
 
@@ -77,6 +78,22 @@ def ingest_source(
     try:
         if source.source_type == SourceType.API:
             return _ingest_api(source, client=client)
+        if source.source_type == SourceType.MICROSOFT_EXCEL:
+            result = read_microsoft_excel_table(
+                source.location,
+                headers=_request_headers(source),
+                timeout_seconds=source.config.request_timeout_seconds,
+                client=client,
+            )
+            return IngestionResult(
+                available=result.available,
+                dataframe=result.dataframe,
+                http_status=result.http_status,
+                response_ms=result.response_ms,
+                source_modified_at=result.source_modified_at,
+                response_etag=result.response_etag,
+                error=result.error,
+            )
 
         path = Path(source.location)
         if not path.exists() or not path.is_file():
