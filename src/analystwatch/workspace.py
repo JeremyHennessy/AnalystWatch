@@ -140,7 +140,9 @@ class WorkspaceStore:
         for observation_id in keep_observation_ids:
             observation = self.get_observation(observation_id)
             if observation is None or observation.source_id != source_id:
-                raise ValueError("Retained row-diff observation does not belong to this workspace/source")
+                raise ValueError(
+                    "Retained row-diff observation does not belong to this workspace/source"
+                )
         self.delegate.prune_row_diff_payloads(source_id, keep_observation_ids)
 
     def save_review(self, review: ObservationReview) -> ObservationReview:
