@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from analystwatch.auth import WorkspaceRole
+from analystwatch.dependencies import AssetKind
 from analystwatch.models import HealthStatus
 from analystwatch.power_bi import (
     PowerBIGuardDefinition,
@@ -93,6 +94,31 @@ def test_power_bi_guard_pages_show_false_confidence_and_downstream_context(tmp_p
     assert "Critical" in detail.text
     assert "Reports using this model" in detail.text
     assert "Datasource types" in detail.text
+
+
+def test_successful_power_bi_check_syncs_discovered_dependencies(tmp_path, monkeypatch) -> None:
+    app = create_app(tmp_path / "state.db", workspace_id="team-a")
+    definition = _definition(workspace_id="team-a")
+    app.state.power_bi_store.upsert_guard(definition)
+    snapshot = _snapshot()
+    monkeypatch.setattr(app.state.power_bi_service, "check_guard", lambda guard_id: snapshot)
+    client = TestClient(app)
+
+    response = client.post("/api/power-bi/guards/executive-bi/check")
+
+    assert response.status_code == 200
+    edges = app.state.dependency_service.edges()
+    assert {edge.id for edge in edges} == {
+        "pbi:executive-bi:source:treasury",
+        "pbi:executive-bi:source:fx",
+        "pbi:executive-bi:report:report-1",
+    }
+    radius = app.state.dependency_service.blast_radius(AssetKind.SOURCE, "treasury")
+    assert radius.total == 2
+    assert {asset.kind for asset in radius.downstream} == {
+        AssetKind.SEMANTIC_MODEL,
+        AssetKind.REPORT,
+    }
 
 
 def test_power_bi_guard_api_rejects_cross_workspace_definition(tmp_path) -> None:
