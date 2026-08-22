@@ -84,7 +84,7 @@ Added bounded configured-key row snapshots, previous-successful and active-basel
 
 Raw row snapshots and key/value samples remain bounded and are not published in static Pages/state output.
 
-## Product v0.19 — Power BI Guard — current release candidate
+## Product v0.19 — Power BI Guard — complete
 
 Implemented and verified on the frozen functional checkpoint:
 
@@ -119,12 +119,46 @@ Explicit non-goals preserved:
 - no separate notification state machine;
 - no claim of live Microsoft tenant access without a real credential.
 
-## Product roadmap after v0.19
+## Product v0.20 — Microsoft Teams + dependency graph / blast radius — current release candidate
+
+Implemented on top of the verified v0.19 baseline:
+
+- Microsoft Teams Workflows / Power Automate webhook adapter using Adaptive Cards
+- environment-backed Teams webhook and public base URL configuration
+- reuse of the existing eligible-candidate and delivery-attempt state machine
+- atomic claim, caller idempotency, retry and reconciliation semantics preserved for Teams
+- same-key replay protection against duplicate external POSTs
+- explicit provider rejection → Failed; ambiguous transport failure → Prepared for reconciliation
+- Teams status route exposes only configured/unconfigured state and never the webhook URL
+- Teams delivery action is Operator-level; configuration/mutation boundaries remain fail closed
+- Source / Workbook / Semantic Model / Report / Custom dependency asset types
+- explicit and discovered dependency edges
+- workspace-scoped SQLite and PostgreSQL dependency persistence
+- deterministic cycle-safe blast-radius traversal without duplicate descendant counts
+- analyst-facing `/dependencies` Dependency Map plus dependency read/mutation/blast-radius API routes
+- Power BI evidence discovery for configured source → semantic model and semantic model → report relationships
+- per-Guard discovered-edge namespaces so refreshes replace only their own stale discovered relationships
+- unavailable Power BI evidence does not erase the last known dependency graph
+- additive source-detail Downstream impact panel using the recorded dependency graph
+- dynamic SourceGuard / Power BI Guard navigation to the Dependency Map
+- no detector, source Health, baseline, incident or existing delivery-state semantics changed
+- verified functional checkpoint: **212 tests**, Ruff/compile green, PostgreSQL 16 CI green
+
+Explicit non-goals / unverified boundaries preserved:
+
+- no retired Office 365 Connector implementation;
+- no enterprise SQL-column/Fabric lineage catalogue;
+- no separate Teams notification state machine;
+- no source detector threshold changes or Health redefinition;
+- no claim of a real Teams side effect because no real Teams Workflows webhook was supplied in this repository session;
+- no claim of live Microsoft Power BI tenant access because no real tenant credential was supplied;
+- static GitHub Pages do not fabricate dynamic Teams, Power BI or dependency state.
+
+## Product roadmap after v0.20
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.20 — Microsoft Teams + lightweight dependency graph / blast radius
-- Product v0.21 — reconciliation monitors
+- Product v0.21 — reconciliation monitors / ambiguous-delivery operations
 - Product v0.22 — Google Sheets connector
 - Product v0.23 — business rules / Data Rules
 - Product v0.24 — reliability scorecards + trust badge
