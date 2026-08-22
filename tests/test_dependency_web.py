@@ -63,7 +63,9 @@ def test_dependency_api_rejects_cross_workspace_edge(tmp_path) -> None:
     assert app.state.dependency_service.edges() == []
 
 
-def test_discovered_replacement_removes_stale_edges_without_touching_explicit_edges(tmp_path) -> None:
+def test_discovered_replacement_removes_stale_edges_without_touching_explicit_edges(
+    tmp_path,
+) -> None:
     app = create_app(tmp_path / "state.db", workspace_id="team-a")
     service = app.state.dependency_service
     explicit = _edge()
