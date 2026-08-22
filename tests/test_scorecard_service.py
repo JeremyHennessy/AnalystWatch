@@ -65,10 +65,11 @@ def _observation(
 
 def test_service_expands_history_until_pre_window_health_context_is_available() -> None:
     store = FakeStore(
-        _source(),
+        _source(interval=100_000),
         [
             _observation("current", timedelta(days=1), HealthStatus.HEALTHY),
-            _observation("incident", timedelta(days=10), HealthStatus.WARNING),
+            _observation("incident-later", timedelta(days=10), HealthStatus.WARNING),
+            _observation("incident-open", timedelta(days=20), HealthStatus.WARNING),
             _observation("pre-window", timedelta(days=40), HealthStatus.HEALTHY),
         ],
     )
@@ -80,12 +81,12 @@ def test_service_expands_history_until_pre_window_health_context_is_available() 
 
     scorecard = service.scorecard("source-a", as_of=AS_OF)
 
-    assert store.limits == [2, 4]
+    assert store.limits == [3, 6]
     assert scorecard.history_complete is True
-    assert scorecard.window_30d.check_count == 2
+    assert scorecard.window_30d.check_count == 3
     assert scorecard.window_30d.incident_count == 1
     assert scorecard.window_30d.recovered_incident_count == 1
-    assert scorecard.window_30d.mttr_minutes == 12960.0
+    assert scorecard.window_30d.mttr_minutes == 27360.0
 
 
 def test_service_marks_capped_history_incomplete_and_does_not_invent_mttr() -> None:
