@@ -153,6 +153,18 @@
           <section class="panel incident-stats"><p class="section-kicker">Incident lifecycle</p><h2>{{ incident.status.value }}</h2><dl class="compact-stats"><div><dt>Peak severity</dt><dd class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</dd></div><div><dt>Affected checks</dt><dd>{{ incident.observation_count }}</dd></div><div><dt>Notification candidates</dt><dd>{{ notification_candidate_count }}</dd></div><div><dt>Delivery attempts</dt><dd>{{ delivery_attempt_count }}</dd></div></dl><p class="muted policy-summary">Candidate policy: {{ notification_candidate_states.Eligible }} Eligible · {{ notification_candidate_states.Suppressed }} Suppressed · {{ notification_candidate_states.Pending }} Pending.</p><p class="muted delivery-summary">Dry-run attempts: {{ delivery_attempt_count }} total · {{ delivery_attempt_states.Succeeded }} Succeeded · {{ delivery_attempt_states.Failed }} Failed · {{ delivery_attempt_states.Prepared }} Prepared.</p>{% if incident.status.value == 'Recovered' %}<p class="healthy-note compact-note"><strong>Recovered {{ incident.recovered_at.strftime('%b %d · %H:%M UTC') }}</strong></p>{% endif %}</section>
           {% endif %}
 
+          {% if downstream_impact and downstream_impact.total %}
+          <section class="panel incident-stats">
+            <p class="section-kicker">DOWNSTREAM IMPACT</p>
+            <h2>{{ downstream_impact.total }} downstream asset{{ '' if downstream_impact.total == 1 else 's' }}</h2>
+            <p>Potential blast radius from the dependency relationships currently recorded for this source.</p>
+            <dl class="compact-stats">
+              {% for kind, count in downstream_impact.counts.items() %}<div><dt>{{ kind|replace('_', ' ')|title }}</dt><dd>{{ count }}</dd></div>{% endfor %}
+            </dl>
+            {% if not static_mode %}<a class="button button-secondary" href="/dependencies">View dependency map</a>{% endif %}
+          </section>
+          {% endif %}
+
           {% if baseline_review and baseline_review.candidate and baseline_review.current_baseline and baseline_review.candidate.id != baseline_review.current_baseline.id %}<section class="panel action-panel"><p class="section-kicker">BASELINE REVIEW</p><h2>{{ 'Ready to promote' if baseline_review.ready else 'Promotion blocked' }}</h2>{% if baseline_review.blockers %}<p>{{ baseline_review.blockers|join(' ') }}</p>{% elif not static_mode %}<p>Candidate is Healthy and can become the new trusted comparison point.</p><form method="post" action="/sources/{{ source.id }}/baseline?candidate_id={{ baseline_review.candidate.id }}&expected_current_baseline_id={{ baseline_review.current_baseline.id }}"><button class="button button-secondary" type="submit">Promote baseline</button></form>{% endif %}</section>{% endif %}
         </aside>
       </section>
