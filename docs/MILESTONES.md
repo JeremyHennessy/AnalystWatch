@@ -56,54 +56,79 @@ Added separate schema-v2 `NamespacedStorage`, composite workspace/domain keys, w
 
 Added safe `legacy` / `namespaced` runtime selection, pre-initialization schema checks, backend-aware verification, local legacy → namespaced import and full migrated FastAPI/Pages rehearsal. Clean gate: 129 tests; hosted default-legacy state verified after merge.
 
-## Core v0.14 — PostgreSQL production persistence proof — current
+## Core v0.14 — PostgreSQL production persistence proof — complete
+
+Added workspace-aware PostgreSQL persistence behind `MonitoringStore`, PostgreSQL row-lock claim/reconciliation safety, runtime DSN selection, namespaced → PostgreSQL import, PostgreSQL verification and real PostgreSQL 16 CI conformance. Clean gate: 143 tests; hosted default-legacy state verified after merge. This was a persistence contract proof, not a managed PostgreSQL deployment.
+
+## Core v0.15 — Authenticated workspace authorization — current
 
 Implemented and verified on the functional checkpoint:
 
-- deployment-grade `PostgresStorage` implementation of `MonitoringStore`
-- PostgreSQL schema namespace `analystwatch`
-- backend-specific PostgreSQL schema/storage identity metadata
-- composite workspace identity for sources, observations, reviews, candidates and attempts
-- workspace-local idempotency-key uniqueness
-- workspace-local candidate/adapter attempt numbering
-- deterministic insertion ordering for timestamp ties
-- PostgreSQL `FOR UPDATE` row locking for delivery claim and Prepared reconciliation safety
-- shared conformance suite now runs across SQLite, `MemoryStore` and PostgreSQL
-- real PostgreSQL 16 service added to GitHub CI; PostgreSQL is not mocked
-- `psycopg` production driver dependency
-- explicit runtime backend `postgres`; safe default remains `legacy`
-- PostgreSQL requires an explicit DSN via CLI/environment/FastAPI
-- backend-aware PostgreSQL verification
-- explicit namespaced schema-v2 → empty PostgreSQL workspace import
-- imported source/history/baseline/review/candidate/attempt state preserved
-- concurrent same-candidate claim regression proves row-lock serialization
-- cross-workspace duplicate domain IDs and idempotency values proven safe in PostgreSQL
-- CLI `import-postgres-state` cutover rehearsal
-- FastAPI successfully starts and reads imported PostgreSQL operational state
-- hosted workflow remains on legacy SQLite; no production DSN is committed
-- clean functional checkpoint reached **143 passing tests** against PostgreSQL 16
+- separate provider-neutral authenticated-principal model
+- opt-in `signed-bearer` web auth mode; safe default remains `local`
+- HMAC-SHA256 signed bearer verification with principal subject and optional expiry
+- bearer tokens do not carry trusted workspace authority
+- separate `MembershipStore` contract so RBAC does not modify `MonitoringStore`
+- SQLite sidecar membership persistence for local/test use
+- PostgreSQL workspace membership persistence in `analystwatch.workspace_memberships`
+- initial roles: Viewer, Operator and Admin
+- explicit role ordering and capability enforcement
+- centralized FastAPI authorization middleware
+- authority chain enforced as principal → bound-workspace membership → role → capability → operation
+- missing authentication returns 401 in signed mode
+- authenticated non-members return 403
+- Viewer mutations denied
+- Operator administrative mutations denied
+- Admin membership and source-configuration operations permitted
+- workspace-A users denied reads and operations against workspace B
+- arbitrary payload `workspace_id` cannot override the bound workspace
+- unclassified remote mutations fail closed as Admin-only
+- `/healthz` and static assets remain intentionally outside the authenticated application boundary
+- local mode preserves existing unauthenticated local/hosted workflow behavior
+- no unauthenticated first-Admin bootstrap endpoint; initial Admin seeding is a trusted deployment responsibility
+- PostgreSQL membership persistence exercised against the real PostgreSQL 16 CI service
+- clean functional checkpoint reached **156 passing tests**
 
-v0.14 is a production-persistence **contract proof**, not a managed PostgreSQL deployment. Managed provisioning, backups/PITR, retention, operational observability and an actual hosted cutover remain separate deployment work.
+Core v0.15 proves the application authorization boundary. It does **not** add OAuth/OIDC, SSO, user-account lifecycle, managed deployment, billing or real notification delivery.
 
-## Candidate v0.15 — authenticated workspace authorization
+## Candidate Core v0.16 — managed deployment + first real email delivery
 
-Before enabling real external delivery:
+Proceed only after v0.15 merge/hosted compatibility verification.
 
-- define a provider-neutral authenticated principal/session model
-- define persisted workspace membership and role semantics
-- distinguish read-only, operational-write and administrative capabilities
-- enforce workspace membership on remote FastAPI reads and writes
-- never trust a user-supplied workspace identifier without authenticated membership
-- preserve explicit local/CLI operation without silently pretending it is remote authentication
-- add negative tests for cross-workspace reads, writes, candidate operations and baseline/review operations
-- keep notification delivery disabled until the authorization boundary is independently green
+Managed runtime work:
 
-## Later
+- provision/configure managed PostgreSQL without committing credentials
+- secret injection and rotation boundary
+- explicit schema migration/version/startup checks
+- trusted initial Admin provisioning
+- backup/retention policy
+- point-in-time recovery where supported
+- restore rehearsal
+- connection-pool/runtime sizing
+- health checks and observability
+- controlled hosted cutover with rollback evidence
 
-- managed PostgreSQL deployment/cutover, backups/PITR and retention policy
-- first opt-in provider integration behind the proven attempt abstraction
-- production notification delivery
-- SourceGuard productization
-- ModelGuard
-- DashboardGuard
-- billing and integrations
+First real external delivery:
+
+- implement email behind the existing delivery abstraction
+- preserve Eligible-candidate requirement
+- preserve idempotency, claim ownership and Prepared state
+- record success/failure deterministically
+- preserve retry timing and reconciliation semantics
+- verify actual external side effects without exposing secrets, DSNs, authorization headers or idempotency keys
+
+## Product roadmap after Core v0.16
+
+Proceed sequentially unless evidence changes a dependency:
+
+- Product v0.17 — SharePoint / OneDrive Excel connector
+- Product v0.18 — row-level / key-level change analysis
+- Product v0.19 — Power BI Guard
+- Product v0.20 — Microsoft Teams + lightweight dependency graph / blast radius
+- Product v0.21 — reconciliation monitors
+- Product v0.22 — Google Sheets connector
+- Product v0.23 — business rules / Data Rules
+- Product v0.24 — reliability scorecards + trust badge
+- Product v0.25 — preconfigured source packs
+
+AI investigation remains downstream of deterministic findings and must not redefine Health classification.
