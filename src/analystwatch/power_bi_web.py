@@ -6,6 +6,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from .dependencies import power_bi_dependency_edges
+from .dependency_service import DependencyService
 from .power_bi import PowerBIGuardDefinition
 from .power_bi_service import PowerBIGuardService
 from .power_bi_storage import PostgresPowerBIGuardStore, SQLitePowerBIGuardStore
@@ -39,6 +41,7 @@ def configure_power_bi_web(
     workspace_id: str,
     storage_backend: str,
     postgres_dsn: str | None,
+    dependency_service: DependencyService | None = None,
 ) -> None:
     store = _power_bi_store(
         db_path=db_path,
@@ -118,6 +121,14 @@ def configure_power_bi_web(
     @app.post("/api/power-bi/guards/{guard_id}/check")
     def api_check_power_bi_guard(guard_id: str):
         try:
-            return service.check_guard(guard_id)
+            snapshot = service.check_guard(guard_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if dependency_service is not None and snapshot.available:
+            definition = service.get_guard(guard_id)
+            if definition is not None:
+                dependency_service.replace_discovered_edges(
+                    f"pbi:{guard_id}:",
+                    power_bi_dependency_edges(definition, snapshot),
+                )
+        return snapshot
