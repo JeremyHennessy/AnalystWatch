@@ -50,6 +50,7 @@ def create_app(
     db_path: str | Path | None = None,
     workspace_id: str | None = None,
     storage_backend: str | None = None,
+    postgres_dsn: str | None = None,
 ) -> FastAPI:
     resolved_db = Path(db_path or os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"))
     resolved_workspace = validate_workspace_id(
@@ -62,12 +63,22 @@ def create_app(
         if storage_backend is not None
         else os.environ.get("ANALYSTWATCH_STORAGE_BACKEND", DEFAULT_STORAGE_BACKEND)
     )
-    runtime = create_runtime_storage(resolved_db, resolved_workspace, resolved_backend)
+    resolved_postgres_dsn = (
+        postgres_dsn
+        if postgres_dsn is not None
+        else os.environ.get("ANALYSTWATCH_POSTGRES_DSN")
+    )
+    runtime = create_runtime_storage(
+        resolved_db,
+        resolved_workspace,
+        resolved_backend,
+        postgres_dsn=resolved_postgres_dsn,
+    )
     raw_storage = runtime.raw_storage
     storage = runtime.monitoring_store
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.13.0")
+    app = FastAPI(title="AnalystWatch", version="0.14.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.storage_backend = runtime.backend

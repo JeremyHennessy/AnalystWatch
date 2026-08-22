@@ -1,132 +1,167 @@
-# AnalystWatch Core v0.13 Architecture
+# AnalystWatch Core v0.14 Architecture
 
 ## Decision
 
-Core v0.13 introduces controlled runtime persistence selection while keeping the verified hosted deployment on the legacy schema-v1 SQLite path by default.
+Core v0.14 proves PostgreSQL as a deployment-grade persistence implementation behind the established `MonitoringStore` contract. It deliberately does **not** combine production persistence with remote authentication or switch the hosted runtime away from legacy SQLite.
 
-The milestone does not change detector behavior, incident derivation, notification policy, delivery-attempt semantics, legacy schema-v1 storage or namespaced schema-v2 storage. Instead it adds one shared construction boundary that decides which already-proven store may start.
+The deterministic monitoring engine, detector logic, incident derivation, notification policy and delivery-attempt state machine remain unchanged.
 
-## Runtime storage factory
+## Persistence implementations
 
-`src/analystwatch/runtime_storage.py` is the authoritative runtime selection seam.
+The service contract is now exercised through three independent implementations:
 
-Supported backends:
+- `Storage` / `WorkspaceStore` — legacy SQLite runtime;
+- `NamespacedStorage` — workspace-aware SQLite schema-v2 proof;
+- `PostgresStorage` — workspace-aware PostgreSQL implementation.
 
-- `legacy` — schema version 1;
-- `namespaced` — schema version 2.
+PostgreSQL lives in the database schema `analystwatch` and carries its own backend-specific schema metadata. PostgreSQL schema version numbers are not treated as interchangeable with the SQLite file schema versions.
 
-`legacy` is the default.
+## PostgreSQL identity model
 
-The factory returns:
+The PostgreSQL tables preserve the workspace-aware identity semantics proven in v0.12.
 
-- the selected raw persistence implementation;
-- the `MonitoringStore` used by `MonitorService`;
-- the normalized backend name.
+### Sources
 
-For legacy mode the domain store is `WorkspaceStore(Storage(...), workspace_id)`. For namespaced mode the already workspace-bound `NamespacedStorage` is used directly.
+Primary key: `(workspace_id, id)`.
 
-## Read-only pre-initialization verification
+### Observations
 
-Existing database files are inspected before store construction/initialization.
+Primary key: `(workspace_id, id)` with workspace-scoped source foreign key. A `BIGSERIAL` sequence supplies deterministic insertion ordering for timestamp ties.
 
-The sequence is:
+### Observation reviews
 
-1. if the path does not exist, allow the explicitly selected backend to create it later;
-2. if the path exists, use the existing read-only SQLite verifier;
-3. reject failed integrity checks;
-4. require AnalystWatch schema metadata;
-5. require schema version 1 for `legacy` or schema version 2 for `namespaced`;
-6. only after the check succeeds construct the selected persistence implementation.
+Primary key: `(workspace_id, observation_id)` with workspace-scoped observation/source references.
 
-This prevents a schema-v1 process from attempting to initialize schema-v2 state, and vice versa. It also prevents an unknown or corrupt existing SQLite file from being opportunistically converted into AnalystWatch state.
+### Notification candidates
 
-## CLI boundary
+Primary key: `(workspace_id, id)` with unique `(workspace_id, observation_id)` and a sequence for deterministic ordering.
 
-Global selection:
+### Delivery attempts
+
+Primary key: `(workspace_id, id)` with:
+
+- unique `(workspace_id, idempotency_key)`;
+- unique `(workspace_id, candidate_id, adapter, attempt_number)`;
+- workspace-scoped candidate/source foreign keys;
+- insertion sequence for stable ordering.
+
+This permits different workspaces to reuse source, observation, candidate, attempt and idempotency identifiers safely in one PostgreSQL database.
+
+## Transaction and claim safety
+
+SQLite's verified claim path uses `BEGIN IMMEDIATE`. PostgreSQL uses row-level locking instead.
+
+For a delivery claim, `PostgresStorage`:
+
+1. selects the workspace candidate with `FOR UPDATE`;
+2. validates Eligible state;
+3. resolves idempotent replay within the workspace;
+4. checks the latest attempt and retry rules;
+5. inserts the new Prepared attempt under workspace-scoped uniqueness constraints;
+6. commits as one transaction.
+
+Concurrent different-key claims for the same candidate therefore serialize on the candidate row. The regression suite proves that one caller obtains the Prepared attempt while the other observes the resulting Prepared state rather than creating duplicate work.
+
+Prepared reconciliation likewise locks the attempt row with `FOR UPDATE` before applying Succeeded/Failed reconciliation evidence.
+
+## Runtime storage selection
+
+`runtime_storage.py` now supports:
 
 ```text
---storage-backend legacy|namespaced
+legacy | namespaced | postgres
 ```
 
-Environment equivalent:
+`legacy` remains the default.
+
+PostgreSQL selection is explicit and requires a separate DSN. `--db` continues to represent SQLite file state and is not overloaded as a PostgreSQL connection string.
+
+CLI:
 
 ```text
-ANALYSTWATCH_STORAGE_BACKEND
+--storage-backend postgres
+--postgres-dsn <dsn>
 ```
 
-The normal monitoring/list/check/Pages paths all construct `MonitorService` through the shared runtime factory.
+Environment:
 
-`verify-state` is backend-aware and rejects a mismatched schema.
+```text
+ANALYSTWATCH_STORAGE_BACKEND=postgres
+ANALYSTWATCH_POSTGRES_DSN=<dsn>
+```
 
-`backup-state` and `restore-state` remain explicitly legacy-only. v0.13 does not imply namespaced snapshot parity that has not been implemented.
+FastAPI accepts the same backend and DSN explicitly or through environment configuration.
 
-## Migration command
+Selecting PostgreSQL without a DSN is rejected before storage construction. With no backend setting, the hosted process still selects `legacy`.
 
-`import-namespaced-state` wraps the v0.12 create-only migration primitive:
+## PostgreSQL verification
 
-- source must be a verified legacy schema-v1 snapshot;
-- one selected workspace is imported;
-- destination must not exist;
-- destination is schema-v2 with a new storage identity;
-- source/history/baseline/review/candidate/attempt state is retained for that workspace;
-- no runtime or hosted cutover occurs automatically.
+`PostgresStorage.verify_dsn(...)` verifies:
 
-The migration command is deliberately separate from runtime selection so importing data and choosing to run against it are two explicit actions.
+- database connectivity;
+- presence of AnalystWatch PostgreSQL metadata;
+- expected PostgreSQL schema version;
+- persisted storage identity;
+- source/observation/review/candidate/attempt counts.
 
-## FastAPI boundary
+This is a backend verification contract, not a substitute for managed-database health monitoring or backup verification.
 
-`create_app(...)` accepts `storage_backend=` and otherwise reads `ANALYSTWATCH_STORAGE_BACKEND`, defaulting to `legacy`.
+## Workspace migration into PostgreSQL
 
-FastAPI uses the same runtime factory as CLI. `app.state.storage_backend` records the resolved backend, `app.state.storage` is the selected raw implementation, and `app.state.workspace_storage` is the domain `MonitoringStore` used by the service/read paths.
+`PostgresStorage.import_workspace(source_store)` copies one already-bound `MonitoringStore` into an empty PostgreSQL workspace.
 
-All previously verified workspace guards remain in place.
+Current cutover rehearsal uses `NamespacedStorage` as the source after the separately proven legacy → namespaced migration step.
 
-## End-to-end migration rehearsal
+The import preserves:
 
-The v0.13 acceptance suite creates legacy operational state containing:
+- sources;
+- observations;
+- current baseline pointers;
+- observation reviews;
+- notification candidates;
+- delivery attempts, attempt numbers, states, ownership and idempotency keys.
 
-- a Healthy baseline observation;
-- a later Critical observation;
-- a Reviewed observation state;
-- an Eligible Opened notification candidate;
-- a successful dry-run delivery attempt.
+The destination workspace must be empty, preventing an import from silently merging or overwriting existing production state.
 
-The suite then:
+The CLI command `import-postgres-state` makes this migration explicit. It requires `--storage-backend postgres`, a PostgreSQL DSN, a selected workspace and a schema-v2 source supplied through `--db`.
 
-1. snapshots the legacy database with the verified schema-v1 backup path;
-2. imports workspace `local` into a new schema-v2 database;
-3. starts FastAPI with `storage_backend="namespaced"`;
-4. reads source/history/candidate/attempt continuity through API endpoints;
-5. renders static Pages from the migrated namespaced store and verifies aggregate candidate/attempt state.
+## FastAPI and Pages proof
 
-This proves that a migrated schema-v2 database is runnable by the application, not merely structurally valid.
+The migration regression imports operational schema-v2 state into PostgreSQL and then starts FastAPI explicitly with the PostgreSQL backend.
+
+The test verifies source history, candidate count and delivery-attempt count through normal API reads. The shared conformance suite also renders Pages from PostgreSQL, proving read surfaces do not depend on SQLite-specific behavior.
+
+## CI boundary
+
+The CI job now starts an actual PostgreSQL 16 service container. PostgreSQL is not mocked.
+
+The existing cross-store conformance scenarios run against SQLite, `MemoryStore` and PostgreSQL. PostgreSQL-specific regressions add:
+
+- DSN enforcement;
+- workspace-scoped duplicate IDs/idempotency;
+- concurrent candidate-claim serialization;
+- namespaced → PostgreSQL import continuity;
+- CLI import rehearsal;
+- FastAPI PostgreSQL startup/readback.
+
+The verified v0.14 functional checkpoint passed Ruff, compile and **143 deterministic tests** against PostgreSQL 16.
 
 ## Hosted deployment boundary
 
-No workflow or hosted configuration selects the namespaced backend in v0.13. With `ANALYSTWATCH_STORAGE_BACKEND` unset, the hosted pipeline continues on `legacy`.
+No production PostgreSQL DSN is committed or configured by v0.14. The hosted `monitor-state` workflow remains on the unset/default `legacy` path.
 
-Post-merge `monitor-state` advancement is therefore the deployment compatibility gate: it proves the new runtime factory did not break the existing hosted legacy path.
+Post-merge `monitor-state` advancement remains the compatibility gate for the existing hosted runtime. It does **not** constitute a PostgreSQL production deployment.
 
-## Verification
+## Remaining production requirements
 
-The verified v0.13 functional checkpoint passed Ruff, compile and **129 deterministic tests**.
+PostgreSQL contract proof is only one layer of production readiness. Still separate:
 
-New regressions prove:
+- managed PostgreSQL provisioning and secret injection;
+- formal migration/version rollout tooling;
+- managed backups, point-in-time recovery, retention and restore drills;
+- connection-pool/runtime sizing and observability;
+- authenticated principals/sessions;
+- workspace membership and remote authorization rules;
+- first external notification provider.
 
-- default legacy initialization;
-- explicit namespaced initialization;
-- mismatch rejection in both schema directions;
-- corrupt/unknown existing state rejection without mutation;
-- FastAPI startup refusal on mismatch;
-- CLI import and backend-aware verification;
-- legacy-only backup/restore boundary;
-- complete legacy snapshot → schema-v2 → FastAPI → Pages rehearsal.
-
-## Limitations
-
-- hosted state still uses branch-backed legacy SQLite test persistence;
-- there is no automatic migration/cutover coordinator;
-- namespaced backup/restore parity is not implemented;
-- there is no authenticated workspace/user authorization layer;
-- no deployment-grade production database adapter exists yet;
-- no real outbound notification provider exists.
+The next milestone isolates authenticated workspace authorization so persistence and identity policy are not changed in the same release.

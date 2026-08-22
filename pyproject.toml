@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "analystwatch"
-version = "0.13.0"
+version = "0.14.0"
 description = "Lightweight reliability monitoring for analyst-owned data sources"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,6 +14,7 @@ dependencies = [
   "jinja2>=3.1,<4",
   "openpyxl>=3.1,<4",
   "pandas>=2.2,<3",
+  "psycopg[binary]>=3.2,<4",
   "pydantic>=2.10,<3",
   "uvicorn>=0.32,<1",
 ]
