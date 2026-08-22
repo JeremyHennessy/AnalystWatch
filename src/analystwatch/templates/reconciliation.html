@@ -68,11 +68,17 @@
         <span>The counts on this page describe the scanned attempts only; AnalystWatch is not claiming the queue is exhaustive.</span>
       </div>
     {% endif %}
+    {% if queue.item_limit_reached %}
+      <div class="deployment-note compact">
+        <strong>Queue display limit reached.</strong>
+        <span>Showing the oldest {{ queue.item_limit }} of {{ queue.prepared_count }} Prepared attempts found in the scan.</span>
+      </div>
+    {% endif %}
 
     <section class="panel">
       <div class="section-title">
         <div><p class="section-kicker">AMBIGUOUS OUTCOMES</p><h2>Prepared attempts requiring evidence</h2></div>
-        <span>Oldest unresolved first</span>
+        <span>Showing {{ queue.items|length }} of {{ queue.prepared_count }} · oldest first</span>
       </div>
 
       {% if queue.items %}
