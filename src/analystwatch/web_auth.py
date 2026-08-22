@@ -23,6 +23,7 @@ SUPPORTED_AUTH_MODES: tuple[AuthMode, ...] = ("local", "signed-bearer")
 
 _OPERATOR_MUTATIONS = (
     re.compile(r"^/sources/[^/]+/(check|review)$"),
+    re.compile(r"^/reconciliation/[^/]+/resolve$"),
     re.compile(r"^/api/sources/[^/]+/check$"),
     re.compile(r"^/api/sources/[^/]+/observations/[^/]+/review$"),
     re.compile(r"^/api/notification-candidates/evaluate$"),
