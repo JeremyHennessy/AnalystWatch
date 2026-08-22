@@ -12,6 +12,7 @@ class SourceType(str, Enum):
     XLSX = "xlsx"
     JSON = "json"
     API = "api"
+    MICROSOFT_EXCEL = "microsoft_excel"
 
 
 class HealthStatus(str, Enum):
