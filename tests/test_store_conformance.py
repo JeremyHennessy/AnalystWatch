@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,16 +21,31 @@ from analystwatch.models import (
     SourceType,
 )
 from analystwatch.pages import build_pages_site
+from analystwatch.postgres_storage import PostgresStorage
 from analystwatch.storage import Storage
 from analystwatch.store import MonitoringStore
 from analystwatch.workspace import create_workspace_service
 
 
-@pytest.fixture(params=["sqlite", "memory"])
-def store(request: pytest.FixtureRequest, tmp_path: Path) -> MonitoringStore:
+@pytest.fixture(params=["sqlite", "memory", "postgres"])
+def store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[MonitoringStore]:
     if request.param == "sqlite":
-        return Storage(tmp_path / "state.db")
-    return MemoryStore()
+        yield Storage(tmp_path / "state.db")
+        return
+    if request.param == "memory":
+        yield MemoryStore()
+        return
+
+    dsn = os.environ.get("ANALYSTWATCH_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("ANALYSTWATCH_TEST_POSTGRES_DSN is not configured")
+    postgres = PostgresStorage(dsn, "local")
+    postgres.initialize()
+    postgres.clear_workspace()
+    try:
+        yield postgres
+    finally:
+        postgres.clear_workspace()
 
 
 def _frame() -> pd.DataFrame:
