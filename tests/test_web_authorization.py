@@ -123,13 +123,15 @@ def test_operator_can_operate_but_cannot_administer(tmp_path: Path) -> None:
     assert client.post("/api/sources/market/check", headers=headers).status_code == 200
     latest = app.state.workspace_storage.get_latest("market")
     assert latest is not None
+    # Authorization permits the Operator through; the existing domain rule then
+    # rejects reviewing this already-baselined Healthy observation with 409.
     assert (
         client.post(
             f"/api/sources/market/observations/{latest.id}/review",
             params={"state": "Reviewed"},
             headers=headers,
         ).status_code
-        == 200
+        == 409
     )
     assert (
         client.put(
