@@ -1,209 +1,240 @@
-# AnalystWatch Product v0.23 Architecture
+# AnalystWatch Product v0.24 Architecture
 
 ## Decision
 
-Product v0.23 adds deterministic analyst-defined Data Rules to the existing source evidence pipeline.
+Product v0.24 derives an explainable reliability scorecard from existing source observations without introducing a second Health classifier.
 
-The architectural rule is: **a Data Rule is another deterministic source finding, not a second Health system.**
-
-```text
-SourceDefinition + MonitoringConfig.data_rules
-        ↓
-existing connector ingestion
-        ↓
-pandas DataFrame
-        ↓
-existing profiling / source evidence
-        ↓
-Data Rule evaluation
-        ↓
-ordinary Finding[]
-        ↓
-existing health_from_findings(...)
-        ↓
-existing observations / incidents / notifications / reviews
-```
-
-No rule-specific observation, incident, notification, baseline or persistence state machine is introduced.
-
-## Rule model
-
-`MonitoringConfig.data_rules` contains typed `DataRule` objects.
-
-Supported kinds are:
-
-- `not_null` — requires `field` and accepts no range/allowed-value parameters;
-- `allowed_values` — requires `field` plus a non-empty unique allowed-value list;
-- `numeric_range` — requires `field` and at least one numeric minimum/maximum;
-- `row_count_range` — accepts integer row-count minimum/maximum and no field.
-
-Every rule has:
-
-- stable explicit `id`;
-- analyst-facing `name`;
-- failure `severity` of Warning or Critical;
-- optional `likely_impact`;
-- optional `suggested_investigation`.
-
-Pydantic validation fails closed for incompatible/missing parameters, invalid bounds, empty/duplicate allowed values, invalid severity and duplicate rule IDs within one monitoring configuration.
-
-## Deterministic evaluation boundary
-
-`data_rules.evaluate_data_rules(...)` receives the already-ingested DataFrame and configured rules.
-
-It does not execute SQL, user code or an expression language. It evaluates only the four typed operations above.
-
-Field-based failures produce aggregate evidence:
+The architectural rule is: **current Health remains authoritative; the trust badge mirrors it and historical scorecard metrics only explain recent reliability.**
 
 ```text
-{
-  violations: <count>,
-  rows: <row count>,
-  violation_pct: <bounded ratio>
-}
+existing Observation history
+        ↓
+existing Health + Finding evidence
+        ↓
+existing incident_transition(...)
+        ↓
+ReliabilityScorecardService
+        ↓
+ReliabilityScorecard
+        ├── current trust badge
+        ├── 7-day evidence
+        └── 30-day evidence
 ```
 
-The finding also retains the declared rule condition for authenticated/local investigation. Failing row values are never copied into the Data Rule finding.
+No scorecard-specific persistence, incident state machine, detector threshold or Health derivation is introduced.
 
-A missing configured rule field is itself deterministic rule-failure evidence.
+## Trust badge boundary
 
-## Preflight boundary
+`TrustBadge` is intentionally deterministic and non-numeric:
 
-Preflight uses the same ingested DataFrame that would be monitored and evaluates configured Data Rules before source acceptance.
+- no eligible observation → `Not monitored`;
+- current `Healthy` → `Trusted`;
+- current `Warning` → `Attention`;
+- current `Critical` → `Critical`.
 
-A configured rule failure makes preflight not ready, even when the rule's runtime failure severity is Warning. This is intentional: onboarding must not establish a newly declared contract around data that already violates that contract.
+Historical reliability cannot upgrade or downgrade the badge. Downstream blast radius cannot upgrade or downgrade the badge. There is no weighted or opaque reliability score.
 
-Preflight therefore remains the single source-acceptance boundary for connector availability, declared field/key/date contracts and Data Rules.
+## Reliability windows
 
-There is no Data-Rule-specific onboarding endpoint.
+`ReliabilityScorecard` contains explicit 7-day and 30-day `ReliabilityWindow` objects.
 
-## Runtime Health boundary
+Each window contains:
 
-During `MonitorService.check_source(...)`, deterministic Data Rule findings are appended to the existing finding collection before the existing `health_from_findings(...)` call.
+- `check_count`;
+- `successful_check_count` and `successful_check_pct`;
+- `healthy_count` and `healthy_check_pct`;
+- `warning_count`;
+- `critical_count`;
+- `incident_count`;
+- `recovered_incident_count`;
+- `stale_occurrence_count`;
+- `data_rule_failure_occurrence_count`;
+- `mttr_minutes` when recovery duration is actually known.
 
-This preserves one Health derivation:
+A successful check reuses the established AnalystWatch usability condition: the observation is available and has a profile.
 
-- no findings → Healthy;
-- one or more Warning findings and no Critical → Warning;
-- any Critical finding → Critical.
+Stale and Data Rule failures are counted once per observation, not once per individual finding. This keeps the metric interpretable as occurrence frequency rather than detector volume.
 
-Data Rules therefore reuse existing incident transition, notification candidate, delivery, review and baseline behavior without directly mutating those systems.
+## Incident and MTTR boundary
 
-A rule cannot separately mark an incident Open/Recovered or override another detector's severity.
+Scorecards reuse the existing `incident_transition(previous, current)` function. They do not implement a second incident model.
 
-## Analyst-facing UI boundary
+For ordered observations:
 
-The existing Add Source screen contains a typed Data Rule builder. It collects the same typed contract represented by `DataRule` and sends it through the normal preflight/onboarding API flow.
+- a transition into Warning/Critical can produce `Opened`;
+- Warning → Critical can produce `Escalated`;
+- unhealthy → Healthy can produce `Recovered`;
+- MTTR is calculated from a known opening timestamp to a known recovery timestamp.
 
-The existing generic source-detail Finding renderer is deliberately reused for runtime rule evidence. No separate rule finding-card architecture is introduced.
+Incident counts are attributed to the window containing the opening transition. Recoveries are attributed to the window containing the recovery transition.
 
-Authenticated/local source detail can show the private declared rule condition and custom guidance because it is an operator surface. The evaluator still omits failing row values.
+A recovery can therefore appear in a 7-day window for an incident opened before that window, while the opening still belongs to the 30-day window or earlier.
 
-## Public/static privacy boundary
+## Time semantics
 
-The public GitHub Pages snapshot is less privileged than the authenticated/local application.
+Scorecard timestamps must be timezone-aware and are normalized to UTC.
 
-For each source, fields referenced by configured Data Rules are treated as private public-export metadata. The static exporter therefore:
+Window boundaries are inclusive:
 
-1. Genericizes Data Rule findings:
-   - detector ID becomes generic `data_rule`;
-   - rule ID/name are removed;
-   - declared field, allowed set and numeric bounds are removed;
-   - custom impact/investigation text is replaced by generic guidance;
-   - aggregate current evidence such as violation count/rows/percentage remains.
-2. Removes Data-Rule-referenced fields from the exported `DatasetProfile.columns` map and recalculates the public profile column count.
-3. Clears public latest-date evidence if the latest-date field is itself a Data Rule field.
-4. Removes those fields from static-visible numeric-field, unique-key and row-diff configuration metadata.
-5. Removes those field names from row-diff key/changed-column metadata and genericizes a row-diff reason that would expose one.
-6. Genericizes ordinary detector findings when their serialized evidence would reveal a private Data Rule field.
+`as_of - N days <= observed_at <= as_of`
 
-This policy is deliberately **selective**. Unrelated public profile evidence remains visible so the public monitoring demo retains useful non-private context.
+Future observations are excluded from the scorecard at the requested `as_of` time.
 
-Existing row-diff raw samples/row snapshots remain excluded from public output by the earlier Product v0.18 privacy boundary.
+Mixed-source observation lists fail closed.
 
-## Single evidence pipeline
+## Adaptive bounded history
 
-Product v0.23 preserves the distinction between:
+A fixed observation limit is not sufficient for a 30-day scorecard because source cadences vary from minutes to days and an incident can begin before the window.
 
-- ingestion/provider evidence;
-- deterministic profile/detector evidence;
-- deterministic Data Rule evidence;
-- derived Health;
-- derived incident/delivery operations.
+`ReliabilityScorecardService` therefore computes an initial history request from the source's configured `monitor_interval_minutes` and expands the newest-first history when more context is needed.
 
-Data Rules do not reinterpret connector availability or source timestamps and do not alter existing detector thresholds.
+The service considers incident context complete when:
+
+- the store returns fewer observations than requested, proving no older retained history exists; or
+- the oldest eligible visible observation is older than the 30-day cutoff and Healthy, establishing a pre-window non-incident state.
+
+Otherwise the requested history limit doubles until the configured safety cap is reached. The default cap is 50,000 observations.
+
+If the cap is reached before enough earlier context exists, `ReliabilityScorecard.history_complete` is false.
+
+For incomplete history, the first visible unhealthy observation is not fabricated into an `Opened` transition. A later recovery may still be observed, but MTTR stays `None` when the actual opening timestamp is unknown.
+
+This is a claim-safety boundary: the product exposes partial history rather than manufacturing precision.
 
 ## Persistence
 
-No database migration is required for Product v0.23.
+Product v0.24 adds **no database migration**.
 
-`DataRule` is part of `MonitoringConfig`, which already persists inside `SourceDefinition` through the existing legacy/namespaced/PostgreSQL source-definition contract.
+Scorecards are derived on read from existing observations and existing source configuration. The adaptive service requires only:
 
-No separate Data Rule result table is introduced; runtime results are ordinary `Finding` objects inside normal observations.
+- `get_source(source_id)`;
+- newest-first `list_observations(source_id, limit=...)`.
 
-## Preserved connector architecture
+SQLite, namespaced storage and PostgreSQL therefore reuse their existing observation persistence unchanged.
 
-Product v0.23 does not change the connector semantics established through v0.22:
+## API boundary
 
-- CSV, XLSX, JSON and REST API ingestion;
-- Microsoft 365 Excel-table ingestion through Microsoft Graph delegated access;
-- Google Sheets range ingestion through Google Sheets API v4;
-- environment-backed request-header credential references;
-- provider availability evidence;
-- Google Sheets freshness limitation: values reads do not fabricate `source_modified_at` and expected refresh requires content-date evidence;
-- public Google Sheets location redaction to `Google Sheets · <A1 range>`.
+`GET /api/sources/{source_id}/scorecard` returns:
 
-No real Google Workspace credential was exercised in this repository work, so live Google tenant access is not claimed.
+```text
+ReliabilityScorecardResponse
+  scorecard: ReliabilityScorecard
+  downstream_impact:
+    total: int
+    counts: dict[asset_kind, int]
+```
+
+The downstream summary deliberately contains counts only. The scorecard route does not publish dependency asset names, report names, IDs or URLs.
+
+Dependency context is computed through the existing `DependencyService.blast_radius(...)` path after scorecard derivation and cannot affect the scorecard badge or metrics.
+
+The route is registered directly with `app.add_api_route(...)` to preserve the repository's existing `app.routes` regression contract; an intermediate FastAPI included-router object is not added.
+
+## Analyst-facing UI boundary
+
+The existing source-detail template includes one compact Reliability Scorecard panel after the established four-card source summary and before the existing detail layout.
+
+The panel reuses existing UI primitives (`panel`, `status`, `finding`, `profile-grid`) rather than introducing a new styling system or redesigning source detail.
+
+It displays:
+
+- current trust badge;
+- 7-day and 30-day check counts;
+- Healthy percentage;
+- successful-check percentage;
+- incident openings;
+- stale occurrences;
+- Data Rule failure occurrences;
+- MTTR in hours when known.
+
+The panel states explicitly that the badge mirrors current Health and historical metrics do not reclassify the source.
+
+When `history_complete` is false, the UI displays a partial-history safety note.
+
+## Dynamic rendering boundary
+
+The application creates one workspace-bound `ReliabilityScorecardService` during web configuration and stores it on `app.state.scorecard_service`.
+
+The scorecard API uses that same service. The Jinja environment receives a narrow `reliability_scorecard_for(source_id)` global for authenticated source-detail rendering, avoiding a broad rewrite of the established `web.py` source-view composition.
+
+## Static Pages boundary
+
+`build_pages_site(...)` creates a scorecard service over the existing static-storage boundary and uses the same deterministic derivation for source-detail HTML and public `state.json`.
+
+The exported scorecard contains aggregate reliability metrics only.
+
+Product v0.23's public Data Rule privacy boundary remains authoritative:
+
+- private rule IDs/names are not exposed;
+- referenced private fields are not exposed;
+- allowed sets/bounds are not exposed;
+- custom impact/investigation guidance is not exposed;
+- failing row values are not exposed.
+
+The scorecard may expose only the aggregate count that one or more Data Rule failures occurred in a given observation window.
+
+## Preserved v0.23 Data Rule architecture
+
+Product v0.24 does not modify the deterministic Data Rule engine:
+
+- `not_null`;
+- `allowed_values`;
+- `numeric_range`;
+- `row_count_range`.
+
+Data Rule findings still join ordinary source findings before the single existing `health_from_findings(...)` derivation. Scorecards consume the resulting observation evidence downstream.
 
 ## Preserved product architecture
 
-Product v0.23 does not change:
+Product v0.24 does not change:
 
-- detector thresholds or Healthy/Warning/Critical semantics;
+- connector ingestion semantics;
+- detector thresholds;
+- Healthy / Warning / Critical classification;
+- Data Rule evaluation semantics;
+- source preflight/onboarding acceptance;
 - baseline promotion/review;
-- Healthy-history reference behavior;
-- incident lifecycle;
+- incident transition semantics;
 - notification policy;
-- Prepared/Succeeded/Failed delivery semantics;
-- idempotency, retry or explicit reconciliation safety;
+- delivery attempt state/idempotency/retry/reconciliation;
 - Viewer / Operator / Admin authorization;
 - workspace persistence boundaries;
-- key-level row comparison semantics/retention;
+- row-diff retention/privacy;
 - Power BI Guard trust logic;
 - dependency graph traversal/storage;
 - Teams delivery state handling;
-- Delivery Ops reconciliation model;
-- approved source-detail UI layout.
+- Delivery Ops reconciliation;
+- approved finding/history/sidebar source-detail layout.
 
 ## Verification
 
-The functional/UI/privacy checkpoint `ba779642aeaa971ceda38fa1799ea4f2387904a2` passed:
+The functional/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe` passed:
 
 - Ruff;
 - compile/import checks;
 - PostgreSQL 16-backed suite;
-- **253 passed, 1 warning**;
-- live-source smoke #100.
+- **275 passed, 1 warning**.
 
 Coverage proves:
 
-- typed validation and duplicate-ID rejection;
-- all four deterministic rule kinds;
-- bounded field-level rule evidence;
-- preflight failure before onboarding acceptance;
-- runtime Warning and Critical Health integration;
-- reuse of existing incident/notification lifecycle;
-- no failing row values in Data Rule findings;
-- typed onboarding builder;
-- full authenticated/local rule evidence;
-- static rule-contract redaction;
-- selective profile/config/row-diff redaction for Data-Rule-referenced fields;
-- preservation of unrelated public profile evidence.
+- current Health → trust badge mapping;
+- 7-day / 30-day deterministic metrics;
+- inclusive time windows and future-observation exclusion;
+- incident/recovery/MTTR reuse of existing transition logic;
+- per-observation stale/Data Rule occurrence counting;
+- adaptive cadence-aware history loading;
+- bounded incomplete-history claim safety;
+- scorecard API 404 behavior;
+- count-only downstream impact privacy;
+- downstream impact cannot change the badge;
+- authenticated source-detail scorecard rendering;
+- static Pages/state scorecard parity;
+- public Data Rule contract remains private while aggregate failure occurrence is retained.
 
 Release-only version/documentation changes are gated again on their exact head before merge.
 
 ## Next architecture step
 
-Product v0.24 should derive deterministic reliability scorecards/trust badges from existing observation history, incident history and rule/detector outcomes. Any score must remain explainable back to the underlying evidence and must not become a second opaque Health classifier.
+Product v0.25 should implement preconfigured source packs as thin, typed presets over existing `MonitoringConfig` primitives. Packs should reduce onboarding configuration burden without creating a second source model or hiding assumptions.
 
-Product v0.25 should then add preconfigured source packs over existing configuration primitives. AI investigation, if added later, remains an explanation/summarization layer downstream of deterministic evidence.
+After v0.25, architecture priority shifts to real connection/credential lifecycle and hosted pilot validation. AI investigation, if added later, remains an explanation layer downstream of deterministic evidence and must not redefine Health.
