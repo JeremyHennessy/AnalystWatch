@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .auth_storage import MembershipStore
 from .models import (
     DeliveryAttempt,
     DeliveryReconciliationOutcome,
@@ -20,6 +21,7 @@ from .models import (
 )
 from .runtime_storage import DEFAULT_STORAGE_BACKEND, create_runtime_storage
 from .service import MonitorService
+from .web_auth import configure_web_authorization
 from .workspace import DEFAULT_WORKSPACE_ID, validate_workspace_id
 
 PACKAGE_DIR = Path(__file__).parent
@@ -51,6 +53,10 @@ def create_app(
     workspace_id: str | None = None,
     storage_backend: str | None = None,
     postgres_dsn: str | None = None,
+    auth_mode: str | None = None,
+    auth_secret: str | None = None,
+    membership_store: MembershipStore | None = None,
+    auth_db_path: str | Path | None = None,
 ) -> FastAPI:
     resolved_db = Path(db_path or os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"))
     resolved_workspace = validate_workspace_id(
@@ -78,7 +84,7 @@ def create_app(
     storage = runtime.monitoring_store
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.14.0")
+    app = FastAPI(title="AnalystWatch", version="0.15.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.storage_backend = runtime.backend
@@ -369,6 +375,17 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    configure_web_authorization(
+        app,
+        workspace_id=resolved_workspace,
+        storage_backend=runtime.backend,
+        db_path=resolved_db,
+        postgres_dsn=resolved_postgres_dsn,
+        auth_mode=auth_mode,
+        auth_secret=auth_secret,
+        membership_store=membership_store,
+        auth_db_path=auth_db_path,
+    )
     return app
 
 

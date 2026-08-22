@@ -1,167 +1,200 @@
-# AnalystWatch Core v0.14 Architecture
+# AnalystWatch Core v0.15 Architecture
 
 ## Decision
 
-Core v0.14 proves PostgreSQL as a deployment-grade persistence implementation behind the established `MonitoringStore` contract. It deliberately does **not** combine production persistence with remote authentication or switch the hosted runtime away from legacy SQLite.
+Core v0.15 establishes authenticated workspace authorization as an independent security boundary. It does not change detector behavior, monitoring persistence semantics, incident derivation, notification policy or delivery-attempt state-machine behavior.
 
-The deterministic monitoring engine, detector logic, incident derivation, notification policy and delivery-attempt state machine remain unchanged.
+The milestone deliberately separates three concerns:
 
-## Persistence implementations
+1. authentication establishes a principal;
+2. membership storage establishes workspace authority;
+3. authorization policy decides whether that role may perform the requested operation.
 
-The service contract is now exercised through three independent implementations:
+A remote caller never gains authority merely by supplying a `workspace_id`.
 
-- `Storage` / `WorkspaceStore` — legacy SQLite runtime;
-- `NamespacedStorage` — workspace-aware SQLite schema-v2 proof;
-- `PostgresStorage` — workspace-aware PostgreSQL implementation.
+## Authentication modes
 
-PostgreSQL lives in the database schema `analystwatch` and carries its own backend-specific schema metadata. PostgreSQL schema version numbers are not treated as interchangeable with the SQLite file schema versions.
-
-## PostgreSQL identity model
-
-The PostgreSQL tables preserve the workspace-aware identity semantics proven in v0.12.
-
-### Sources
-
-Primary key: `(workspace_id, id)`.
-
-### Observations
-
-Primary key: `(workspace_id, id)` with workspace-scoped source foreign key. A `BIGSERIAL` sequence supplies deterministic insertion ordering for timestamp ties.
-
-### Observation reviews
-
-Primary key: `(workspace_id, observation_id)` with workspace-scoped observation/source references.
-
-### Notification candidates
-
-Primary key: `(workspace_id, id)` with unique `(workspace_id, observation_id)` and a sequence for deterministic ordering.
-
-### Delivery attempts
-
-Primary key: `(workspace_id, id)` with:
-
-- unique `(workspace_id, idempotency_key)`;
-- unique `(workspace_id, candidate_id, adapter, attempt_number)`;
-- workspace-scoped candidate/source foreign keys;
-- insertion sequence for stable ordering.
-
-This permits different workspaces to reuse source, observation, candidate, attempt and idempotency identifiers safely in one PostgreSQL database.
-
-## Transaction and claim safety
-
-SQLite's verified claim path uses `BEGIN IMMEDIATE`. PostgreSQL uses row-level locking instead.
-
-For a delivery claim, `PostgresStorage`:
-
-1. selects the workspace candidate with `FOR UPDATE`;
-2. validates Eligible state;
-3. resolves idempotent replay within the workspace;
-4. checks the latest attempt and retry rules;
-5. inserts the new Prepared attempt under workspace-scoped uniqueness constraints;
-6. commits as one transaction.
-
-Concurrent different-key claims for the same candidate therefore serialize on the candidate row. The regression suite proves that one caller obtains the Prepared attempt while the other observes the resulting Prepared state rather than creating duplicate work.
-
-Prepared reconciliation likewise locks the attempt row with `FOR UPDATE` before applying Succeeded/Failed reconciliation evidence.
-
-## Runtime storage selection
-
-`runtime_storage.py` now supports:
+FastAPI supports two explicit modes:
 
 ```text
-legacy | namespaced | postgres
+local | signed-bearer
 ```
 
-`legacy` remains the default.
+`local` remains the default. It preserves the existing local CLI/dashboard and hosted GitHub monitor/Pages behavior and must not be described as authenticated multi-user operation.
 
-PostgreSQL selection is explicit and requires a separate DSN. `--db` continues to represent SQLite file state and is not overloaded as a PostgreSQL connection string.
+`signed-bearer` activates the v0.15 remote authorization boundary.
 
-CLI:
+## Provider-neutral authenticated principal
+
+`auth.py` defines:
+
+- `AuthenticatedPrincipal`;
+- `AuthenticationContext`;
+- `WorkspaceMembership`;
+- `WorkspaceRole`;
+- the structural `Authenticator` contract;
+- `SignedSessionAuthenticator` as the first concrete authentication seam.
+
+The signed session token contains a principal subject and optional expiry. It does not contain trusted workspace membership or role claims.
+
+`SignedSessionAuthenticator` uses HMAC-SHA256 and requires a secret of at least 32 bytes. This provides a deterministic authentication mechanism for the boundary proof; it is not an OAuth/OIDC/SSO provider and is not presented as a complete production login system.
+
+## Workspace membership persistence
+
+Authorization persistence is intentionally **not** added to `MonitoringStore`.
+
+`MonitoringStore` remains the persistence contract for monitored sources, observations, reviews, candidates and delivery attempts. Core v0.15 introduces a separate `MembershipStore` contract so RBAC changes cannot silently alter monitoring persistence semantics.
+
+Implementations:
+
+### SQLiteMembershipStore
+
+A separate SQLite sidecar database contains:
 
 ```text
---storage-backend postgres
---postgres-dsn <dsn>
+(workspace_id, user_id) -> role
 ```
 
-Environment:
+This is useful for local development and deterministic tests without modifying legacy or namespaced monitoring SQLite schemas.
+
+### PostgresMembershipStore
+
+The PostgreSQL implementation persists memberships in:
 
 ```text
-ANALYSTWATCH_STORAGE_BACKEND=postgres
-ANALYSTWATCH_POSTGRES_DSN=<dsn>
+analystwatch.workspace_memberships
 ```
 
-FastAPI accepts the same backend and DSN explicitly or through environment configuration.
+with primary key `(workspace_id, user_id)`. A principal can therefore hold distinct roles across different workspaces.
 
-Selecting PostgreSQL without a DSN is rejected before storage construction. With no backend setting, the hosted process still selects `legacy`.
+## Role model
 
-## PostgreSQL verification
+Core v0.15 intentionally keeps RBAC small.
 
-`PostgresStorage.verify_dsn(...)` verifies:
+### Viewer
 
-- database connectivity;
-- presence of AnalystWatch PostgreSQL metadata;
-- expected PostgreSQL schema version;
-- persisted storage identity;
-- source/observation/review/candidate/attempt counts.
+Read-only access to workspace reliability information.
 
-This is a backend verification contract, not a substitute for managed-database health monitoring or backup verification.
+### Operator
 
-## Workspace migration into PostgreSQL
+Viewer capabilities plus explicitly enumerated operational mutations, including checks, observation review, candidate evaluation and existing dry-run/reconciliation operations.
 
-`PostgresStorage.import_workspace(source_store)` copies one already-bound `MonitoringStore` into an empty PostgreSQL workspace.
+### Admin
 
-Current cutover rehearsal uses `NamespacedStorage` as the source after the separately proven legacy → namespaced migration step.
+Operator capabilities plus administrative mutations such as source configuration, baseline promotion and membership administration.
 
-The import preserves:
+The role order is explicit:
 
-- sources;
-- observations;
-- current baseline pointers;
-- observation reviews;
-- notification candidates;
-- delivery attempts, attempt numbers, states, ownership and idempotency keys.
+```text
+Viewer < Operator < Admin
+```
 
-The destination workspace must be empty, preventing an import from silently merging or overwriting existing production state.
+## Fail-closed request authorization
 
-The CLI command `import-postgres-state` makes this migration explicit. It requires `--storage-backend postgres`, a PostgreSQL DSN, a selected workspace and a schema-v2 source supplied through `--db`.
+`web_auth.py` is the centralized FastAPI security seam.
 
-## FastAPI and Pages proof
+In signed-bearer mode, each protected request follows:
 
-The migration regression imports operational schema-v2 state into PostgreSQL and then starts FastAPI explicitly with the PostgreSQL backend.
+1. verify the bearer token;
+2. obtain `AuthenticatedPrincipal`;
+3. look up that user in the app-bound workspace membership store;
+4. reject if membership is absent;
+5. classify the request's required role;
+6. reject if the role is insufficient;
+7. place an `AuthenticationContext` on `request.state`;
+8. only then execute the existing endpoint/domain behavior.
 
-The test verifies source history, candidate count and delivery-attempt count through normal API reads. The shared conformance suite also renders Pages from PostgreSQL, proving read surfaces do not depend on SQLite-specific behavior.
+Read methods require Viewer. Known operational mutations require Operator. Membership administration and known administrative mutations require Admin. Any mutation not explicitly classified fails closed as Admin-only.
 
-## CI boundary
+Only `/healthz` and static asset paths are intentionally outside this authenticated application boundary.
 
-The CI job now starts an actual PostgreSQL 16 service container. PostgreSQL is not mocked.
+## Workspace binding rule
 
-The existing cross-store conformance scenarios run against SQLite, `MemoryStore` and PostgreSQL. PostgreSQL-specific regressions add:
+The app remains constructed for a validated workspace. Signed-bearer authorization always looks up membership for that **bound workspace**.
 
-- DSN enforcement;
-- workspace-scoped duplicate IDs/idempotency;
-- concurrent candidate-claim serialization;
-- namespaced → PostgreSQL import continuity;
-- CLI import rehearsal;
-- FastAPI PostgreSQL startup/readback.
+A request body such as:
 
-The verified v0.14 functional checkpoint passed Ruff, compile and **143 deterministic tests** against PostgreSQL 16.
+```json
+{"workspace_id": "another-workspace"}
+```
 
-## Hosted deployment boundary
+cannot change the authorization target. Existing source-workspace validation also rejects source definitions whose workspace does not match the bound application workspace.
 
-No production PostgreSQL DSN is committed or configured by v0.14. The hosted `monitor-state` workflow remains on the unset/default `legacy` path.
+This yields the required authority chain:
 
-Post-merge `monitor-state` advancement remains the compatibility gate for the existing hosted runtime. It does **not** constitute a PostgreSQL production deployment.
+```text
+authenticated principal
+→ membership in bound workspace
+→ role
+→ capability
+→ operation
+```
 
-## Remaining production requirements
+rather than:
 
-PostgreSQL contract proof is only one layer of production readiness. Still separate:
+```text
+caller-supplied workspace_id
+→ operation
+```
 
-- managed PostgreSQL provisioning and secret injection;
-- formal migration/version rollout tooling;
-- managed backups, point-in-time recovery, retention and restore drills;
-- connection-pool/runtime sizing and observability;
-- authenticated principals/sessions;
-- workspace membership and remote authorization rules;
-- first external notification provider.
+## Membership administration
 
-The next milestone isolates authenticated workspace authorization so persistence and identity policy are not changed in the same release.
+Signed-bearer mode adds Admin-protected membership routes:
+
+```text
+GET /api/workspace/memberships
+PUT /api/workspace/memberships/{user_id}
+```
+
+The PUT operation writes a Viewer, Operator or Admin membership for the currently bound workspace only.
+
+### First-Admin bootstrap boundary
+
+There is deliberately no unauthenticated bootstrap endpoint. A fresh signed-bearer deployment therefore requires the first Admin membership to be provisioned by a trusted deployment/provisioning step.
+
+Core v0.15 does not invent a bypass merely to make bootstrap convenient. Formal deployment bootstrap and secret-management tooling belongs with Core v0.16 managed deployment.
+
+## Local and hosted compatibility
+
+`local` auth mode remains default. No existing CLI command is made to pretend it has authenticated remote identity.
+
+The GitHub-hosted monitoring/Pages workflow does not set `ANALYSTWATCH_AUTH_MODE=signed-bearer`; it therefore continues to operate through the existing local boundary. Likewise, hosted monitoring persistence remains default legacy SQLite until a separately verified managed deployment cutover.
+
+## Security regression coverage
+
+The v0.15 suite proves both positive and negative behavior:
+
+- signed token verification and tamper rejection;
+- token expiry enforcement when expiry is present;
+- SQLite membership persistence and workspace isolation;
+- PostgreSQL membership persistence and workspace isolation;
+- missing remote authentication returns 401;
+- authenticated non-members return 403;
+- Viewer cannot mutate state;
+- Operator can reach operational actions but cannot perform Admin-only actions;
+- Admin can manage membership and source configuration;
+- a workspace-A member cannot read or operate workspace B;
+- cross-workspace denial occurs before source/candidate/attempt resource lookup;
+- payload workspace spoofing does not override the bound workspace;
+- local mode preserves existing unauthenticated local reads.
+
+The verified functional checkpoint passed Ruff, compile and **156 deterministic tests** using the real PostgreSQL 16 CI service.
+
+## Explicit limitations
+
+Core v0.15 proves an authorization architecture, not a complete identity/deployment product.
+
+Not implemented here:
+
+- OAuth/OIDC login flow;
+- SSO or enterprise identity providers;
+- password/account lifecycle;
+- automatic first-Admin bootstrap;
+- managed PostgreSQL provisioning/cutover;
+- production secret manager integration;
+- billing;
+- real email/Teams notification delivery.
+
+## Next architecture step
+
+Core v0.16 should prove managed runtime deployment and the first real email adapter without bypassing either the v0.14 persistence contract or v0.15 authorization boundary. Deployment work should include trusted initial Admin provisioning, secrets, schema migration/startup validation, backups/PITR/restore rehearsal, connection/runtime health and observability. Email must extend the existing delivery-attempt abstraction and preserve Eligible-candidate, idempotency, claim, Prepared, success/failure, retry and reconciliation semantics.
