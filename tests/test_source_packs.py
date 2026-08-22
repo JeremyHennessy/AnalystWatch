@@ -17,7 +17,7 @@ def _required_mapping(pack_id: SourcePackId) -> dict[str, str]:
     return {role.id: f"field_{role.id}" for role in pack.roles if role.required}
 
 
-def test_catalog_contains_the_six_initial_analyst_workflow_packs_in_stable_order() -> None:
+def test_catalog_contains_initial_analyst_workflow_packs_in_stable_order() -> None:
     packs = list_source_packs()
 
     assert [pack.id for pack in packs] == [
@@ -71,7 +71,7 @@ def test_sales_pipeline_pack_materializes_existing_monitoring_config_primitives(
     assert config.data_rules[3].field == "PipelineStage"
 
 
-def test_optional_pack_roles_are_not_invented_when_user_does_not_map_them() -> None:
+def test_optional_roles_do_not_fall_back_to_all_column_row_diff() -> None:
     result = materialize_source_pack(
         SourcePackId.CUSTOMER_EXPORT,
         {
@@ -83,7 +83,7 @@ def test_optional_pack_roles_are_not_invented_when_user_does_not_map_them() -> N
     assert result.config.unique_keys == ["AccountNumber"]
     assert result.config.latest_date_field == "ExtractedAt"
     assert result.config.numeric_fields == []
-    assert result.config.row_diff_fields == []
+    assert result.config.row_diff_fields == ["AccountNumber"]
     assert all(rule.field not in {"status", "customer_value"} for rule in result.config.data_rules)
 
 
@@ -124,6 +124,7 @@ def test_every_pack_materializes_to_a_valid_monitoring_config(pack_id: SourcePac
     assert result.pack_id == pack_id
     assert result.config.unique_keys
     assert result.config.latest_date_field is not None
+    assert result.config.row_diff_fields
     assert any(rule.kind == DataRuleKind.ROW_COUNT_RANGE for rule in result.config.data_rules)
     assert result.config == MonitoringConfig.model_validate(result.config.model_dump())
 
