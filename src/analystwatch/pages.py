@@ -45,8 +45,30 @@ def _attempt_state_counts(attempts: list[DeliveryAttempt]) -> dict[str, int]:
     return counts
 
 
+def _public_finding(finding):
+    if not finding.detector.startswith("data_rule:"):
+        return finding
+    return finding.model_copy(
+        update={
+            "detector": "data_rule",
+            "description": "A configured Data Rule failed.",
+            "baseline_value": "Private configured Data Rule",
+            "why_flagged": "Current data did not satisfy a private configured Data Rule.",
+            "likely_impact": "A declared business-data invariant is not satisfied.",
+            "suggested_investigation": (
+                "Review the private Data Rule in AnalystWatch and inspect the upstream data."
+            ),
+        }
+    )
+
+
 def _public_observation(observation):
-    return strip_row_diff_raw_payloads(observation) if observation is not None else None
+    if observation is None:
+        return None
+    public = strip_row_diff_raw_payloads(observation)
+    return public.model_copy(
+        update={"findings": [_public_finding(finding) for finding in public.findings]}
+    )
 
 
 def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -> dict[str, object]:
