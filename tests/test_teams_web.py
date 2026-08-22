@@ -43,6 +43,11 @@ def _seed(app) -> None:
                 severity=HealthStatus.CRITICAL,
                 detector="unique_keys",
                 description="Duplicate order IDs were detected.",
+                current_value=4,
+                baseline_value=0,
+                why_flagged="Configured order_id key is no longer unique.",
+                likely_impact="Orders may be double counted.",
+                suggested_investigation="Inspect the export join and duplicate rows.",
             )
         ],
     )
