@@ -35,7 +35,7 @@ def _source(path: Path, *, severity: HealthStatus, notify: bool = False) -> Sour
                     field="status",
                     allowed_values=["Approved"],
                     severity=severity,
-                    likely_impact="Unexpected status values can alter business workflows.",
+                    likely_impact="Unapproved status values can alter business workflows.",
                     suggested_investigation="Inspect the upstream status mapping.",
                 )
             ],
