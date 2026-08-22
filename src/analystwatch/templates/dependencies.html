@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dependency Map · AnalystWatch</title>
+  <link rel="stylesheet" href="{{ static_css }}">
+</head>
+<body>
+  <main class="shell app-shell">
+    <nav class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark">AW</div>
+        <div><strong>AnalystWatch</strong><span>Impact intelligence</span></div>
+      </div>
+      <div class="topnav">
+        <a href="{{ home_href }}">SourceGuard</a>
+        <a href="/power-bi">Power BI Guard</a>
+        <a class="active" href="/dependencies">Dependency Map</a>
+      </div>
+    </nav>
+
+    <header class="product-hero">
+      <div>
+        <p class="eyebrow">IMPACT INTELLIGENCE · DEPENDENCIES</p>
+        <h1>What breaks downstream if this changes?</h1>
+        <p class="hero-copy">Map explicit and discovered relationships from monitored sources through workbooks, semantic models, reports and other business assets.</p>
+      </div>
+      <div class="hero-status">
+        {% if edges %}
+          <span class="status status-healthy"><span class="dot"></span>{{ asset_count }} assets · {{ edges|length }} relationships</span>
+        {% else %}
+          <span class="status status-not-checked"><span class="dot"></span>No dependency relationships yet</span>
+        {% endif %}
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="section-title">
+        <div><p class="section-kicker">BLAST RADIUS</p><h2>Upstream roots</h2></div>
+        <span>{{ roots|length }} root asset{{ '' if roots|length == 1 else 's' }}</span>
+      </div>
+      {% if roots %}
+        <div class="source-list product-source-list">
+          {% for item in roots %}
+          <div class="source-row product-source-row">
+            <div class="source-identity">
+              <span class="source-icon">{{ item.asset.kind.value[:2]|upper }}</span>
+              <div>
+                <strong>{% if item.asset.href %}<a href="{{ item.asset.href }}">{{ item.asset.name }}</a>{% else %}{{ item.asset.name }}{% endif %}</strong>
+                <span class="source-meta">{{ item.asset.kind.value|replace('_', ' ')|title }} · {{ item.blast_radius.total }} downstream asset{{ '' if item.blast_radius.total == 1 else 's' }}</span>
+                {% if item.blast_radius.downstream %}
+                  <span class="source-location">{{ item.blast_radius.downstream|map(attribute='name')|join(' · ') }}</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="source-signal"><span class="status status-not-checked"><span class="dot"></span>{{ item.blast_radius.total }} impacted</span></div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty product-empty">
+          <div class="empty-icon">→</div>
+          <h3>No dependency map yet</h3>
+          <p>Add explicit dependency edges through the API, or run a configured Power BI Guard check to discover source → semantic model → report relationships.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <div><p class="section-kicker">RELATIONSHIPS</p><h2>Dependency evidence</h2></div>
+        <span>Workspace {{ workspace_id }}</span>
+      </div>
+      {% if edges %}
+        <div class="source-list product-source-list">
+          {% for edge in edges %}
+          <div class="source-row product-source-row">
+            <div class="source-identity">
+              <span class="source-icon">→</span>
+              <div>
+                <strong>{{ edge.upstream.name }} → {{ edge.downstream.name }}</strong>
+                <span class="source-meta">{{ edge.relationship }} · {{ 'Discovered' if edge.discovered else 'Explicit' }}</span>
+                <span class="source-location">{{ edge.upstream.kind.value|replace('_', ' ') }} → {{ edge.downstream.kind.value|replace('_', ' ') }}</span>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="healthy-note"><strong>No relationships recorded.</strong><p>The dependency layer is intentionally empty until evidence or an explicit relationship is supplied.</p></div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
