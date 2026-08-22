@@ -15,7 +15,10 @@ def test_onboarding_exposes_google_sheets_connection_fields(tmp_path: Path) -> N
     assert "A1 range" in response.text
     assert "Header row" in response.text
     assert "Google token environment variable" in response.text
-    assert "Google Sheets range reads do not provide a sheet modification timestamp" in response.text
+    assert (
+        "Google Sheets range reads do not provide a sheet modification timestamp"
+        in response.text
+    )
     assert "The secret value is never saved by AnalystWatch" in response.text
     assert "google_sheets" in response.text
     assert "ANALYSTWATCH_GOOGLE_AUTHORIZATION" in response.text
