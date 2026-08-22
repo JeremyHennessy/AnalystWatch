@@ -330,12 +330,20 @@ def create_app(
 
     @app.post("/api/delivery-attempts/{attempt_id}/reconcile")
     def api_reconcile_delivery_attempt(
+        request: Request,
         attempt_id: str,
         outcome: DeliveryReconciliationOutcome,
         note: str,
     ):
+        auth_context = getattr(request.state, "auth_context", None)
+        reviewer = auth_context.principal.user_id if auth_context is not None else None
         try:
-            return service.reconcile_delivery_attempt(attempt_id, outcome, note)
+            return service.reconcile_delivery_attempt(
+                attempt_id,
+                outcome,
+                note,
+                reviewer=reviewer,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
