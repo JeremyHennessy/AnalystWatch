@@ -5,7 +5,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from analystwatch.dependencies import AssetKind, AssetRef, DependencyEdge
-from analystwatch.models import DatasetProfile, HealthStatus, Observation, SourceDefinition, SourceType
+from analystwatch.models import (
+    DatasetProfile,
+    HealthStatus,
+    Observation,
+    SourceDefinition,
+    SourceType,
+)
 from analystwatch.web import create_app
 
 NOW = datetime.now(timezone.utc)
