@@ -14,6 +14,7 @@ from .models import (
     ObservationReview,
     SourceDefinition,
 )
+from .row_diff import strip_row_diff_raw_payloads
 
 
 class MemoryStore:
@@ -137,6 +138,19 @@ class MemoryStore:
             indexed = [(index, self._observations[item]) for index, item in enumerate(ids)]
             indexed.sort(key=lambda pair: (pair[1].observed_at, pair[0]), reverse=True)
             return [self._with_baseline_marker(item) for _, item in indexed[:limit]]  # type: ignore[list-item]
+
+    def prune_row_diff_payloads(
+        self,
+        source_id: str,
+        keep_observation_ids: set[str],
+    ) -> None:
+        with self._lock:
+            for observation_id in self._observation_ids.get(source_id, []):
+                if observation_id in keep_observation_ids:
+                    continue
+                observation = self._observations[observation_id]
+                if observation.row_snapshot is not None or observation.row_diff is not None:
+                    self._observations[observation_id] = strip_row_diff_raw_payloads(observation)
 
     def save_review(self, review: ObservationReview) -> ObservationReview:
         with self._lock:
