@@ -1,200 +1,128 @@
-# AnalystWatch Core v0.15 Architecture
+# AnalystWatch Core v0.16 Architecture
 
 ## Decision
 
-Core v0.15 establishes authenticated workspace authorization as an independent security boundary. It does not change detector behavior, monitoring persistence semantics, incident derivation, notification policy or delivery-attempt state-machine behavior.
+Core v0.16 extends the verified v0.15 security boundary in two controlled directions: managed-runtime readiness and the first live email delivery adapter. It does not change deterministic detector logic, incident derivation, notification-candidate eligibility or the established delivery-attempt lifecycle.
 
-The milestone deliberately separates three concerns:
+The architecture keeps infrastructure readiness and external side effects separable so neither can be inferred from the other.
 
-1. authentication establishes a principal;
-2. membership storage establishes workspace authority;
-3. authorization policy decides whether that role may perform the requested operation.
+## Managed runtime boundary
 
-A remote caller never gains authority merely by supplying a `workspace_id`.
+`managed_runtime.py` defines an environment-backed deployment contract for:
 
-## Authentication modes
+- managed PostgreSQL DSN;
+- bound workspace;
+- signed-bearer authentication secret;
+- trusted bootstrap Admin principal;
+- Resend API key;
+- sender and recipients;
+- public application base URL.
 
-FastAPI supports two explicit modes:
+Secrets are consumed at runtime and are not written to repository configuration, monitoring state or public Pages output.
 
-```text
-local | signed-bearer
-```
+`prepare_managed_runtime(...)` performs the startup sequence:
 
-`local` remains the default. It preserves the existing local CLI/dashboard and hosted GitHub monitor/Pages behavior and must not be described as authenticated multi-user operation.
+1. construct workspace-bound `PostgresStorage`;
+2. initialize the AnalystWatch PostgreSQL schema;
+3. initialize `PostgresMembershipStore`;
+4. look up the configured bootstrap principal;
+5. create that principal as Admin only when absent;
+6. refuse startup if that existing principal is not Admin;
+7. verify AnalystWatch PostgreSQL schema/storage identity;
+8. return non-secret readiness counts.
 
-`signed-bearer` activates the v0.15 remote authorization boundary.
+This is the trusted first-Admin provisioning path promised by v0.15. No unauthenticated web bootstrap endpoint is introduced.
 
-## Provider-neutral authenticated principal
+## Managed PostgreSQL validation
 
-`auth.py` defines:
+A dedicated external managed PostgreSQL validation project was provisioned for v0.16 without changing the hosted GitHub runtime.
 
-- `AuthenticatedPrincipal`;
-- `AuthenticationContext`;
-- `WorkspaceMembership`;
-- `WorkspaceRole`;
-- the structural `Authenticator` contract;
-- `SignedSessionAuthenticator` as the first concrete authentication seam.
+The validation environment contains the same AnalystWatch PostgreSQL schema-v1 contract used in CI, including monitoring state, delivery attempts and workspace memberships. Schema version and persistent storage identity were verified after initialization.
 
-The signed session token contains a principal subject and optional expiry. It does not contain trusted workspace membership or role claims.
+### Recovery rehearsal
 
-`SignedSessionAuthenticator` uses HMAC-SHA256 and requires a secret of at least 32 bytes. This provides a deterministic authentication mechanism for the boundary proof; it is not an OAuth/OIDC/SSO provider and is not presented as a complete production login system.
+Recovery was tested on an isolated managed-database branch:
 
-## Workspace membership persistence
+1. clone the validation database state;
+2. verify storage identity, validation source and Admin membership on the clone;
+3. deliberately remove validation state from the clone;
+4. confirm the clone is degraded;
+5. reset the clone from its parent state;
+6. verify the original storage identity, source and Admin membership are restored;
+7. delete the temporary recovery branches.
 
-Authorization persistence is intentionally **not** added to `MonitoringStore`.
+The primary validation branch was not damaged during this test. This proves provider recovery mechanics for the validation environment; it is not evidence that the GitHub-hosted application has been cut over to managed PostgreSQL.
 
-`MonitoringStore` remains the persistence contract for monitored sources, observations, reviews, candidates and delivery attempts. Core v0.15 introduces a separate `MembershipStore` contract so RBAC changes cannot silently alter monitoring persistence semantics.
+## Delivery mode extension
 
-Implementations:
-
-### SQLiteMembershipStore
-
-A separate SQLite sidecar database contains:
-
-```text
-(workspace_id, user_id) -> role
-```
-
-This is useful for local development and deterministic tests without modifying legacy or namespaced monitoring SQLite schemas.
-
-### PostgresMembershipStore
-
-The PostgreSQL implementation persists memberships in:
+`DeliveryMode` now contains:
 
 ```text
-analystwatch.workspace_memberships
+dry-run | live
 ```
 
-with primary key `(workspace_id, user_id)`. A principal can therefore hold distinct roles across different workspaces.
+The existing dry-run path is preserved unchanged. Live email delivery reuses the existing persistence contract rather than introducing a second notification state machine.
 
-## Role model
+## Resend email adapter
 
-Core v0.15 intentionally keeps RBAC small.
+`email_delivery.py` adds `ResendEmailAdapter` and `EmailDestination`.
 
-### Viewer
+A live email operation resolves the existing candidate, source and observation and then calls the existing atomic `claim_delivery_attempt(...)` storage operation. Only an Eligible candidate can therefore be attempted.
 
-Read-only access to workspace reliability information.
+The provider request carries the same AnalystWatch idempotency key in the Resend `Idempotency-Key` header.
 
-### Operator
+### State ordering
 
-Viewer capabilities plus explicitly enumerated operational mutations, including checks, observation review, candidate evaluation and existing dry-run/reconciliation operations.
+The existing storage claim creates a Prepared attempt. Before network I/O, the attempt is updated to `DeliveryMode.LIVE`. This means persisted state records that an external side effect was about to occur before the provider is contacted.
 
-### Admin
+### Outcome handling
 
-Operator capabilities plus administrative mutations such as source configuration, baseline promotion and membership administration.
-
-The role order is explicit:
+Provider acceptance:
 
 ```text
-Viewer < Operator < Admin
+Prepared/live → Succeeded/live
 ```
 
-## Fail-closed request authorization
+with a non-secret provider message-ID summary.
 
-`web_auth.py` is the centralized FastAPI security seam.
-
-In signed-bearer mode, each protected request follows:
-
-1. verify the bearer token;
-2. obtain `AuthenticatedPrincipal`;
-3. look up that user in the app-bound workspace membership store;
-4. reject if membership is absent;
-5. classify the request's required role;
-6. reject if the role is insufficient;
-7. place an `AuthenticationContext` on `request.state`;
-8. only then execute the existing endpoint/domain behavior.
-
-Read methods require Viewer. Known operational mutations require Operator. Membership administration and known administrative mutations require Admin. Any mutation not explicitly classified fails closed as Admin-only.
-
-Only `/healthz` and static asset paths are intentionally outside this authenticated application boundary.
-
-## Workspace binding rule
-
-The app remains constructed for a validated workspace. Signed-bearer authorization always looks up membership for that **bound workspace**.
-
-A request body such as:
-
-```json
-{"workspace_id": "another-workspace"}
-```
-
-cannot change the authorization target. Existing source-workspace validation also rejects source definitions whose workspace does not match the bound application workspace.
-
-This yields the required authority chain:
+Definitive HTTP/provider rejection:
 
 ```text
-authenticated principal
-→ membership in bound workspace
-→ role
-→ capability
-→ operation
+Prepared/live → Failed/live
 ```
 
-rather than:
+Transport uncertainty:
 
 ```text
-caller-supplied workspace_id
-→ operation
+Prepared/live → Prepared/live
 ```
 
-## Membership administration
+The last case is intentional. A timeout or connection failure can happen after a provider accepted the request, so AnalystWatch does not blindly mark the attempt Failed and allow a duplicate retry. Existing explicit reconciliation remains required.
 
-Signed-bearer mode adds Admin-protected membership routes:
+Same-key replay returns the stored attempt without a second provider request.
 
-```text
-GET /api/workspace/memberships
-PUT /api/workspace/memberships/{user_id}
-```
+## Email content
 
-The PUT operation writes a Viewer, Operator or Admin membership for the currently bound workspace only.
+The first email template remains intentionally simple and analyst-oriented. It includes source/workspace, transition, severity, observed time, candidate reason, deterministic findings, likely impact, suggested investigation and a source-detail link.
 
-### First-Admin bootstrap boundary
+It does not include API credentials, PostgreSQL DSNs, authorization headers or idempotency keys.
 
-There is deliberately no unauthenticated bootstrap endpoint. A fresh signed-bearer deployment therefore requires the first Admin membership to be provisioned by a trusted deployment/provisioning step.
+## Verification boundary
 
-Core v0.15 does not invent a bypass merely to make bootstrap convenient. Formal deployment bootstrap and secret-management tooling belongs with Core v0.16 managed deployment.
+Core v0.16 has three distinct evidence levels:
 
-## Local and hosted compatibility
+1. **deterministic provider integration tests** — mocked HTTP verifies request shape, idempotency, success/rejection/uncertainty behavior and secret redaction;
+2. **managed PostgreSQL validation** — an external managed database and isolated recovery rehearsal prove infrastructure/storage mechanics;
+3. **real email side effect** — requires a real Resend credential, verified sender and provider acceptance. This is not claimed merely from mocked tests.
 
-`local` auth mode remains default. No existing CLI command is made to pretend it has authenticated remote identity.
+The v0.16 functional checkpoint passed Ruff, compile, **164 tests** against PostgreSQL 16 CI, and live-source smoke.
 
-The GitHub-hosted monitoring/Pages workflow does not set `ANALYSTWATCH_AUTH_MODE=signed-bearer`; it therefore continues to operate through the existing local boundary. Likewise, hosted monitoring persistence remains default legacy SQLite until a separately verified managed deployment cutover.
+## Hosted compatibility
 
-## Security regression coverage
+The existing GitHub Pages monitor remains legacy SQLite and local auth. No production PostgreSQL DSN, signed-bearer deployment secret or email provider secret is added to that workflow by v0.16.
 
-The v0.15 suite proves both positive and negative behavior:
-
-- signed token verification and tamper rejection;
-- token expiry enforcement when expiry is present;
-- SQLite membership persistence and workspace isolation;
-- PostgreSQL membership persistence and workspace isolation;
-- missing remote authentication returns 401;
-- authenticated non-members return 403;
-- Viewer cannot mutate state;
-- Operator can reach operational actions but cannot perform Admin-only actions;
-- Admin can manage membership and source configuration;
-- a workspace-A member cannot read or operate workspace B;
-- cross-workspace denial occurs before source/candidate/attempt resource lookup;
-- payload workspace spoofing does not override the bound workspace;
-- local mode preserves existing unauthenticated local reads.
-
-The verified functional checkpoint passed Ruff, compile and **156 deterministic tests** using the real PostgreSQL 16 CI service.
-
-## Explicit limitations
-
-Core v0.15 proves an authorization architecture, not a complete identity/deployment product.
-
-Not implemented here:
-
-- OAuth/OIDC login flow;
-- SSO or enterprise identity providers;
-- password/account lifecycle;
-- automatic first-Admin bootstrap;
-- managed PostgreSQL provisioning/cutover;
-- production secret manager integration;
-- billing;
-- real email/Teams notification delivery.
+A future production deployment must explicitly configure managed runtime values and should retain a rollback path until the managed application deployment itself has been verified.
 
 ## Next architecture step
 
-Core v0.16 should prove managed runtime deployment and the first real email adapter without bypassing either the v0.14 persistence contract or v0.15 authorization boundary. Deployment work should include trusted initial Admin provisioning, secrets, schema migration/startup validation, backups/PITR/restore rehearsal, connection/runtime health and observability. Email must extend the existing delivery-attempt abstraction and preserve Eligible-candidate, idempotency, claim, Prepared, success/failure, retry and reconciliation semantics.
+Product v0.17 should add the SharePoint / OneDrive Excel connector through the existing ingestion/profile/detector pipeline. Microsoft authentication and workbook/table selection should remain connector concerns; they must not fork the deterministic health/incident architecture.
