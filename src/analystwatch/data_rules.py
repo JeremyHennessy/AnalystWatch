@@ -83,9 +83,15 @@ def evaluate_data_rules(frame: pd.DataFrame, rules: list[DataRule]) -> list[Find
             above = rule.maximum is not None and row_count > rule.maximum
             if below or above:
                 if below:
-                    why = f"Row count {row_count} is below the configured minimum {int(rule.minimum)}."
+                    why = (
+                        f"Row count {row_count} is below the configured minimum "
+                        f"{int(rule.minimum)}."
+                    )
                 else:
-                    why = f"Row count {row_count} exceeds the configured maximum {int(rule.maximum)}."
+                    why = (
+                        f"Row count {row_count} exceeds the configured maximum "
+                        f"{int(rule.maximum)}."
+                    )
                 findings.append(_row_count_failure(rule, row_count, why))
             continue
 
