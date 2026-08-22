@@ -72,54 +72,48 @@ Still not implied by v0.16: production app cutover to managed PostgreSQL or a ve
 
 ## Product v0.16.1 — UI & Product Foundation — complete
 
-Reworked the existing user-visible shell without changing monitoring behavior:
+Reworked the existing user-visible shell without changing monitoring behavior: workspace reliability overview, health KPIs, needs-attention triage, clearer sources, incident-first detail, visual history, progressive disclosure and responsive/static Pages parity. The UI change was limited to templates, shared CSS and UI regression coverage. Hosted monitoring state advanced after merge.
 
-- workspace reliability overview and health KPIs
-- needs-attention triage queue
-- clearer monitored-source list
-- incident-first source detail hierarchy
-- visual health history
-- compact profile/review/baseline actions
-- monitoring contract under progressive disclosure
-- responsive/mobile improvements
-- static Pages parity
-- preservation of established public-output safety/status guarantees
+## Product v0.17 — Microsoft 365 Excel connector — complete
 
-The UI change was limited to templates, shared CSS and UI regression coverage. Hosted monitoring state advanced after merge.
+Added table-first SharePoint / OneDrive Excel ingestion through delegated Microsoft Graph access, DriveItem modified-time/ETag evidence, paginated table rows, normal preflight/onboarding reuse and public identifier redaction. Clean gate: **172 tests**, Ruff/compile and PostgreSQL 16 CI green, live-source smoke green. No real Microsoft tenant credential or application-permission workbook access was claimed.
 
-## Product v0.17 — Microsoft 365 Excel connector — current release candidate
+## Product v0.18 — Row-level / key-level change analysis — current release candidate
 
-Implemented and verified on the functional checkpoint:
+Implemented and verified on the frozen functional checkpoint:
 
-- `microsoft_excel` source type
-- internal `m365://<drive>/<item>?table=<name>` descriptor
-- optional worksheet and page-size selectors
-- delegated Microsoft Graph Authorization via existing environment-backed header references
-- DriveItem modified-time and ETag evidence
-- Excel Table column/header discovery
-- paged Excel Table row ingestion
-- normalization into the existing DataFrame/profile/detector pipeline
-- preflight and normal source onboarding reuse
-- Microsoft 365 fields in the analyst-facing onboarding page
-- no token value persisted in the source definition
-- public Pages/state redaction of drive ID, workbook item ID and token environment-variable name
-- deterministic Graph pagination/error/auth/preflight tests
-- clean functional checkpoint: **172 tests**, Ruff/compile green, PostgreSQL 16 CI green
+- configured-key row snapshots with composite-key support
+- previous-successful and active-baseline comparisons
+- Added / Removed / Changed / Unchanged counts
+- per-column changed-value counts
+- bounded added/removed/changed key examples
+- optional `row_diff_fields` allowlist
+- configurable row/column/serialized-byte safety limits
+- explicit refusal for missing, null, duplicate or oversized comparison keys/data
+- row-diff evidence does not participate in Health classification
+- active-baseline + bounded recent-successful snapshot retention
+- raw sample pruning after retention expiry
+- retention conformance across legacy SQLite, namespaced SQLite, MemoryStore and PostgreSQL
+- public Pages/state remove row snapshots and row-diff sample payloads while retaining aggregate evidence
+- existing detector-finding public evidence policy remains unchanged
+- analyst-facing **Key-level changes** source-detail section
+- static Pages show aggregate row changes only; bounded examples remain dynamic/authenticated-local
+- clean functional checkpoint: **183 tests**, Ruff/compile green, PostgreSQL 16 CI green
 - live-source smoke green on the unchanged public-source set
 
-Explicitly not claimed by v0.17:
+Explicit non-goals preserved:
 
-- no real Microsoft tenant credential was used in this repository session;
-- no live SharePoint/OneDrive tenant check was performed;
-- no application-permission support is claimed for the Excel workbook/table Graph APIs used here;
-- the full `Connect Microsoft 365 → browse site/drive/workbook/table` OAuth selection flow is not yet implemented;
-- no detector, storage, incident or notification semantics changed.
+- no detector threshold changes;
+- no unlimited raw-data archive;
+- no database schema migration;
+- no Power BI work;
+- no AI interpretation;
+- no notification-state changes.
 
-## Product roadmap after v0.17
+## Product roadmap after v0.18
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.18 — row-level / key-level change analysis
 - Product v0.19 — Power BI Guard
 - Product v0.20 — Microsoft Teams + lightweight dependency graph / blast radius
 - Product v0.21 — reconciliation monitors

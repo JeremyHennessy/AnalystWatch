@@ -68,6 +68,58 @@
 
       <section class="detail-layout">
         <div class="detail-main">
+          {% if latest.row_diff %}
+          <section class="panel" id="row-changes">
+            <div class="section-title">
+              <div><p class="section-kicker">WHAT CHANGED AT ROW LEVEL?</p><h2>Key-level changes</h2></div>
+              <span>{% if latest.row_diff.key_fields %}Key: {{ latest.row_diff.key_fields|join(', ') }}{% else %}No key configured{% endif %}</span>
+            </div>
+            {% if not latest.row_diff.snapshot_available %}
+              <div class="healthy-note"><strong>Row comparison not available for this check.</strong><p>{{ latest.row_diff.snapshot_reason }}</p></div>
+            {% elif not latest.row_diff.previous and not latest.row_diff.baseline %}
+              <div class="healthy-note"><strong>Comparison baseline captured.</strong><p>The next successful observation can show added, removed and changed keys.</p></div>
+            {% else %}
+              {% for comparison in [latest.row_diff.previous, latest.row_diff.baseline] if comparison %}
+              <article class="finding">
+                <div class="finding-top"><strong>Compare with {{ comparison.reference_label }}</strong><span>{{ comparison.changed_count }} changed</span></div>
+                <div class="profile-grid">
+                  <div><span>Added</span><strong>{{ comparison.added_count }}</strong></div>
+                  <div><span>Removed</span><strong>{{ comparison.removed_count }}</strong></div>
+                  <div><span>Changed</span><strong>{{ comparison.changed_count }}</strong></div>
+                  <div><span>Unchanged</span><strong>{{ comparison.unchanged_count }}</strong></div>
+                </div>
+                {% if comparison.changed_columns %}
+                <div class="finding-callout">
+                  <b>Most affected columns</b>
+                  <p>{% for column, count in comparison.changed_columns.items() %}<strong>{{ column }}</strong> {{ count }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+                </div>
+                {% endif %}
+                {% if not static_mode and (comparison.added_samples or comparison.removed_samples or comparison.changed_samples) %}
+                <details class="contract-details">
+                  <summary><span><span class="section-kicker">BOUNDED EXAMPLES</span><strong>Show changed keys</strong></span><span>View</span></summary>
+                  {% if comparison.changed_samples %}
+                  <div class="finding-callout"><b>Changed rows</b>
+                    {% for sample in comparison.changed_samples %}
+                    <p><strong>{{ sample.key }}</strong> — {% for column, change in sample.changes.items() %}{{ column }}: {{ change.previous }} → {{ change.current }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                  {% if comparison.added_samples %}
+                  <div class="finding-callout"><b>Added rows</b>{% for sample in comparison.added_samples %}<p><strong>{{ sample.key }}</strong></p>{% endfor %}</div>
+                  {% endif %}
+                  {% if comparison.removed_samples %}
+                  <div class="finding-callout"><b>Removed rows</b>{% for sample in comparison.removed_samples %}<p><strong>{{ sample.key }}</strong></p>{% endfor %}</div>
+                  {% endif %}
+                </details>
+                {% elif static_mode %}
+                <p class="muted">Public Pages show aggregate row-change evidence only. Row keys and sample values are kept private.</p>
+                {% endif %}
+              </article>
+              {% endfor %}
+            {% endif %}
+          </section>
+          {% endif %}
+
           <section class="panel" id="changes">
             <div class="section-title"><div><p class="section-kicker">WHAT CHANGED?</p><h2>Reliability findings</h2></div><span>{{ latest.findings|length }} finding{{ '' if latest.findings|length == 1 else 's' }}</span></div>
             {% if latest.findings %}
@@ -116,6 +168,8 @@
         <div><dt>Freshness field</dt><dd>{% if source.config.latest_date_field %}{{ source.config.latest_date_field }}{% elif source.config.infer_latest_date_field %}Conservative inference{% else %}Not configured{% endif %}</dd></div>
         <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
         <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
+        <div><dt>Row comparison fields</dt><dd>{{ source.config.row_diff_fields|join(', ') if source.config.row_diff_fields else 'All columns within safety limits' }}</dd></div>
+        <div><dt>Row snapshot retention</dt><dd>{{ source.config.row_diff_snapshot_retention }} recent successful snapshot{{ '' if source.config.row_diff_snapshot_retention == 1 else 's' }} plus active baseline</dd></div>
         <div><dt>Notification policy</dt><dd>{% if source.config.notification_transitions %}Eligible transitions: {% for transition in source.config.notification_transitions %}{{ transition.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}No transitions enabled; candidates are suppressed{% endif %}</dd></div>
         <div><dt>Delivery retry delay</dt><dd>{% if source.config.delivery_retry_minutes %}{{ source.config.delivery_retry_minutes }} min after Failed{% else %}Immediate after Failed{% endif %}</dd></div>
         <div><dt>Request headers</dt><dd>{% if source.config.request_header_env %}{% if static_mode %}{{ source.config.request_header_env|length }} environment-backed header{{ '' if source.config.request_header_env|length == 1 else 's' }} configured; values and environment-variable names are not published{% else %}{% for header, env_name in source.config.request_header_env.items() %}<code>{{ header }}</code> ← <code>{{ env_name }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}{% else %}None configured{% endif %}</dd></div>

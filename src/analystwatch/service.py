@@ -34,6 +34,8 @@ from .models import (
 )
 from .preflight import SourcePreflight, preflight_source
 from .profile import profile_dataframe
+from .row_diff import build_row_diff_evidence, build_row_snapshot
+from .row_diff_storage import prune_row_diff_payloads
 from .scheduler import run_decision
 from .storage import Storage
 
@@ -398,6 +400,26 @@ class MonitorService:
             blockers=blockers,
         )
 
+    def _prune_row_diff_payloads(self, source: SourceDefinition) -> None:
+        if not source.config.unique_keys:
+            return
+        keep: set[str] = set()
+        baseline = self.storage.get_baseline(source.id)
+        if baseline is not None and baseline.row_snapshot is not None:
+            keep.add(baseline.id)
+        successful = [
+            item
+            for item in self.storage.list_observations(
+                source.id,
+                limit=max(50, source.config.row_diff_snapshot_retention * 5),
+            )
+            if item.available and item.profile is not None and item.row_snapshot is not None
+        ]
+        keep.update(
+            item.id for item in successful[: source.config.row_diff_snapshot_retention]
+        )
+        prune_row_diff_payloads(self.storage, source.id, keep)
+
     def promote_baseline_after_review(
         self,
         source_id: str,
@@ -412,7 +434,11 @@ class MonitorService:
         review = self.baseline_review(source_id, observation_id)
         if not review.ready:
             raise ValueError("; ".join(review.blockers))
-        return self.storage.promote_baseline(source_id, observation_id)
+        promoted = self.storage.promote_baseline(source_id, observation_id)
+        source = self.storage.get_source(source_id)
+        if source is not None:
+            self._prune_row_diff_payloads(source)
+        return promoted
 
     def get_run_decision(
         self,
@@ -458,6 +484,7 @@ class MonitorService:
             observed_at = observed_at.replace(tzinfo=timezone.utc)
 
         previous = self.storage.get_latest(source_id)
+        previous_successful = self.storage.get_last_successful(source_id)
         baseline = self.storage.get_baseline(source_id)
         reference_observations = self.storage.list_reference_observations(
             source_id, limit=source.config.history_window_size
@@ -469,6 +496,8 @@ class MonitorService:
         result = ingest_source(source, client=client)
         findings: list[Finding] = []
         profile = None
+        row_snapshot = None
+        row_diff = None
 
         if not result.available or result.dataframe is None:
             findings.append(
@@ -508,6 +537,19 @@ class MonitorService:
                         history=history_profiles,
                     )
                 )
+            if source.config.unique_keys:
+                row_snapshot, snapshot_reason = build_row_snapshot(
+                    result.dataframe,
+                    source.config,
+                )
+                row_diff = build_row_diff_evidence(
+                    row_snapshot,
+                    snapshot_reason,
+                    key_fields=source.config.unique_keys,
+                    previous_successful=previous_successful,
+                    baseline=baseline,
+                    sample_limit=source.config.row_diff_sample_limit,
+                )
 
         health = health_from_findings(findings)
         observation = Observation(
@@ -518,6 +560,8 @@ class MonitorService:
             health=health,
             findings=findings,
             profile=profile,
+            row_snapshot=row_snapshot,
+            row_diff=row_diff,
             http_status=result.http_status,
             response_ms=result.response_ms,
             source_modified_at=result.source_modified_at,
@@ -537,4 +581,5 @@ class MonitorService:
             set_baseline=observation.is_baseline,
             notification_candidate=candidate,
         )
+        self._prune_row_diff_payloads(source)
         return observation

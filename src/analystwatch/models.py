@@ -76,6 +76,13 @@ class MonitoringConfig(BaseModel):
     history_window_size: int = Field(default=5, ge=3, le=50)
     min_history_observations: int = Field(default=3, ge=2, le=50)
 
+    row_diff_fields: list[str] = Field(default_factory=list)
+    row_diff_max_rows: int = Field(default=5000, ge=1, le=50000)
+    row_diff_max_columns: int = Field(default=50, ge=1, le=200)
+    row_diff_max_snapshot_bytes: int = Field(default=1_000_000, ge=1024, le=25_000_000)
+    row_diff_sample_limit: int = Field(default=20, ge=0, le=100)
+    row_diff_snapshot_retention: int = Field(default=2, ge=1, le=10)
+
     warning_row_change_pct: float = Field(default=0.25, ge=0)
     critical_row_change_pct: float = Field(default=0.50, ge=0)
     warning_null_increase_pct: float = Field(default=0.10, ge=0)
@@ -98,6 +105,15 @@ class MonitoringConfig(BaseModel):
             raise ValueError("warning_category_tvd must not exceed critical_category_tvd")
         if self.min_history_observations > self.history_window_size:
             raise ValueError("min_history_observations must not exceed history_window_size")
+        for field_name, values in (
+            ("unique_keys", self.unique_keys),
+            ("numeric_fields", self.numeric_fields),
+            ("row_diff_fields", self.row_diff_fields),
+        ):
+            if any(not value or value != value.strip() for value in values):
+                raise ValueError(f"{field_name} values must be non-empty and trimmed")
+            if len(set(values)) != len(values):
+                raise ValueError(f"{field_name} must not contain duplicates")
         for header, env_name in self.request_header_env.items():
             if not header or header != header.strip():
                 raise ValueError("request_header_env header names must be non-empty and trimmed")
@@ -162,6 +178,55 @@ class Finding(BaseModel):
     suggested_investigation: str | None = None
 
 
+class RowSnapshotRow(BaseModel):
+    key: dict[str, Any]
+    values: dict[str, Any]
+
+
+class RowSnapshot(BaseModel):
+    key_fields: list[str]
+    value_fields: list[str]
+    row_count: int
+    serialized_bytes: int
+    rows: list[RowSnapshotRow] = Field(default_factory=list)
+
+
+class RowSample(BaseModel):
+    key: dict[str, Any]
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class RowValueChange(BaseModel):
+    previous: Any = None
+    current: Any = None
+
+
+class RowChangedSample(BaseModel):
+    key: dict[str, Any]
+    changes: dict[str, RowValueChange] = Field(default_factory=dict)
+
+
+class RowDiffComparison(BaseModel):
+    reference_observation_id: str
+    reference_label: str
+    added_count: int = 0
+    removed_count: int = 0
+    changed_count: int = 0
+    unchanged_count: int = 0
+    changed_columns: dict[str, int] = Field(default_factory=dict)
+    added_samples: list[RowSample] = Field(default_factory=list)
+    removed_samples: list[RowSample] = Field(default_factory=list)
+    changed_samples: list[RowChangedSample] = Field(default_factory=list)
+
+
+class RowDiffEvidence(BaseModel):
+    key_fields: list[str]
+    snapshot_available: bool
+    snapshot_reason: str | None = None
+    previous: RowDiffComparison | None = None
+    baseline: RowDiffComparison | None = None
+
+
 class Observation(BaseModel):
     id: str
     source_id: str
@@ -170,6 +235,8 @@ class Observation(BaseModel):
     health: HealthStatus
     findings: list[Finding] = Field(default_factory=list)
     profile: DatasetProfile | None = None
+    row_snapshot: RowSnapshot | None = None
+    row_diff: RowDiffEvidence | None = None
     http_status: int | None = None
     response_ms: float | None = None
     source_modified_at: datetime | None = None
