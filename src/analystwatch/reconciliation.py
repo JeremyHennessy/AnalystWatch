@@ -36,6 +36,8 @@ class DeliveryReconciliationQueue(BaseModel):
     stale_after_minutes: int = Field(gt=0)
     scan_limit: int = Field(gt=0)
     scan_limit_reached: bool
+    item_limit: int = Field(gt=0)
+    item_limit_reached: bool
     prepared_count: int = Field(ge=0)
     stale_count: int = Field(ge=0)
     items: list[DeliveryReconciliationQueueItem] = Field(default_factory=list)
@@ -100,6 +102,8 @@ def build_delivery_reconciliation_queue(
         stale_after_minutes=stale_after_minutes,
         scan_limit=scan_limit,
         scan_limit_reached=len(scanned) == scan_limit,
+        item_limit=limit,
+        item_limit_reached=len(prepared) > limit,
         prepared_count=len(prepared),
         stale_count=stale_count,
         items=queue_items,
