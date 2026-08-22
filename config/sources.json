@@ -14,6 +14,41 @@
       }
     },
     {
+      "id": "demo-fpa-forecast",
+      "name": "FP&A Monthly Forecast",
+      "source_type": "csv",
+      "location": "samples/demo_fpa_forecast.csv",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 180,
+        "expected_refresh_minutes": 64800,
+        "latest_date_field": "period_end",
+        "unique_keys": ["department"],
+        "numeric_fields": ["budget", "forecast", "actual"],
+        "history_window_size": 5,
+        "min_history_observations": 3,
+        "notification_transitions": ["Opened", "Escalated", "Recovered"]
+      }
+    },
+    {
+      "id": "demo-ops-orders",
+      "name": "Operations Order Feed",
+      "source_type": "json",
+      "location": "samples/demo_ops_orders.json",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 60,
+        "expected_refresh_minutes": 2880,
+        "json_record_path": "orders",
+        "latest_date_field": "updated_at",
+        "unique_keys": ["order_id"],
+        "numeric_fields": ["order_value"],
+        "history_window_size": 5,
+        "min_history_observations": 3,
+        "notification_transitions": ["Opened", "Escalated", "Recovered"]
+      }
+    },
+    {
       "id": "bank-of-canada-usd-cad",
       "name": "Bank of Canada USD/CAD Daily Rate",
       "source_type": "api",
