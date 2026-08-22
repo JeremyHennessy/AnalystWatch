@@ -72,6 +72,25 @@ def _authorization(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _secured_operator_app(tmp_path: Path):
+    memberships = SQLiteMembershipStore(tmp_path / "memberships.db")
+    memberships.initialize()
+    memberships.upsert_membership(
+        WorkspaceMembership(
+            workspace_id="team-a",
+            user_id="operator",
+            role=WorkspaceRole.OPERATOR,
+        )
+    )
+    return create_app(
+        tmp_path / "state.db",
+        workspace_id="team-a",
+        auth_mode="signed-bearer",
+        auth_secret=SECRET,
+        membership_store=memberships,
+    )
+
+
 def test_reconciliation_api_and_page_expose_bounded_prepared_context(tmp_path: Path) -> None:
     app = create_app(tmp_path / "state.db")
     attempt = _seed_prepared(app)
@@ -144,23 +163,8 @@ def test_reconciliation_ui_rejects_missing_evidence_and_wrong_content_type(tmp_p
     assert app.state.workspace_storage.get_delivery_attempt(attempt.id).state.value == "Prepared"
 
 
-def test_authenticated_reconciliation_records_operator_identity(tmp_path: Path) -> None:
-    memberships = SQLiteMembershipStore(tmp_path / "memberships.db")
-    memberships.initialize()
-    memberships.upsert_membership(
-        WorkspaceMembership(
-            workspace_id="team-a",
-            user_id="operator",
-            role=WorkspaceRole.OPERATOR,
-        )
-    )
-    app = create_app(
-        tmp_path / "state.db",
-        workspace_id="team-a",
-        auth_mode="signed-bearer",
-        auth_secret=SECRET,
-        membership_store=memberships,
-    )
+def test_authenticated_reconciliation_ui_records_operator_identity(tmp_path: Path) -> None:
+    app = _secured_operator_app(tmp_path)
     attempt = _seed_prepared(app, workspace_id="team-a")
     client = TestClient(app)
 
@@ -178,6 +182,27 @@ def test_authenticated_reconciliation_records_operator_identity(tmp_path: Path) 
     reconciled = app.state.workspace_storage.get_delivery_attempt(attempt.id)
     assert reconciled is not None
     assert reconciled.state.value == "Succeeded"
+    assert reconciled.reconciled_by == "operator"
+
+
+def test_authenticated_reconciliation_api_records_operator_identity(tmp_path: Path) -> None:
+    app = _secured_operator_app(tmp_path)
+    attempt = _seed_prepared(app, workspace_id="team-a")
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/delivery-attempts/{attempt.id}/reconcile",
+        params={
+            "outcome": "Failed",
+            "note": "Provider audit event confirms the delivery did not complete.",
+        },
+        headers=_authorization("operator"),
+    )
+
+    assert response.status_code == 200
+    reconciled = app.state.workspace_storage.get_delivery_attempt(attempt.id)
+    assert reconciled is not None
+    assert reconciled.state.value == "Failed"
     assert reconciled.reconciled_by == "operator"
 
 
