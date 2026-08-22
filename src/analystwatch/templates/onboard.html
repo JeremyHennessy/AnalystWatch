@@ -59,6 +59,10 @@
         <label class="span-two"><span>Numeric fields</span><input id="numeric-fields" placeholder="amount, total_value"></label>
         <label class="span-two"><span>Unique keys</span><input id="unique-keys" placeholder="id, record_id"></label>
 
+        <div class="form-section span-two"><strong>Data Rules</strong><span>Optional deterministic business assertions. Every configured rule must pass preflight before this source can be accepted.</span></div>
+        <div id="data-rule-list" class="data-rule-list span-two"><div class="rule-empty">No Data Rules configured. Add one only for a business invariant you want AnalystWatch to enforce explicitly.</div></div>
+        <div class="span-two"><button id="add-rule-button" class="secondary" type="button">+ Add Data Rule</button></div>
+
         <div id="api-secret-section" class="span-two">
           <div class="form-section"><strong>API secrets</strong><span>Enter header → environment-variable references only. Secret values are never stored in the source definition.</span></div>
           <label class="span-two"><span>Request header environment refs</span><input id="request-header-env" placeholder="Authorization=ANALYSTWATCH_API_TOKEN, X-Api-Key=VENDOR_API_KEY"></label>
@@ -84,7 +88,10 @@ const acceptButton = document.getElementById('accept-button');
 const preflightButton = document.getElementById('preflight-button');
 const panel = document.getElementById('preflight-panel');
 const sourceType = document.getElementById('source-type');
+const dataRuleList = document.getElementById('data-rule-list');
+const addRuleButton = document.getElementById('add-rule-button');
 let lastPreflight = null;
+let ruleSequence = 0;
 
 function value(id) { return document.getElementById(id).value.trim(); }
 function list(id) { return value(id).split(',').map(v => v.trim()).filter(Boolean); }
@@ -126,6 +133,101 @@ function googleLocation() {
   return `gsheets://${spreadsheet}?${params.toString()}`;
 }
 
+function ruleValue(card, field) {
+  return card.querySelector(`[data-rule-field="${field}"]`).value.trim();
+}
+
+function optionalRuleNumber(card, field) {
+  const raw = ruleValue(card, field);
+  return raw === '' ? null : Number(raw);
+}
+
+function updateRuleFields(card) {
+  const kind = ruleValue(card, 'kind');
+  card.querySelector('[data-rule-row="field"]').hidden = kind === 'row_count_range';
+  card.querySelector('[data-rule-row="allowed"]').hidden = kind !== 'allowed_values';
+  card.querySelector('[data-rule-row="bounds"]').hidden = !['numeric_range', 'row_count_range'].includes(kind);
+}
+
+function refreshRuleEmptyState() {
+  const cards = dataRuleList.querySelectorAll('.data-rule-card');
+  const empty = dataRuleList.querySelector('.rule-empty');
+  if (!cards.length && !empty) {
+    const note = document.createElement('div');
+    note.className = 'rule-empty';
+    note.textContent = 'No Data Rules configured. Add one only for a business invariant you want AnalystWatch to enforce explicitly.';
+    dataRuleList.append(note);
+  } else if (cards.length && empty) {
+    empty.remove();
+  }
+}
+
+function addDataRule() {
+  ruleSequence += 1;
+  const card = document.createElement('div');
+  card.className = 'data-rule-card';
+  card.dataset.ruleIndex = String(ruleSequence);
+  card.innerHTML = `
+    <div class="data-rule-header"><strong>Data Rule ${ruleSequence}</strong><button class="secondary rule-remove" type="button">Remove</button></div>
+    <div class="form-grid">
+      <label><span>Rule ID</span><input data-rule-field="id" required pattern="[A-Za-z0-9_.-]+" placeholder="status-approved"></label>
+      <label><span>Name</span><input data-rule-field="name" required placeholder="Status must be approved"></label>
+      <label><span>Rule type</span><select data-rule-field="kind"><option value="not_null">Not null</option><option value="allowed_values">Allowed values</option><option value="numeric_range">Numeric range</option><option value="row_count_range">Row count range</option></select></label>
+      <label><span>Failure severity</span><select data-rule-field="severity"><option value="Critical">Critical</option><option value="Warning">Warning</option></select></label>
+      <label class="span-two" data-rule-row="field"><span>Field</span><input data-rule-field="field" placeholder="status"></label>
+      <label class="span-two" data-rule-row="allowed" hidden><span>Allowed values</span><input data-rule-field="allowed_values" placeholder="Approved, Pending"><small>Comma-separated exact values.</small></label>
+      <div class="form-grid span-two" data-rule-row="bounds" hidden>
+        <label><span>Minimum <small>optional</small></span><input data-rule-field="minimum" type="number" step="any"></label>
+        <label><span>Maximum <small>optional</small></span><input data-rule-field="maximum" type="number" step="any"></label>
+      </div>
+      <label class="span-two"><span>Why it matters <small>optional</small></span><input data-rule-field="likely_impact" placeholder="Explain the downstream business risk."></label>
+      <label class="span-two"><span>What to check <small>optional</small></span><input data-rule-field="suggested_investigation" placeholder="Describe the first investigation step."></label>
+    </div>`;
+  card.querySelector('[data-rule-field="kind"]').addEventListener('change', () => updateRuleFields(card));
+  card.querySelector('.rule-remove').addEventListener('click', () => {
+    card.remove();
+    refreshRuleEmptyState();
+  });
+  dataRuleList.append(card);
+  refreshRuleEmptyState();
+  updateRuleFields(card);
+}
+
+function dataRules() {
+  const rules = [];
+  for (const card of dataRuleList.querySelectorAll('.data-rule-card')) {
+    const id = ruleValue(card, 'id');
+    const name = ruleValue(card, 'name');
+    const kind = ruleValue(card, 'kind');
+    const severity = ruleValue(card, 'severity');
+    if (!id || !name) throw new Error('Each Data Rule requires a Rule ID and Name.');
+    const rule = {id, name, kind, severity};
+    if (kind !== 'row_count_range') {
+      const field = ruleValue(card, 'field');
+      if (!field) throw new Error(`Data Rule '${name}' requires a field.`);
+      rule.field = field;
+    }
+    if (kind === 'allowed_values') {
+      const allowed = ruleValue(card, 'allowed_values').split(',').map(item => item.trim()).filter(Boolean);
+      if (!allowed.length) throw new Error(`Data Rule '${name}' requires at least one allowed value.`);
+      rule.allowed_values = allowed;
+    }
+    if (kind === 'numeric_range' || kind === 'row_count_range') {
+      const minimum = optionalRuleNumber(card, 'minimum');
+      const maximum = optionalRuleNumber(card, 'maximum');
+      if (minimum === null && maximum === null) throw new Error(`Data Rule '${name}' requires a minimum and/or maximum.`);
+      if (minimum !== null) rule.minimum = minimum;
+      if (maximum !== null) rule.maximum = maximum;
+    }
+    const likelyImpact = ruleValue(card, 'likely_impact');
+    const investigation = ruleValue(card, 'suggested_investigation');
+    if (likelyImpact) rule.likely_impact = likelyImpact;
+    if (investigation) rule.suggested_investigation = investigation;
+    rules.push(rule);
+  }
+  return rules;
+}
+
 function sourcePayload() {
   const type = value('source-type');
   const isMicrosoft = type === 'microsoft_excel';
@@ -159,6 +261,7 @@ function sourcePayload() {
       json_record_path: type === 'json' ? (value('json-path') || null) : null,
       numeric_fields: list('numeric-fields'),
       unique_keys: list('unique-keys'),
+      data_rules: dataRules(),
       request_header_env: headers
     }
   };
@@ -237,6 +340,7 @@ async function postJson(url) {
 }
 
 sourceType.addEventListener('change', updateSourceFields);
+addRuleButton.addEventListener('click', addDataRule);
 updateSourceFields();
 
 form.addEventListener('submit', async (event) => {
