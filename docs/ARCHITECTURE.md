@@ -1,293 +1,265 @@
-# AnalystWatch Product v0.21 Architecture
+# AnalystWatch Product v0.22 Architecture
 
 ## Decision
 
-Product v0.21 adds an **operational reconciliation monitor** over the verified Product v0.20 delivery-attempt architecture.
+Product v0.22 adds Google Sheets as another `SourceType` while preserving the existing AnalystWatch ingestion, preflight, monitoring, persistence and UI architecture.
 
-The key architectural choice is deliberately conservative: **the monitor derives its queue from existing `Prepared` delivery attempts. It does not create another notification/delivery state machine or persistence schema.**
+The architectural rule is: **Google Sheets is a connector into the existing source pipeline, not a parallel monitoring product.**
 
 ```text
-eligible notification candidate
+SourceDefinition(type=google_sheets)
         ↓
-existing atomic delivery claim + idempotency
+environment-backed Authorization header resolution
         ↓
-provider adapter
+Google Sheets API v4 spreadsheets.values.get
         ↓
-Succeeded / Failed / Prepared
-                    ↓
-              Prepared only
-                    ↓
-bounded reconciliation queue
-                    ↓
-external evidence + Operator decision
-                    ↓
-existing reconcile_delivery_attempt(...)
-                    ↓
-Succeeded or Failed
+deterministic row-major values normalization
+        ↓
+pandas DataFrame
+        ↓
+existing preflight / profiling / detectors
+        ↓
+existing observations / baselines / row diff / incidents
 ```
 
-A `Prepared` attempt continues to mean that AnalystWatch cannot safely assert whether the external side effect happened. Product v0.21 makes that ambiguity visible; it does not guess it away.
+No Google-specific observation, baseline, incident, detector or persistence model is introduced.
 
-## Preserved v0.20 boundaries
+## Source contract
 
-The verified Product v0.20 architecture remains intact:
+`SourceType.GOOGLE_SHEETS` uses the location format:
 
-- Microsoft Teams Workflows / Power Automate delivery reuses the existing candidate and delivery-attempt state machine;
-- explicit provider rejection records `Failed`;
-- successful provider acceptance records `Succeeded`;
-- ambiguous transport outcome remains `Prepared` for explicit reconciliation;
-- same-key idempotency prevents duplicate external POSTs;
-- dependency mapping remains a separate workspace-scoped graph;
-- Power BI Guard remains a separate deterministic dashboard-trust result;
-- source Health, detector thresholds, baselines and incident semantics are unchanged.
+```text
+gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]
+```
 
-Product v0.20 was merged from its verified release head into `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`.
+`GoogleSheetsLocation` contains:
 
-## Reconciliation queue model
+- `spreadsheet_id`;
+- explicit A1 `range_name`;
+- `header_row`, one-based and relative to the values returned for that range.
 
-`reconciliation.py` defines a derived operational view:
+The parser requires a spreadsheet ID and range. Header row defaults to 1 and is bounded to 1..1000.
 
-- `DeliveryReconciliationQueueItem`;
-- `DeliveryReconciliationQueue`;
-- `build_delivery_reconciliation_queue(...)`.
+The source still uses the ordinary `MonitoringConfig` for monitor cadence, freshness expectations, numeric fields, unique keys, row-diff settings and request-header environment references.
 
-The queue scans existing `MonitoringStore` delivery-attempt history and selects only attempts whose current state is `Prepared`.
+## Provider/API boundary
 
-No queue record is persisted. Re-running the builder reflects the current authoritative delivery-attempt state.
+`google_sheets.py` calls the Google Sheets API v4 values endpoint:
 
-### Deterministic age/staleness
+```text
+GET /v4/spreadsheets/{spreadsheetId}/values/{range}
+```
 
-Defaults:
+Request parameters are deliberately deterministic:
 
-- stale after 30 minutes;
-- scan at most 5,000 delivery attempts;
-- return/display at most 100 Prepared attempts;
-- oldest unresolved attempts first.
+- `majorDimension=ROWS`;
+- `valueRenderOption=UNFORMATTED_VALUE`;
+- `dateTimeRenderOption=FORMATTED_STRING`.
 
-Age is computed against an explicit/current UTC time. Future-dated attempts are conservatively clamped to zero minutes of age rather than producing a negative operational duration.
+The connector uses `httpx`, matching the existing provider/client approach. Product v0.22 does not introduce the Google SDK.
 
-### Bounded completeness evidence
+Provider non-2xx responses are converted to normal ingestion availability evidence with the HTTP status. If Google supplies an ETag it is retained as `response_etag`.
 
-The queue makes two limits independently visible:
+## Authorization boundary
 
-- `scan_limit_reached` — the storage scan reached its configured cap;
-- `item_limit_reached` — more Prepared attempts were found in that scan than the output can display/return.
+Authorization reuses the existing environment-backed request-header contract.
 
-These fields have different meanings.
+A typical source definition stores only:
 
-If `scan_limit_reached` is true, AnalystWatch does **not** claim the Prepared count is exhaustive across all delivery history. The count describes the bounded scan only.
+```text
+request_header_env = {
+  "Authorization": "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
+}
+```
 
-If `item_limit_reached` is true, the total Prepared count within the scan remains available while the queue returns the oldest limited subset.
+At runtime `_request_headers(...)` resolves the environment variable and passes the resulting header to the connector.
 
-This avoids turning bounded storage APIs into an unsupported completeness claim.
+The credential value is not written into the source definition, public Pages output or Google-specific storage because no Google-specific storage exists.
 
-## Queue privacy / evidence boundary
+Product v0.22 intentionally does not implement:
 
-The operational queue intentionally exposes only what an analyst needs to identify and prioritize an unresolved attempt:
+- OAuth refresh-token persistence/rotation;
+- service-account private-key exchange;
+- Google SDK credential objects;
+- write scopes or Sheets mutations.
 
-- attempt ID;
-- candidate ID;
-- source ID and source name;
-- adapter and delivery mode;
-- creation time;
-- unresolved age;
-- stale flag;
-- candidate transition/current Health when available.
+Those capabilities would require a separate credential-lifecycle design and are outside this connector milestone.
 
-The queue model deliberately excludes:
+## Values → DataFrame normalization
 
-- caller idempotency key;
-- claim owner;
-- provider result summary;
-- provider error detail;
-- reconciliation note;
-- provider secret/configuration values.
+Google's values API can return ragged rows. The connector therefore applies explicit table-shape rules before the existing monitor sees the data.
 
-Those fields remain in their existing authoritative storage/audit boundaries and are not copied into the queue API/view.
+1. The response `values` member must be an array.
+2. The configured header row must exist.
+3. The header must contain at least one column.
+4. Header names must be non-empty.
+5. Header names must be unique.
+6. Data rows may be shorter than the header and are padded with `None`.
+7. Fully empty data rows are ignored.
+8. A data row wider than the header fails closed.
 
-## Reconciliation web/API boundary
+These rules prevent a provider-shape quirk from silently changing the DataFrame schema or shifting values into inferred columns.
 
-`reconciliation_web.py` registers:
+Once normalized, the result is a normal pandas DataFrame and all existing profiling/detector logic applies unchanged.
 
-- `GET /reconciliation`;
-- `GET /api/delivery-reconciliation`;
-- `POST /reconciliation/{attempt_id}/resolve`.
+## Preflight reuse
 
-The page and read API call the same queue builder.
+Google Sheets does not get provider-specific detector logic.
 
-Read parameters are bounded:
+`preflight_source(...)` continues to validate the same contracts after ingestion:
 
-- stale threshold: 1 to 10,080 minutes;
-- API item limit: 1 to 500.
+- availability;
+- row/column profile;
+- configured numeric fields;
+- configured unique keys;
+- latest-date field or conservative inference;
+- expected refresh evidence.
 
-The underlying scan cap remains the conservative product default unless the internal contract is deliberately changed later.
+This preserves one onboarding acceptance boundary across file, API, Microsoft Excel and Google Sheets sources.
 
-### UI resolution form
+## Freshness evidence boundary
 
-The UI resolution action is intentionally narrow:
+The values read used in Product v0.22 does not expose a trustworthy sheet modification timestamp that AnalystWatch can directly map to `source_modified_at`.
 
-- accepts `application/x-www-form-urlencoded` only;
-- maximum body size is 4,096 bytes;
-- requires exactly one `outcome` field;
-- requires exactly one `note` field;
-- evidence note maximum length is 2,000 characters;
-- outcome must be the existing `DeliveryReconciliationOutcome` enum.
+The connector therefore leaves `source_modified_at=None` rather than inventing a modification date.
 
-This uses standard-library URL-encoded parsing instead of introducing another form/multipart dependency solely for this action.
+If `expected_refresh_minutes` is configured, the normal preflight rule must obtain freshness from content, for example:
 
-After validation the route delegates to the existing `MonitorService.reconcile_delivery_attempt(...)` domain operation. The web layer does not implement a second reconciliation transition.
+- a configured `latest_date_field`; or
+- the existing conservative date-field inference.
 
-Unknown attempt → 404. Invalid state transition → 409. Invalid form → 400/415/413 depending on the failure boundary.
+Without content-date evidence, preflight reports `freshness_unverifiable` and refuses to claim the refresh expectation can be checked.
 
-## Authenticated reviewer attribution
+A future metadata enhancement may add independently verified Google modification evidence, but it must not retroactively reinterpret current values-read evidence.
 
-Product v0.21 tightens the audit boundary for both reconciliation entry points:
+## Static/public privacy boundary
 
-- UI `/reconciliation/{attempt_id}/resolve`;
-- existing API `/api/delivery-attempts/{attempt_id}/reconcile`.
+Private/runtime Google source locations contain the spreadsheet ID and can contain an authorization environment-variable reference in configuration.
 
-When signed-bearer authentication is active, the authenticated principal's user ID is passed as `reviewer` and stored in the existing `reconciled_by` field.
+`pages.py` special-cases Google Sheets public locations through `public_google_sheets_location(...)` and renders only:
 
-In local/no-auth mode the service retains the established execution-owner fallback behavior.
+```text
+Google Sheets · <A1 range>
+```
 
-Authorization remains centralized in `web_auth.py`:
+The static index, source detail and `state.json` are regression-tested to exclude:
 
-- Viewer → reconciliation page/API reads;
-- Operator → UI/API reconciliation actions;
-- unclassified mutations → Admin by fail-closed default.
+- spreadsheet ID;
+- internal `gsheets://` location;
+- authorization environment-variable name.
 
-## Retry safety
+The A1 range remains visible because it describes the monitored data slice without exposing the private spreadsheet identifier.
 
-Reconciliation is not retry execution.
+## Onboarding boundary
 
-When an operator resolves a `Prepared` attempt to `Failed`:
+The existing Add Source page is extended using the existing connector-specific form pattern.
 
-1. the existing attempt is updated to `Failed`;
-2. it disappears from the derived Prepared queue;
-3. no new delivery attempt is created;
-4. existing retry policy controls whether and when a subsequent claim is permitted.
+For `google_sheets` it collects:
 
-When an operator resolves to `Succeeded`, the attempt becomes terminally successful and leaves the queue.
+- Spreadsheet ID;
+- A1 range;
+- header row;
+- Google Authorization environment-variable reference.
 
-Product v0.21 does not poll a provider and infer the outcome automatically. Provider-specific reconciliation automation can be considered later only if it can produce durable, trustworthy evidence without weakening the current ambiguity model.
+Client-side code constructs the canonical `gsheets://` location and normal `request_header_env` mapping, then submits the same `/api/preflight` and `/api/onboard` requests used by every other source type.
 
-## Analyst-facing Delivery Ops surface
+No separate Google onboarding endpoint or persistence flow is introduced.
 
-`reconciliation.html` reuses the existing AnalystWatch visual system and the existing form styles. No UI/CSS redesign was introduced.
+The UI also states the freshness limitation: a range read does not itself provide a sheet modification timestamp, so an expected-refresh contract should include trustworthy content-date evidence.
 
-The view shows:
+## Preserved Product v0.21 architecture
 
-- total Prepared attempts found in the bounded scan;
-- stale count;
-- stale threshold;
-- scan cap and whether it was reached;
-- explicit display-limit warning when applicable;
-- oldest unresolved items first;
-- source, adapter/mode, attempt ID, age, transition and current Health context;
-- required evidence note;
-- explicit Confirm failed / Confirm succeeded actions;
-- safety copy explaining that Prepared is not success/failure and retry remains blocked.
+Product v0.21 Delivery Ops remains unchanged:
 
-Dynamic navigation adds **Delivery Ops** to the workspace overview, Power BI Guard and Dependency Map surfaces.
+- reconciliation queue is derived from existing `Prepared` delivery attempts;
+- Prepared remains neither success nor failure;
+- retry remains blocked until explicit evidence-backed reconciliation;
+- no automatic retry is created by reconciliation;
+- signed-bearer reconciliation records the authenticated reviewer;
+- bounded queue output avoids exposing idempotency keys, claim owners, provider raw evidence or reconciliation notes.
 
-## Public/static boundary
+Product v0.21 was merged to `main` at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5` after final exact-head CI passed 226 tests, 1 warning.
+
+## Preserved Teams / dependency / Power BI architecture
+
+Product v0.22 does not change:
+
+- Teams Workflows delivery or its existing candidate/attempt/idempotency/reconciliation model;
+- dependency graph asset/edge storage or cycle-safe blast radius;
+- Power BI Guard trust correlation;
+- Power BI discovered-edge namespaces;
+- source-detail downstream-impact rendering;
+- Viewer / Operator / Admin authorization model.
+
+A Google Sheets source can participate in the existing SourceGuard and dependency model exactly like another source ID; no Google-specific graph semantics are required.
+
+## Persistence
+
+No Google-specific database schema is introduced.
+
+`SourceDefinition` already persists the source type, location and `MonitoringConfig`. Existing legacy/namespaced/PostgreSQL storage therefore carries Google Sheets configuration through the same source-definition contract.
+
+Only the authorization environment-variable name is persisted, not the credential value.
+
+## Public/static application boundary
 
 The public GitHub Pages build remains a read-only source-monitoring snapshot.
 
-It does not fabricate:
+It may show a redacted Google Sheets source and its published monitoring result, but it does not expose private spreadsheet identifiers or credentials and still does not fabricate:
 
-- Teams delivery configuration or outcomes;
+- Teams delivery configuration/outcomes;
 - Power BI tenant evidence;
 - dynamic dependency graph state;
 - reconciliation queue state.
 
-The workspace overview therefore includes the Delivery Ops navigation link only in dynamic mode. Static Pages retain the existing public navigation boundary.
-
-## Existing Product v0.20 architecture retained
-
-### Microsoft Teams delivery
-
-`teams_delivery.py` remains the provider adapter boundary. Notification eligibility, atomic claim, idempotency, retry timing and reconciliation state remain owned by the existing monitoring storage/service contract.
-
-Runtime configuration remains environment-backed:
-
-- `ANALYSTWATCH_TEAMS_WORKFLOW_WEBHOOK_URL`;
-- `ANALYSTWATCH_PUBLIC_BASE_URL`.
-
-The implementation targets Microsoft Teams Workflows / Power Automate rather than the retired Office 365 Connector model.
-
-### Dependency graph
-
-`dependencies.py`, `dependency_service.py`, `dependency_storage.py` and `dependency_web.py` remain the lightweight impact-intelligence boundary for Source / Workbook / Semantic Model / Report / Custom assets.
-
-Blast-radius traversal remains deterministic, cycle safe and deduplicated by asset key. Discovered Power BI edges remain namespaced per Guard and never remove explicit edges.
-
-### Power BI Guard
-
-Power BI Guard continues to correlate semantic-model refresh evidence with existing AnalystWatch source Health without mutating that upstream Health.
-
-Important cases remain:
-
-```text
-refresh Completed + upstream all Healthy
-→ Healthy
-
-refresh Completed + any upstream Critical
-→ Critical
-
-refresh Completed + any upstream Warning/unobserved
-→ Warning
-
-refresh Failed / Cancelled / Disabled
-→ Critical
-
-refresh InProgress / NotStarted / unknown / no history
-→ trust unconfirmed (Warning)
-```
-
-No real Power BI tenant access is claimed without a real credential.
-
 ## Preserved behavior
 
-Product v0.21 does not change:
+Product v0.22 does not change:
 
-- CSV/XLSX/JSON/API/Microsoft Excel ingestion;
+- existing CSV/XLSX/JSON/API/Microsoft Excel ingestion semantics;
 - source detector thresholds;
-- source Healthy / Warning / Critical classification;
-- source baseline promotion or review;
+- Healthy / Warning / Critical classification;
+- baseline promotion/review;
 - row-level comparison semantics/retention;
-- source incident lifecycle;
+- incident lifecycle;
 - notification candidate policy;
-- delivery attempt Prepared/Succeeded/Failed semantics;
-- atomic claim/idempotency semantics;
-- delivery retry timing;
-- live-email or Teams adapter behavior;
-- dependency storage/traversal semantics;
-- Power BI Guard trust correlation;
+- Prepared/Succeeded/Failed delivery semantics;
+- retry/reconciliation safety;
+- dependency traversal/storage;
+- Power BI trust logic;
 - source scheduler;
-- existing public Pages source-state policy.
+- approved UI layout/CSS architecture.
 
 ## Verification
 
-The verified Product v0.21 functional checkpoint passed **225 tests**, Ruff and compile/import checks against PostgreSQL 16 CI.
+The verified Product v0.22 functional checkpoint is `9cb60774817a2a637a1714a5c15ccd643faa4324`.
+
+CI #495 passed:
+
+- Ruff;
+- compile/import checks;
+- PostgreSQL 16-backed suite;
+- **236 passed, 1 warning**.
+
+Live-source smoke #80 also passed.
 
 Coverage includes:
 
-- Prepared-only queue derivation;
-- stale threshold and oldest-first ordering;
-- safe queue serialization;
-- bounded scan/output evidence;
-- reconciliation removal from the queue without automatic retry creation;
-- reconciliation page/API output;
-- required evidence-note and form-boundary validation;
-- Viewer/Operator authorization classification;
-- authenticated `reconciled_by` attribution on UI and existing API reconciliation paths;
-- all existing Product v0.20 Teams/dependency/Power BI/source-monitoring regressions.
+- canonical location parsing and public location;
+- Google Authorization environment-reference enforcement;
+- API path/options and ETag evidence;
+- header-row handling;
+- ragged-row normalization;
+- duplicate/empty-header and over-wide-row failures;
+- provider HTTP rejection evidence;
+- existing numeric/key/date preflight reuse;
+- freshness-unverifiable behavior without content-date evidence;
+- static Pages privacy redaction;
+- connector-specific onboarding fields;
+- all existing Product v0.21 regressions.
 
-A real Teams Workflows webhook was not supplied in this repository session, so a real Teams side effect remains unverified.
-
-A real Power BI tenant credential was not supplied, so live Microsoft tenant access remains unverified.
+No real Google Workspace credential was supplied in this repository session, so live Google Sheets access is not claimed.
 
 ## Next architecture step
 
-Product v0.22 should add a Google Sheets connector through the existing ingestion/preflight/onboarding contracts rather than creating a parallel monitoring architecture.
+Product v0.23 should add deterministic business/Data Rules through the existing source evidence pipeline. Rules should be explicit, auditable assertions over ingested/profiled data and must not create an opaque AI-driven Health classification path.
