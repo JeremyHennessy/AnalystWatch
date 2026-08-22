@@ -78,43 +78,51 @@ Reworked the existing user-visible shell without changing monitoring behavior: w
 
 Added table-first SharePoint / OneDrive Excel ingestion through delegated Microsoft Graph access, DriveItem modified-time/ETag evidence, paginated table rows, normal preflight/onboarding reuse and public identifier redaction. Clean gate: **172 tests**, Ruff/compile and PostgreSQL 16 CI green, live-source smoke green. No real Microsoft tenant credential or application-permission workbook access was claimed.
 
-## Product v0.18 — Row-level / key-level change analysis — current release candidate
+## Product v0.18 — Row-level / key-level change analysis — complete
+
+Added bounded configured-key row snapshots, previous-successful and active-baseline comparisons, Added/Removed/Changed/Unchanged counts, per-column change counts, bounded examples, privacy-aware retention and public aggregate-only rendering. Clean gate: **183 tests**, Ruff/compile and PostgreSQL 16 CI green; live-source smoke green.
+
+Raw row snapshots and key/value samples remain bounded and are not published in static Pages/state output.
+
+## Product v0.19 — Power BI Guard — current release candidate
 
 Implemented and verified on the frozen functional checkpoint:
 
-- configured-key row snapshots with composite-key support
-- previous-successful and active-baseline comparisons
-- Added / Removed / Changed / Unchanged counts
-- per-column changed-value counts
-- bounded added/removed/changed key examples
-- optional `row_diff_fields` allowlist
-- configurable row/column/serialized-byte safety limits
-- explicit refusal for missing, null, duplicate or oversized comparison keys/data
-- row-diff evidence does not participate in Health classification
-- active-baseline + bounded recent-successful snapshot retention
-- raw sample pruning after retention expiry
-- retention conformance across legacy SQLite, namespaced SQLite, MemoryStore and PostgreSQL
-- public Pages/state remove row snapshots and row-diff sample payloads while retaining aggregate evidence
-- existing detector-finding public evidence policy remains unchanged
-- analyst-facing **Key-level changes** source-detail section
-- static Pages show aggregate row changes only; bounded examples remain dynamic/authenticated-local
-- clean functional checkpoint: **183 tests**, Ruff/compile green, PostgreSQL 16 CI green
-- live-source smoke green on the unchanged public-source set
+- workspace-scoped Power BI Guard definitions
+- environment-variable reference for the delegated bearer token; token value is never persisted
+- semantic-model metadata and refreshability evidence
+- refresh history, status, start/end times and duration
+- best-effort workspace/report/datasource metadata
+- report-to-semantic-model relationships
+- current AnalystWatch upstream source-health correlation
+- deterministic false-confidence case: refresh Completed + upstream Critical => Guard Critical
+- Warning for completed refresh with Warning or unobserved upstream sources
+- Critical for Failed/Cancelled/Disabled refresh
+- explicit unconfirmed trust for incomplete/unknown/missing refresh evidence
+- secret-safe provider error handling
+- SQLite and PostgreSQL Guard definition/snapshot persistence
+- Power BI Guard orchestration service using current AnalystWatch source observations
+- analyst-facing DashboardGuard overview and detail pages
+- upstream source status, downstream reports, refresh history and datasource-type evidence in the Guard UI
+- Viewer read / Operator check / Admin configuration route boundaries
+- cross-workspace Guard configuration rejection
+- dynamic SourceGuard → DashboardGuard navigation
+- static GitHub Pages intentionally do not fabricate Power BI state when no hosted Guard/credential exists
+- frozen functional checkpoint: **196 tests**, Ruff/compile green, PostgreSQL 16 CI green
 
 Explicit non-goals preserved:
 
-- no detector threshold changes;
-- no unlimited raw-data archive;
-- no database schema migration;
-- no Power BI work;
-- no AI interpretation;
-- no notification-state changes.
+- no Power BI refresh triggering;
+- no full Fabric/warehouse lineage catalogue;
+- no source detector threshold changes;
+- no redefinition of upstream source Health;
+- no separate notification state machine;
+- no claim of live Microsoft tenant access without a real credential.
 
-## Product roadmap after v0.18
+## Product roadmap after v0.19
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.19 — Power BI Guard
 - Product v0.20 — Microsoft Teams + lightweight dependency graph / blast radius
 - Product v0.21 — reconciliation monitors
 - Product v0.22 — Google Sheets connector

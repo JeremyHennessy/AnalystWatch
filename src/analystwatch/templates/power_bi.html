@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Power BI Guard · AnalystWatch</title>
+  <link rel="stylesheet" href="{{ static_css }}">
+</head>
+<body>
+  <main class="shell app-shell">
+    <nav class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark">AW</div>
+        <div><strong>AnalystWatch</strong><span>DashboardGuard</span></div>
+      </div>
+      <div class="topnav">
+        <a href="{{ home_href }}">SourceGuard</a>
+        <a class="active" href="/power-bi">Power BI Guard</a>
+      </div>
+    </nav>
+
+    <header class="product-hero">
+      <div>
+        <p class="eyebrow">DASHBOARDGUARD · POWER BI</p>
+        <h1>Can users trust this dashboard right now?</h1>
+        <p class="hero-copy">Correlate Power BI refresh evidence with the health of the AnalystWatch sources feeding each semantic model.</p>
+      </div>
+      <div class="hero-status">
+        {% set critical_count = guards|selectattr('health', 'equalto', 'Critical')|list|length %}
+        {% set warning_count = guards|selectattr('health', 'equalto', 'Warning')|list|length %}
+        {% if critical_count > 0 %}
+          <span class="status status-critical"><span class="dot"></span>{{ critical_count }} dashboard guard{{ '' if critical_count == 1 else 's' }} critical</span>
+        {% elif warning_count > 0 %}
+          <span class="status status-warning"><span class="dot"></span>{{ warning_count }} guard{{ '' if warning_count == 1 else 's' }} need review</span>
+        {% elif guards %}
+          <span class="status status-healthy"><span class="dot"></span>All checked guards healthy</span>
+        {% else %}
+          <span class="status status-not-checked"><span class="dot"></span>No Power BI Guards configured</span>
+        {% endif %}
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="section-title">
+        <div><p class="section-kicker">SEMANTIC MODELS</p><h2>Power BI Guards</h2></div>
+        <span>{{ guards|length }} configured</span>
+      </div>
+
+      {% if guards %}
+        <div class="source-list product-source-list">
+          {% for item in guards %}
+          <a class="source-row product-source-row" href="{{ item.href }}">
+            <div class="source-identity">
+              <span class="source-icon">BI</span>
+              <div>
+                <strong>{{ item.guard.name }}</strong>
+                <span class="source-meta">Power BI semantic model · {{ item.guard.upstream_source_ids|length }} upstream source{{ '' if item.guard.upstream_source_ids|length == 1 else 's' }}</span>
+                {% if item.latest %}<span class="source-location">{{ item.latest.summary }}</span>{% else %}<span class="source-location">Not checked yet.</span>{% endif %}
+              </div>
+            </div>
+            <div class="source-signal">
+              {% if item.latest %}<span class="source-time">Checked {{ item.latest.checked_at.strftime('%b %d · %H:%M UTC') }}</span>{% endif %}
+              <span class="status status-{{ item.health|lower|replace(' ', '-') }}"><span class="dot"></span>{{ item.health }}</span>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty product-empty">
+          <div class="empty-icon">BI</div>
+          <h3>No Power BI Guard configured yet</h3>
+          <p>Configure a semantic model with its Power BI workspace, token environment variable and the AnalystWatch sources that feed it. A completed refresh is not treated as proof that the underlying data is trustworthy.</p>
+          <p><strong>Important:</strong> Microsoft tenant access is not claimed until a real delegated credential is configured and verified.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel quick-guide">
+      <p class="section-kicker">WHY THIS MATTERS</p>
+      <h2>A successful refresh can still be unsafe</h2>
+      <div class="guide-row"><span class="dot guide-green"></span><div><strong>Source healthy + refresh completed</strong><p>DashboardGuard can report Healthy.</p></div></div>
+      <div class="guide-row"><span class="dot guide-red"></span><div><strong>Source critical + refresh completed</strong><p>The model may have refreshed successfully from untrustworthy data, so the Guard is Critical.</p></div></div>
+      <div class="guide-row"><span class="dot guide-amber"></span><div><strong>Refresh evidence unavailable</strong><p>Trust remains unconfirmed instead of silently assuming success.</p></div></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -17,6 +17,7 @@
         <a class="active" href="#overview">Overview</a>
         <a href="#sources">Sources</a>
         <a href="#attention">Attention</a>
+        {% if not static_mode %}<a href="/power-bi">DashboardGuard</a>{% endif %}
       </div>
       {% if not static_mode %}<a class="button button-primary" href="/sources/new">+ Add source</a>{% endif %}
     </nav>
