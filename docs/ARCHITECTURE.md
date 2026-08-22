@@ -1,10 +1,39 @@
-# AnalystWatch Product v0.19 Architecture
+# AnalystWatch Product v0.20 Architecture
 
 ## Decision
 
-Product v0.19 introduces **Power BI Guard** as a separate DashboardGuard evidence boundary that correlates Power BI refresh state with existing AnalystWatch source health.
+Product v0.20 extends the verified Product v0.19 architecture in two bounded directions:
 
-It does not redefine source Health, detector thresholds, incident semantics or notification-state behavior.
+1. **Microsoft Teams Workflows delivery** reuses the existing notification-candidate and delivery-attempt state machine.
+2. **Lightweight dependency mapping** adds a separate workspace-scoped graph for analyst-facing assets and deterministic blast-radius calculation.
+
+Neither capability redefines source Health, detector thresholds, baseline/review behavior, incident semantics or the established delivery-attempt state machine.
+
+```text
+Source observation / incident
+        ↓
+eligible notification candidate
+        ↓
+existing atomic delivery claim + idempotency
+        ↓
+TeamsWorkflowAdapter
+        ↓
+Microsoft Teams Workflow / Power Automate webhook
+```
+
+```text
+Source / Workbook / Semantic Model / Report / Custom assets
+        ↓
+explicit or discovered dependency edges
+        ↓
+cycle-safe downstream traversal
+        ↓
+blast radius
+        ↓
+Dependency Map + source downstream-impact context
+```
+
+Power BI Guard remains a separate DashboardGuard evidence boundary from v0.19:
 
 ```text
 AnalystWatch source observations
@@ -16,48 +45,157 @@ deterministic trust correlation
 Power BI Guard snapshot
         ↓
 DashboardGuard overview/detail
+        +
+successful evidence → discovered dependency edges
 ```
 
-The primary product risk addressed is false confidence: a Power BI refresh can complete successfully even when its upstream data is stale, incomplete or otherwise Critical.
+## Microsoft Teams delivery boundary
 
-## Guard definition
+`teams_delivery.py` contains the provider adapter and Adaptive Card construction. It does not own notification eligibility, delivery idempotency, retry timing or reconciliation state.
 
-`PowerBIGuardDefinition` contains only identifiers and a secret reference:
+`deliver_teams_candidate(...)` delegates those responsibilities to the existing monitoring storage contract:
 
-- AnalystWatch workspace ID;
-- Guard ID/name;
-- Power BI workspace/group ID;
-- semantic-model/dataset ID;
-- environment-variable name for the bearer token;
-- upstream AnalystWatch source IDs;
-- refresh-history limit.
+1. load/validate the eligible notification candidate;
+2. atomically claim the delivery attempt using the caller idempotency key;
+3. if the claim is a same-key replay of an existing successful/prepared attempt, do not issue another provider POST;
+4. post the Adaptive Card through `TeamsWorkflowAdapter` only for a newly claimed attempt;
+5. explicit provider rejection → Failed;
+6. successful provider acceptance → Succeeded;
+7. ambiguous transport exception → leave the attempt Prepared for explicit reconciliation.
 
-The bearer-token value is resolved at check time and is never written to the Guard definition or snapshot.
+This preserves the safety property established before v0.20: AnalystWatch does not infer the outcome of an ambiguous external side effect.
 
-## Evidence collection
+The adapter persists only bounded provider evidence. It does not persist the Teams webhook URL or raw provider response body.
 
-`read_power_bi_guard(...)` uses the Power BI REST API under `https://api.powerbi.com/v1.0/myorg`.
+## Teams runtime and web boundary
 
-Required evidence:
+`teams_web.py` resolves optional runtime configuration:
 
-- semantic-model metadata;
-- refresh history.
+- `ANALYSTWATCH_TEAMS_WORKFLOW_WEBHOOK_URL`;
+- `ANALYSTWATCH_PUBLIC_BASE_URL`.
 
-Best-effort evidence:
+If no webhook is configured, the application remains usable and the delivery action fails closed with a configuration error. If a webhook is configured, the public base URL is required.
 
-- workspace metadata;
-- report relationships;
-- datasource metadata.
+Routes:
 
-Required evidence failure returns an explicit unavailable/Warning Guard snapshot. Best-effort permission failures append evidence warnings but do not masquerade as a source-data failure.
+- `GET /api/delivery/teams/status` → configuration boolean only;
+- `POST /api/delivery-attempts/teams` → existing eligible-candidate delivery flow.
 
-Provider error bodies and bearer values are not copied into persisted error evidence.
+Authorization remains centralized in `web_auth.py`:
 
-## Deterministic trust correlation
+- Viewer → Teams status read;
+- Operator → Teams delivery action;
+- Admin remains required for unclassified configuration mutations.
 
-`correlate_power_bi_trust(...)` is deterministic and auditable.
+The implementation targets Microsoft **Teams Workflows / Power Automate** rather than the retired Office 365 Connector model.
 
-Important cases:
+## Dependency graph model
+
+`dependencies.py` defines deliberately lightweight analyst-facing graph primitives:
+
+- `AssetKind.SOURCE`;
+- `AssetKind.WORKBOOK`;
+- `AssetKind.SEMANTIC_MODEL`;
+- `AssetKind.REPORT`;
+- `AssetKind.CUSTOM`;
+- `AssetRef`;
+- `DependencyEdge`;
+- `BlastRadius`.
+
+A dependency edge records upstream → downstream direction, workspace ownership, relationship text and whether the relationship was explicitly supplied or discovered.
+
+`calculate_blast_radius(...)` performs deterministic cycle-safe downstream traversal. Descendants are deduplicated by asset key, so converging paths do not inflate the impacted-asset count.
+
+This is intentionally not SQL-column lineage or a Fabric/warehouse metadata catalogue.
+
+## Dependency persistence
+
+Dependency persistence is separate from `MonitoringStore` and `PowerBIGuardStore`.
+
+Local/SQLite runtime:
+
+- companion `*.dependencies.db` file;
+- workspace-scoped edge identity.
+
+PostgreSQL runtime:
+
+- dependency edges stored in AnalystWatch PostgreSQL;
+- workspace-scoped composite identity;
+- the same logical edge ID can exist independently in different workspaces.
+
+Keeping the graph separate avoids changing the already-verified source-observation schema.
+
+## Dependency service and discovery replacement
+
+`DependencyService` owns graph reads/writes and blast-radius calculation.
+
+Explicit edges are ordinary persisted relationships.
+
+Discovered edges can be replaced through a namespace-scoped operation. Replacement rules are deliberately conservative:
+
+- replacement edges must be marked discovered;
+- every replacement edge must match the requested namespace;
+- stale discovered edges are removed only inside that namespace;
+- explicit edges are never removed by discovery refresh;
+- discovered edges owned by another namespace are not touched.
+
+This gives provider discovery a bounded reconciliation mechanism instead of treating the graph as an unqualified overwrite.
+
+## Power BI → dependency integration
+
+Product v0.19 `PowerBIGuardDefinition`, evidence collection and deterministic trust correlation remain intact.
+
+After a successful available Power BI Guard check, `power_bi_web.py` converts evidence into discovered edges:
+
+- configured AnalystWatch source → semantic model;
+- semantic model → returned Power BI report.
+
+Edges are namespaced as `pbi:<guard_id>:`. A later successful check can remove stale relationships within that Guard's namespace.
+
+If the Power BI snapshot is unavailable, the dependency graph is not replaced. This prevents a temporary provider outage or permission problem from erasing the last known relationship evidence.
+
+## Dependency web/API boundary
+
+`dependency_web.py` registers a separate dependency surface:
+
+Read surfaces:
+
+- `GET /dependencies`;
+- `GET /api/dependencies/edges`;
+- `GET /api/dependencies/assets`;
+- `GET /api/dependencies/blast-radius`.
+
+Mutation surfaces:
+
+- `PUT /api/dependencies/edges/{edge_id}`;
+- `DELETE /api/dependencies/edges/{edge_id}`.
+
+Cross-workspace edges are rejected before persistence.
+
+Authorization uses the existing fail-closed rules:
+
+- Viewer → reads;
+- dependency mutations are Admin-level unless explicitly reclassified later.
+
+## Analyst-facing impact context
+
+The dynamic Dependency Map answers: **what may be affected downstream if this asset changes?**
+
+For each graph root, it shows the total downstream blast radius and recorded relationships. Explicit and discovered evidence remain distinguishable.
+
+The existing source detail page receives an additive `downstream_impact` value from the dependency service. When a monitored source has recorded descendants, the existing sidebar shows:
+
+- total downstream assets;
+- asset-kind counts;
+- link to the Dependency Map.
+
+No dependency relationship means no impact panel. The graph does not manufacture an impact claim when evidence is absent.
+
+The workspace overview and Power BI Guard dynamic pages link to the Dependency Map using existing navigation styling. No existing layout/CSS architecture was rewritten.
+
+## Preserved Power BI architecture
+
+Power BI Guard still correlates refresh evidence with existing source Health. Important deterministic cases remain:
 
 ```text
 refresh Completed + upstream all Healthy
@@ -85,77 +223,23 @@ no refresh history
 
 The Guard result never mutates the upstream source observation.
 
-## Orchestration
+`PowerBIGuardDefinition` continues to store identifiers and an environment-variable name for the bearer token, never the token value itself. Required semantic-model/refresh evidence and best-effort workspace/report/datasource evidence retain the v0.19 error/redaction behavior.
 
-`PowerBIGuardService` owns the integration seam:
+## Public/static boundary
 
-1. load the stored Guard definition;
-2. resolve the bearer token from its configured environment-variable name;
-3. load the latest AnalystWatch observation for each configured upstream source;
-4. pass those source Health values to the deterministic Power BI reader/correlator;
-5. persist the returned Guard snapshot.
+The public GitHub Pages build remains a read-only source-monitoring snapshot.
 
-A missing upstream source observation becomes `None` and is handled explicitly by the trust correlation.
+It does not fabricate:
 
-## Persistence
+- Teams delivery configuration or outcomes;
+- Power BI tenant evidence;
+- dynamic dependency graph state.
 
-`PowerBIGuardStore` is separate from `MonitoringStore`.
-
-Local/SQLite runtime:
-
-- companion `*.powerbi.db` file;
-- `(workspace_id, guard_id)` identity;
-- immutable time-keyed snapshot history.
-
-PostgreSQL runtime:
-
-- Guard definitions and snapshots live in the existing AnalystWatch PostgreSQL schema;
-- workspace-scoped composite identity;
-- no token value persisted.
-
-This separation avoids changing verified source-observation schemas merely to add downstream dashboard evidence.
-
-## Web/API boundary
-
-`power_bi_web.py` registers DashboardGuard routes without folding Power BI logic into the existing source controller.
-
-Read surfaces:
-
-- `GET /power-bi`;
-- `GET /power-bi/{guard_id}`;
-- Guard list/detail APIs.
-
-Mutation surfaces:
-
-- Guard configuration upsert;
-- explicit Guard check.
-
-Authorization remains centralized in the existing web authorization layer:
-
-- Viewer → read;
-- Operator → check;
-- Admin → Guard configuration mutation.
-
-Cross-workspace Guard definitions are rejected before persistence.
-
-## Analyst-facing UI
-
-The dynamic application exposes DashboardGuard from the existing product navigation.
-
-The overview explains why a successful refresh can still be unsafe. The detail page prioritizes:
-
-1. trust result;
-2. latest refresh state and duration;
-3. upstream AnalystWatch source health;
-4. reports potentially affected;
-5. recent refresh history;
-6. datasource/workspace evidence and permission limitations.
-
-The static GitHub Pages build does not show the dynamic DashboardGuard navigation when no hosted Guard state/tenant credential exists. AnalystWatch does not fabricate Power BI health for the public demo.
+Dynamic DashboardGuard/Dependency Map navigation is therefore not injected into the static overview.
 
 ## Preserved behavior
 
-Product v0.19 does not change:
+Product v0.20 does not change:
 
 - CSV/XLSX/JSON/API/Microsoft Excel ingestion;
 - source detector thresholds;
@@ -164,18 +248,34 @@ Product v0.19 does not change:
 - row-level comparison semantics/retention;
 - source incident lifecycle;
 - notification candidate policy;
-- email/dry-run delivery state machine;
+- delivery attempt Prepared/Succeeded/Failed semantics;
+- delivery retry/reconciliation safety;
+- live-email adapter behavior;
 - source scheduler;
 - existing public Pages source-state policy.
 
 ## Verification
 
-The frozen v0.19 functional checkpoint passed **196 tests**, Ruff and compile checks against PostgreSQL 16 CI.
+The verified v0.20 functional checkpoint passed **212 tests**, Ruff and compile/import checks against PostgreSQL 16 CI.
 
-Coverage includes deterministic Power BI trust cases, REST evidence handling, secret redaction, SQLite/PostgreSQL Guard persistence, orchestration with current AnalystWatch source health, web rendering, workspace rejection and Viewer/Operator/Admin route classification.
+Coverage includes:
 
-No real Microsoft tenant credential was available in this repository session. Therefore the implementation/API contract is verified, but live tenant access is not claimed.
+- Teams Adaptive Card request behavior;
+- same-key replay/idempotency;
+- explicit rejection and ambiguous transport handling;
+- secret-safe web configuration/status;
+- Viewer/Operator/Admin route classification;
+- SQLite/PostgreSQL dependency workspace isolation;
+- cycle-safe blast radius;
+- dependency API/UI rendering;
+- source-detail downstream-impact propagation;
+- Power BI discovery-edge synchronization and stale-edge replacement;
+- the existing Power BI trust/persistence/security suite.
+
+No real Teams Workflows webhook was supplied in this repository session. Therefore adapter/API/state-machine behavior is verified, but a real Teams side effect is not claimed.
+
+No real Power BI tenant credential was supplied either, so live Microsoft tenant access remains unverified.
 
 ## Next architecture step
 
-Product v0.20 should add Microsoft Teams through the existing delivery-attempt architecture and introduce lightweight dependency edges/blast-radius calculation across analyst-facing assets. It should not attempt enterprise SQL-column lineage.
+Product v0.21 should make ambiguous delivery outcomes operationally visible: surface stale Prepared attempts, provide bounded reconciliation-monitoring views and tighten operator workflows without weakening the existing idempotency/reconciliation model.

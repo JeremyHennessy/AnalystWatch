@@ -27,6 +27,7 @@ _OPERATOR_MUTATIONS = (
     re.compile(r"^/api/sources/[^/]+/observations/[^/]+/review$"),
     re.compile(r"^/api/notification-candidates/evaluate$"),
     re.compile(r"^/api/delivery-attempts/dry-run$"),
+    re.compile(r"^/api/delivery-attempts/teams$"),
     re.compile(r"^/api/delivery-attempts/[^/]+/reconcile$"),
     re.compile(r"^/api/power-bi/guards/[^/]+/check$"),
     re.compile(r"^/api/check-due$"),
