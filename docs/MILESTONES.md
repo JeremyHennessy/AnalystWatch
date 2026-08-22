@@ -60,62 +60,42 @@ Added safe `legacy` / `namespaced` runtime selection, pre-initialization schema 
 
 Added workspace-aware PostgreSQL persistence behind `MonitoringStore`, PostgreSQL row-lock claim/reconciliation safety, runtime DSN selection, namespaced → PostgreSQL import, PostgreSQL verification and real PostgreSQL 16 CI conformance. Clean gate: 143 tests; hosted default-legacy state verified after merge. This was a persistence contract proof, not a managed PostgreSQL deployment.
 
-## Core v0.15 — Authenticated workspace authorization — current
+## Core v0.15 — Authenticated workspace authorization — complete
+
+Added provider-neutral authenticated principals, signed-bearer mode, persistent SQLite/PostgreSQL workspace memberships, Viewer/Operator/Admin authorization, fail-closed FastAPI enforcement and cross-workspace/security-negative tests. Clean gate: 156 tests; hosted local-auth compatibility verified after merge.
+
+## Core v0.16 — Managed runtime + first live email delivery — current candidate
 
 Implemented and verified on the functional checkpoint:
 
-- separate provider-neutral authenticated-principal model
-- opt-in `signed-bearer` web auth mode; safe default remains `local`
-- HMAC-SHA256 signed bearer verification with principal subject and optional expiry
-- bearer tokens do not carry trusted workspace authority
-- separate `MembershipStore` contract so RBAC does not modify `MonitoringStore`
-- SQLite sidecar membership persistence for local/test use
-- PostgreSQL workspace membership persistence in `analystwatch.workspace_memberships`
-- initial roles: Viewer, Operator and Admin
-- explicit role ordering and capability enforcement
-- centralized FastAPI authorization middleware
-- authority chain enforced as principal → bound-workspace membership → role → capability → operation
-- missing authentication returns 401 in signed mode
-- authenticated non-members return 403
-- Viewer mutations denied
-- Operator administrative mutations denied
-- Admin membership and source-configuration operations permitted
-- workspace-A users denied reads and operations against workspace B
-- arbitrary payload `workspace_id` cannot override the bound workspace
-- unclassified remote mutations fail closed as Admin-only
-- `/healthz` and static assets remain intentionally outside the authenticated application boundary
-- local mode preserves existing unauthenticated local/hosted workflow behavior
-- no unauthenticated first-Admin bootstrap endpoint; initial Admin seeding is a trusted deployment responsibility
-- PostgreSQL membership persistence exercised against the real PostgreSQL 16 CI service
-- clean functional checkpoint reached **156 passing tests**
+- `DeliveryMode.LIVE` without changing the existing dry-run path
+- Resend email adapter behind the existing Eligible-candidate delivery-attempt contract
+- provider idempotency header using the AnalystWatch idempotency key
+- live attempt state persisted before external I/O
+- provider acceptance → Succeeded
+- definitive provider rejection → Failed
+- transport uncertainty remains Prepared for explicit reconciliation
+- same-key replay does not execute a second provider request
+- analyst-oriented email content with source/workspace/transition/severity/findings/impact/investigation/link
+- secret/DSN/idempotency-key redaction from email and stored result/error surfaces
+- environment-backed managed-runtime configuration
+- PostgreSQL schema/startup verification
+- PostgreSQL workspace-membership initialization
+- trusted first-Admin bootstrap with non-Admin conflict refusal
+- dedicated external managed PostgreSQL validation project
+- isolated managed-database recovery rehearsal with state removal and reset-from-parent recovery
+- temporary recovery branches cleaned up after verification
+- clean functional checkpoint: **164 tests**, Ruff/compile green, PostgreSQL 16 CI green
+- live-source smoke green
 
-Core v0.15 proves the application authorization boundary. It does **not** add OAuth/OIDC, SSO, user-account lifecycle, managed deployment, billing or real notification delivery.
+Still intentionally not claimed by the candidate:
 
-## Candidate Core v0.16 — managed deployment + first real email delivery
+- the existing GitHub-hosted app has not been cut over from legacy SQLite/local auth;
+- no production application deployment target is configured;
+- no real Resend credential/sender has been configured through this repository session;
+- therefore a successful real external email side effect is not yet claimed.
 
-Proceed only after v0.15 merge/hosted compatibility verification.
-
-Managed runtime work:
-
-- provision/configure managed PostgreSQL without committing credentials
-- secret injection and rotation boundary
-- explicit schema migration/version/startup checks
-- trusted initial Admin provisioning
-- backup/retention policy
-- point-in-time recovery where supported
-- restore rehearsal
-- connection-pool/runtime sizing
-- health checks and observability
-- controlled hosted cutover with rollback evidence
-
-First real external delivery:
-
-- implement email behind the existing delivery abstraction
-- preserve Eligible-candidate requirement
-- preserve idempotency, claim ownership and Prepared state
-- record success/failure deterministically
-- preserve retry timing and reconciliation semantics
-- verify actual external side effects without exposing secrets, DSNs, authorization headers or idempotency keys
+The managed PostgreSQL validation environment proves infrastructure/storage recovery mechanics, not production application deployment.
 
 ## Product roadmap after Core v0.16
 
