@@ -33,7 +33,7 @@
     </header>
 
     {% if static_mode %}
-      <div class="deployment-note compact"><strong>Read-only monitoring snapshot</strong><span>Checks run automatically · Snapshot {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</span></div>
+      <div class="deployment-note compact"><strong>Read-only Pages view</strong><span>Monitoring snapshot · Checks run automatically · Snapshot {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</span></div>
     {% endif %}
 
     {% if latest %}
@@ -88,28 +88,20 @@
 
           <section class="panel" id="history">
             <div class="section-title"><div><p class="section-kicker">WHEN DID IT CHANGE?</p><h2>Recent health history</h2></div><span>Latest {{ history|length }}</span></div>
-            <div class="health-timeline">
-              {% for item in history %}<div class="timeline-item"><span class="timeline-dot status-dot-{{ item.health.value|lower }}"></span><div><strong>{{ item.health.value }}</strong><span>{{ item.observed_at.strftime('%b %d · %H:%M UTC') }}</span></div>{% if baseline and item.id == baseline.id %}<span class="baseline-chip">Baseline</span>{% endif %}</div>{% endfor %}
-            </div>
+            <div class="health-timeline">{% for item in history %}<div class="timeline-item"><span class="timeline-dot status-dot-{{ item.health.value|lower }}"></span><div><strong>{{ item.health.value }}</strong><span>{{ item.observed_at.strftime('%b %d · %H:%M UTC') }}</span></div>{% if baseline and item.id == baseline.id %}<span class="baseline-chip">Baseline</span>{% endif %}</div>{% endfor %}</div>
           </section>
 
-          {% if latest.profile %}
-          <section class="panel"><div class="section-title"><div><p class="section-kicker">CURRENT SNAPSHOT</p><h2>Current profile</h2></div></div><div class="profile-grid"><div><span>Rows</span><strong>{{ latest.profile.row_count }}</strong></div><div><span>Columns</span><strong>{{ latest.profile.column_count }}</strong></div><div><span>Latest date</span><strong>{% if latest.profile.latest_date %}{{ latest.profile.latest_date }}{% else %}Not established{% endif %}</strong>{% if latest.profile.latest_date_field %}<small>{{ latest.profile.latest_date_field }}</small>{% endif %}</div></div></section>
-          {% endif %}
+          {% if latest.profile %}<section class="panel"><div class="section-title"><div><p class="section-kicker">CURRENT SNAPSHOT</p><h2>Current profile</h2></div></div><div class="profile-grid"><div><span>Rows</span><strong>{{ latest.profile.row_count }}</strong></div><div><span>Columns</span><strong>{{ latest.profile.column_count }}</strong></div><div><span>Latest date</span><strong>{% if latest.profile.latest_date %}{{ latest.profile.latest_date }}{% else %}Not established{% endif %}</strong>{% if latest.profile.latest_date_field %}<small>{{ latest.profile.latest_date_field }}</small>{% endif %}</div></div></section>{% endif %}
         </div>
 
         <aside class="detail-side">
-          {% if latest.health.value != 'Healthy' %}
-          <section class="panel action-panel"><p class="section-kicker">REVIEW STATUS</p><h2>{% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed incident{% endif %}</h2><p>Review state records analyst attention. It does not claim the upstream issue is fixed.</p>{% if not static_mode %}<div class="stacked-actions"><form method="post" action="/sources/{{ source.id }}/review?state=Acknowledged"><button class="button button-secondary" type="submit">Acknowledge</button></form><form method="post" action="/sources/{{ source.id }}/review?state=Reviewed"><button class="button button-primary" type="submit">Mark reviewed</button></form></div>{% endif %}</section>
-          {% endif %}
+          {% if latest.health.value != 'Healthy' %}<section class="panel action-panel"><p class="section-kicker">REVIEW STATUS</p><h2>{% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed incident{% endif %}</h2><p>Review state records analyst attention. It does not claim the upstream issue is fixed.</p>{% if not static_mode %}<div class="stacked-actions"><form method="post" action="/sources/{{ source.id }}/review?state=Acknowledged"><button class="button button-secondary" type="submit">Acknowledge</button></form><form method="post" action="/sources/{{ source.id }}/review?state=Reviewed"><button class="button button-primary" type="submit">Mark reviewed</button></form></div>{% endif %}</section>{% endif %}
 
           {% if incident %}
-          <section class="panel incident-stats"><p class="section-kicker">Incident lifecycle</p><h2>{{ incident.status.value }}</h2><dl class="compact-stats"><div><dt>Peak severity</dt><dd class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</dd></div><div><dt>Affected checks</dt><dd>{{ incident.observation_count }}</dd></div><div><dt>Notification candidates</dt><dd>{{ notification_candidate_count }}</dd></div><div><dt>Delivery attempts</dt><dd>{{ delivery_attempt_count }}</dd></div></dl><p class="muted delivery-summary">Dry-run attempts: {{ delivery_attempt_count }} total · {{ delivery_attempt_states.Succeeded }} Succeeded · {{ delivery_attempt_states.Failed }} Failed · {{ delivery_attempt_states.Prepared }} Prepared.</p>{% if incident.status.value == 'Recovered' %}<p class="healthy-note compact-note"><strong>Recovered {{ incident.recovered_at.strftime('%b %d · %H:%M UTC') }}</strong></p>{% endif %}</section>
+          <section class="panel incident-stats"><p class="section-kicker">Incident lifecycle</p><h2>{{ incident.status.value }}</h2><dl class="compact-stats"><div><dt>Peak severity</dt><dd class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</dd></div><div><dt>Affected checks</dt><dd>{{ incident.observation_count }}</dd></div><div><dt>Notification candidates</dt><dd>{{ notification_candidate_count }}</dd></div><div><dt>Delivery attempts</dt><dd>{{ delivery_attempt_count }}</dd></div></dl><p class="muted policy-summary">Candidate policy: {{ notification_candidate_states.Eligible }} Eligible · {{ notification_candidate_states.Suppressed }} Suppressed · {{ notification_candidate_states.Pending }} Pending.</p><p class="muted delivery-summary">Dry-run attempts: {{ delivery_attempt_count }} total · {{ delivery_attempt_states.Succeeded }} Succeeded · {{ delivery_attempt_states.Failed }} Failed · {{ delivery_attempt_states.Prepared }} Prepared.</p>{% if incident.status.value == 'Recovered' %}<p class="healthy-note compact-note"><strong>Recovered {{ incident.recovered_at.strftime('%b %d · %H:%M UTC') }}</strong></p>{% endif %}</section>
           {% endif %}
 
-          {% if baseline_review and baseline_review.candidate and baseline_review.current_baseline and baseline_review.candidate.id != baseline_review.current_baseline.id %}
-          <section class="panel action-panel"><p class="section-kicker">BASELINE REVIEW</p><h2>{{ 'Ready to promote' if baseline_review.ready else 'Promotion blocked' }}</h2>{% if baseline_review.blockers %}<p>{{ baseline_review.blockers|join(' ') }}</p>{% elif not static_mode %}<p>Candidate is Healthy and can become the new trusted comparison point.</p><form method="post" action="/sources/{{ source.id }}/baseline?candidate_id={{ baseline_review.candidate.id }}&expected_current_baseline_id={{ baseline_review.current_baseline.id }}"><button class="button button-secondary" type="submit">Promote baseline</button></form>{% endif %}</section>
-          {% endif %}
+          {% if baseline_review and baseline_review.candidate and baseline_review.current_baseline and baseline_review.candidate.id != baseline_review.current_baseline.id %}<section class="panel action-panel"><p class="section-kicker">BASELINE REVIEW</p><h2>{{ 'Ready to promote' if baseline_review.ready else 'Promotion blocked' }}</h2>{% if baseline_review.blockers %}<p>{{ baseline_review.blockers|join(' ') }}</p>{% elif not static_mode %}<p>Candidate is Healthy and can become the new trusted comparison point.</p><form method="post" action="/sources/{{ source.id }}/baseline?candidate_id={{ baseline_review.candidate.id }}&expected_current_baseline_id={{ baseline_review.current_baseline.id }}"><button class="button button-secondary" type="submit">Promote baseline</button></form>{% endif %}</section>{% endif %}
         </aside>
       </section>
     {% else %}
@@ -128,7 +120,7 @@
         <div><dt>Delivery retry delay</dt><dd>{% if source.config.delivery_retry_minutes %}{{ source.config.delivery_retry_minutes }} min after Failed{% else %}Immediate after Failed{% endif %}</dd></div>
         <div><dt>Request headers</dt><dd>{% if source.config.request_header_env %}{% if static_mode %}{{ source.config.request_header_env|length }} environment-backed header{{ '' if source.config.request_header_env|length == 1 else 's' }} configured; values and environment-variable names are not published{% else %}{% for header, env_name in source.config.request_header_env.items() %}<code>{{ header }}</code> ← <code>{{ env_name }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}{% else %}None configured{% endif %}</dd></div>
       </dl>
-      {% if static_mode %}<div class="safety-note"><strong>Delivery safety</strong><p>Core v0.7 dry-run attempts perform no external delivery or network request. Prepared attempts that may have ambiguous external outcomes still require explicit reconciliation before retry.</p></div>{% endif %}
+      {% if static_mode %}<div class="safety-note"><strong>Delivery safety</strong><p>This Read-only Pages view preserves the original static boundary: Core v0.6 still does not send email, Slack, webhooks, or other outbound notifications from Pages. Core v0.7 dry-run attempts perform no external delivery or network request. Prepared attempts that may have ambiguous external outcomes still require explicit reconciliation before retry.</p></div>{% endif %}
     </details>
   </main>
 </body>
