@@ -55,6 +55,7 @@ class DeliveryReconciliationOutcome(str, Enum):
 
 class DeliveryMode(str, Enum):
     DRY_RUN = "dry-run"
+    LIVE = "live"
 
 
 class MonitoringConfig(BaseModel):
