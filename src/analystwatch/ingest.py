@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pandas as pd
 
+from .google_sheets import read_google_sheets_range
 from .microsoft_excel import read_microsoft_excel_table
 from .models import SourceDefinition, SourceType
 
@@ -91,6 +92,21 @@ def ingest_source(
                 http_status=result.http_status,
                 response_ms=result.response_ms,
                 source_modified_at=result.source_modified_at,
+                response_etag=result.response_etag,
+                error=result.error,
+            )
+        if source.source_type == SourceType.GOOGLE_SHEETS:
+            result = read_google_sheets_range(
+                source.location,
+                headers=_request_headers(source),
+                timeout_seconds=source.config.request_timeout_seconds,
+                client=client,
+            )
+            return IngestionResult(
+                available=result.available,
+                dataframe=result.dataframe,
+                http_status=result.http_status,
+                response_ms=result.response_ms,
                 response_etag=result.response_etag,
                 error=result.error,
             )

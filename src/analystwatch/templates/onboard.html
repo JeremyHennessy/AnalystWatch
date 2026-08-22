@@ -22,7 +22,7 @@
       <form id="source-form" class="form-grid">
         <label><span>Source ID</span><input id="source-id" required pattern="[A-Za-z0-9_.-]+" placeholder="monthly-sales"></label>
         <label><span>Name</span><input id="source-name" required placeholder="Monthly Sales"></label>
-        <label><span>Source type</span><select id="source-type"><option value="csv">CSV file</option><option value="xlsx">Excel file</option><option value="json">JSON file</option><option value="api">REST API</option><option value="microsoft_excel">Microsoft 365 Excel</option></select></label>
+        <label><span>Source type</span><select id="source-type"><option value="csv">CSV file</option><option value="xlsx">Excel file</option><option value="json">JSON file</option><option value="api">REST API</option><option value="microsoft_excel">Microsoft 365 Excel</option><option value="google_sheets">Google Sheets</option></select></label>
         <label id="generic-location-field" class="span-two"><span>Path or URL</span><input id="source-location" placeholder="https://example.com/data.json"></label>
 
         <div id="microsoft-fields" class="span-two" hidden>
@@ -33,6 +33,17 @@
             <label><span>Excel table</span><input id="microsoft-table" placeholder="SalesTable"></label>
             <label><span>Worksheet <small>optional</small></span><input id="microsoft-worksheet" placeholder="Data"></label>
             <label class="span-two"><span>Microsoft token environment variable</span><input id="microsoft-token-env" value="ANALYSTWATCH_MICROSOFT_AUTHORIZATION" placeholder="ANALYSTWATCH_MICROSOFT_AUTHORIZATION"><small>Set this environment variable to the delegated authorization value, for example <code>Bearer …</code>. The secret value is never saved by AnalystWatch.</small></label>
+          </div>
+        </div>
+
+        <div id="google-fields" class="span-two" hidden>
+          <div class="form-section"><strong>Google Sheets range</strong><span>Use a Google Sheets spreadsheet ID and an explicit A1 range. AnalystWatch reads the range through the Google Sheets API and stores only the environment-variable reference for authorization.</span></div>
+          <div class="form-grid google-grid">
+            <label><span>Spreadsheet ID</span><input id="google-spreadsheet-id" placeholder="1AbC… spreadsheet ID"></label>
+            <label><span>A1 range</span><input id="google-range" placeholder="Data!A1:Z5000"></label>
+            <label><span>Header row</span><input id="google-header-row" type="number" min="1" max="1000" value="1"><small>One-based row within the returned A1 range.</small></label>
+            <label><span>Google token environment variable</span><input id="google-token-env" value="ANALYSTWATCH_GOOGLE_AUTHORIZATION" placeholder="ANALYSTWATCH_GOOGLE_AUTHORIZATION"><small>Set this environment variable to an authorization value such as <code>Bearer …</code>. The secret value is never saved by AnalystWatch.</small></label>
+            <div class="form-section span-two"><strong>Freshness evidence</strong><span>Google Sheets range reads do not provide a sheet modification timestamp. If you configure an expected refresh interval, also configure a freshness date field or conservative date inference so preflight can verify freshness.</span></div>
           </div>
         </div>
 
@@ -103,8 +114,22 @@ function microsoftLocation() {
   return `m365://${drive}/${item}?${params.toString()}`;
 }
 
+function googleLocation() {
+  const spreadsheet = value('google-spreadsheet-id');
+  const range = value('google-range');
+  const headerRow = Number(value('google-header-row') || 1);
+  if (!spreadsheet || !range) throw new Error('Google Sheets requires Spreadsheet ID and A1 range.');
+  if (!Number.isInteger(headerRow) || headerRow < 1 || headerRow > 1000) {
+    throw new Error('Google Sheets header row must be an integer between 1 and 1000.');
+  }
+  const params = new URLSearchParams({range, header_row: String(headerRow)});
+  return `gsheets://${spreadsheet}?${params.toString()}`;
+}
+
 function sourcePayload() {
-  const isMicrosoft = value('source-type') === 'microsoft_excel';
+  const type = value('source-type');
+  const isMicrosoft = type === 'microsoft_excel';
+  const isGoogle = type === 'google_sheets';
   let headers = mapping('request-header-env');
   let location = value('source-location');
   if (isMicrosoft) {
@@ -112,12 +137,17 @@ function sourcePayload() {
     if (!tokenEnv) throw new Error('Microsoft token environment variable is required.');
     headers = {Authorization: tokenEnv};
     location = microsoftLocation();
+  } else if (isGoogle) {
+    const tokenEnv = value('google-token-env');
+    if (!tokenEnv) throw new Error('Google token environment variable is required.');
+    headers = {Authorization: tokenEnv};
+    location = googleLocation();
   }
   if (!location) throw new Error('A path or URL is required.');
   return {
     id: value('source-id'),
     name: value('source-name'),
-    source_type: value('source-type'),
+    source_type: type,
     location,
     enabled: true,
     config: {
@@ -125,8 +155,8 @@ function sourcePayload() {
       expected_refresh_minutes: optionalNumber('refresh-interval'),
       latest_date_field: value('latest-date') || null,
       infer_latest_date_field: document.getElementById('infer-date').checked,
-      sheet_name: isMicrosoft ? null : (value('sheet-name') || null),
-      json_record_path: isMicrosoft ? null : (value('json-path') || null),
+      sheet_name: type === 'xlsx' ? (value('sheet-name') || null) : null,
+      json_record_path: type === 'json' ? (value('json-path') || null) : null,
       numeric_fields: list('numeric-fields'),
       unique_keys: list('unique-keys'),
       request_header_env: headers
@@ -137,14 +167,20 @@ function sourcePayload() {
 function updateSourceFields() {
   const type = value('source-type');
   const isMicrosoft = type === 'microsoft_excel';
+  const isGoogle = type === 'google_sheets';
+  const isConnector = isMicrosoft || isGoogle;
   document.getElementById('microsoft-fields').hidden = !isMicrosoft;
-  document.getElementById('generic-location-field').hidden = isMicrosoft;
-  document.getElementById('api-secret-section').hidden = isMicrosoft;
+  document.getElementById('google-fields').hidden = !isGoogle;
+  document.getElementById('generic-location-field').hidden = isConnector;
+  document.getElementById('api-secret-section').hidden = isConnector;
   document.getElementById('json-path-field').hidden = type !== 'json';
   document.getElementById('sheet-name-field').hidden = type !== 'xlsx';
-  document.getElementById('source-location').required = !isMicrosoft;
+  document.getElementById('source-location').required = !isConnector;
   for (const id of ['microsoft-drive-id', 'microsoft-item-id', 'microsoft-table', 'microsoft-token-env']) {
     document.getElementById(id).required = isMicrosoft;
+  }
+  for (const id of ['google-spreadsheet-id', 'google-range', 'google-header-row', 'google-token-env']) {
+    document.getElementById(id).required = isGoogle;
   }
 }
 

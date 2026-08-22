@@ -13,6 +13,7 @@ class SourceType(str, Enum):
     JSON = "json"
     API = "api"
     MICROSOFT_EXCEL = "microsoft_excel"
+    GOOGLE_SHEETS = "google_sheets"
 
 
 class HealthStatus(str, Enum):

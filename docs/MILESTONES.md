@@ -86,112 +86,92 @@ Raw row snapshots and key/value samples remain bounded and are not published in 
 
 ## Product v0.19 — Power BI Guard — complete
 
-Implemented and verified on the frozen functional checkpoint:
+Implemented workspace-scoped Power BI Guard definitions, environment-backed bearer-token references, semantic-model/refresh evidence, best-effort report/workspace/datasource evidence, existing-source Health correlation, deterministic false-confidence handling, analyst-facing Guard pages, SQLite/PostgreSQL persistence and Viewer/Operator/Admin route boundaries.
 
-- workspace-scoped Power BI Guard definitions
-- environment-variable reference for the delegated bearer token; token value is never persisted
-- semantic-model metadata and refreshability evidence
-- refresh history, status, start/end times and duration
-- best-effort workspace/report/datasource metadata
-- report-to-semantic-model relationships
-- current AnalystWatch upstream source-health correlation
-- deterministic false-confidence case: refresh Completed + upstream Critical => Guard Critical
-- Warning for completed refresh with Warning or unobserved upstream sources
-- Critical for Failed/Cancelled/Disabled refresh
-- explicit unconfirmed trust for incomplete/unknown/missing refresh evidence
-- secret-safe provider error handling
-- SQLite and PostgreSQL Guard definition/snapshot persistence
-- Power BI Guard orchestration service using current AnalystWatch source observations
-- analyst-facing DashboardGuard overview and detail pages
-- upstream source status, downstream reports, refresh history and datasource-type evidence in the Guard UI
-- Viewer read / Operator check / Admin configuration route boundaries
-- cross-workspace Guard configuration rejection
-- dynamic SourceGuard → DashboardGuard navigation
-- static GitHub Pages intentionally do not fabricate Power BI state when no hosted Guard/credential exists
-- frozen functional checkpoint: **196 tests**, Ruff/compile green, PostgreSQL 16 CI green
+Frozen checkpoint: **196 tests**, Ruff/compile green, PostgreSQL 16 CI green.
 
-Explicit non-goals preserved:
-
-- no Power BI refresh triggering;
-- no full Fabric/warehouse lineage catalogue;
-- no source detector threshold changes;
-- no redefinition of upstream source Health;
-- no separate notification state machine;
-- no claim of live Microsoft tenant access without a real credential.
+No Power BI refresh triggering, full Fabric lineage catalogue, source Health redefinition or live Microsoft-tenant claim was introduced.
 
 ## Product v0.20 — Microsoft Teams + dependency graph / blast radius — complete
 
-Implemented on top of the verified v0.19 baseline:
+Implemented:
 
-- Microsoft Teams Workflows / Power Automate webhook adapter using Adaptive Cards
-- environment-backed Teams webhook and public base URL configuration
-- reuse of the existing eligible-candidate and delivery-attempt state machine
-- atomic claim, caller idempotency, retry and reconciliation semantics preserved for Teams
-- same-key replay protection against duplicate external POSTs
-- explicit provider rejection → Failed; ambiguous transport failure → Prepared for reconciliation
-- Teams status route exposes only configured/unconfigured state and never the webhook URL
-- Teams delivery action is Operator-level; configuration/mutation boundaries remain fail closed
-- Source / Workbook / Semantic Model / Report / Custom dependency asset types
-- explicit and discovered dependency edges
-- workspace-scoped SQLite and PostgreSQL dependency persistence
-- deterministic cycle-safe blast-radius traversal without duplicate descendant counts
-- analyst-facing `/dependencies` Dependency Map plus dependency read/mutation/blast-radius API routes
-- Power BI evidence discovery for configured source → semantic model and semantic model → report relationships
-- per-Guard discovered-edge namespaces so refreshes replace only their own stale discovered relationships
-- unavailable Power BI evidence does not erase the last known dependency graph
-- additive source-detail Downstream impact panel using the recorded dependency graph
-- dynamic SourceGuard / Power BI Guard navigation to the Dependency Map
-- no detector, source Health, baseline, incident or existing delivery-state semantics changed
-- verified checkpoint: **212 tests**, Ruff/compile green, PostgreSQL 16 CI green
-- merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`
+- Microsoft Teams Workflows / Power Automate Adaptive Card delivery;
+- environment-backed Teams webhook/public base URL configuration;
+- reuse of existing eligible-candidate, atomic claim, idempotency, retry and reconciliation semantics;
+- Source / Workbook / Semantic Model / Report / Custom dependency assets;
+- explicit/discovered workspace-scoped dependency edges;
+- SQLite/PostgreSQL dependency persistence;
+- deterministic cycle-safe blast radius;
+- Power BI source → semantic model → report discovery;
+- additive source-detail downstream-impact context.
 
-Explicit non-goals / unverified boundaries preserved:
+Verified checkpoint: **212 tests**, Ruff/compile green, PostgreSQL 16 CI green. Merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`.
 
-- no retired Office 365 Connector implementation;
-- no enterprise SQL-column/Fabric lineage catalogue;
-- no separate Teams notification state machine;
-- no source detector threshold changes or Health redefinition;
-- no claim of a real Teams side effect because no real Teams Workflows webhook was supplied in this repository session;
-- no claim of live Microsoft Power BI tenant access because no real tenant credential was supplied;
-- static GitHub Pages do not fabricate dynamic Teams, Power BI or dependency state.
+No retired Office 365 Connector implementation, enterprise SQL-column lineage, separate Teams state machine, source Health changes or unverified Microsoft side-effect claims were introduced.
 
-## Product v0.21 — reconciliation monitor / ambiguous delivery operations — current release
+## Product v0.21 — reconciliation monitor / ambiguous delivery operations — complete
 
-Implemented from the exact verified v0.20 merge baseline:
+Implemented:
 
-- read-only reconciliation queue derived from existing delivery-attempt state
-- only unresolved `Prepared` attempts enter the queue
-- default stale threshold of 30 minutes
-- oldest unresolved attempts first
-- bounded 5,000-attempt storage scan and separate 100-item output/display limit
-- explicit `scan_limit_reached` and `item_limit_reached` evidence instead of claiming exhaustive history
-- bounded queue fields exclude idempotency keys, claim owners, provider raw results/errors and reconciliation notes
-- analyst-facing `/reconciliation` Delivery Ops view
-- `GET /api/delivery-reconciliation` bounded read API
-- evidence-note reconciliation form for explicit Succeeded / Failed outcomes
-- existing reconciliation state transition remains authoritative; no new notification/delivery state machine
-- no automatic retry when an operator reconciles an attempt to Failed
-- existing retry policy continues to decide whether/when a later attempt can be claimed
-- signed-bearer UI and API reconciliation persist the authenticated operator as `reconciled_by`
-- Viewer read / Operator reconciliation boundaries; other mutations remain fail closed
-- dynamic application navigation exposes Delivery Ops without adding it to the static Pages overview
-- functional checkpoint: **225 tests**, Ruff/compile green, PostgreSQL 16 CI green
+- read-only reconciliation queue derived from existing `Prepared` delivery attempts;
+- default 30-minute stale threshold;
+- oldest unresolved attempts first;
+- bounded 5,000-attempt scan and separate 100-item display/output limit;
+- explicit scan/output limit evidence;
+- queue privacy boundary excluding idempotency keys, claim owners, provider raw evidence and reconciliation notes;
+- `/reconciliation` Delivery Ops view and bounded read API;
+- evidence-note reconciliation to existing Succeeded/Failed states;
+- authenticated `reconciled_by` attribution for UI and API paths;
+- Viewer read / Operator reconcile boundaries;
+- dynamic-only Delivery Ops navigation, omitted from static Pages.
 
-Explicit non-goals preserved:
+Final exact-head CI passed **226 tests, 1 warning** with Ruff/compile/PostgreSQL 16. Merged to `main` at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`.
 
-- no automatic guessing of an ambiguous provider outcome;
-- no automatic retry of Prepared attempts;
-- no provider-specific reconciliation polling in this milestone;
-- no detector threshold or source Health changes;
-- no unrelated UI redesign;
-- no new delivery-attempt persistence schema;
-- static GitHub Pages do not fabricate reconciliation state.
+No automatic ambiguity inference, automatic retry, provider-specific reconciliation polling, detector/Health change, UI redesign or new delivery-state schema was introduced.
 
-## Product roadmap after v0.21
+## Product v0.22 — Google Sheets connector — current release candidate
+
+Implemented from exact v0.21 merge baseline `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`:
+
+- new `google_sheets` source type;
+- `gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]` source location contract;
+- Google Sheets API v4 `spreadsheets.values.get` read path;
+- row-major retrieval with `UNFORMATTED_VALUE` numeric rendering and formatted date/time evidence;
+- environment-backed Authorization header reference through the existing `request_header_env` contract;
+- bearer-token value is never persisted in the source definition;
+- deterministic configured header-row parsing relative to the returned range;
+- short rows padded to the header width and fully blank rows ignored;
+- duplicate/empty headers and rows wider than the header fail closed;
+- existing numeric-field, unique-key, latest-date and freshness preflight contracts reused unchanged;
+- no fabricated Google Sheets modification timestamp;
+- expected refresh requires content-date evidence or preflight reports `freshness_unverifiable`;
+- static Pages redact spreadsheet ID, internal `gsheets://` location and token environment-variable name;
+- public location is bounded to `Google Sheets · <A1 range>`;
+- existing Add Source UI now exposes Spreadsheet ID, A1 range, header row and token environment reference;
+- no new UI/CSS architecture, detector thresholds, source Health semantics or persistence schema.
+
+Functional checkpoint on `9cb60774817a2a637a1714a5c15ccd643faa4324`:
+
+- **236 passed, 1 warning**;
+- Ruff green;
+- compile/import green;
+- PostgreSQL 16 CI green;
+- live-source smoke #80 green.
+
+Explicit non-goals / unverified boundaries:
+
+- no Google SDK dependency;
+- no OAuth refresh-token management;
+- no service-account key exchange;
+- no Google Sheets write access;
+- no parallel onboarding/monitoring state machine;
+- no claim of live Google Workspace access because no real Google credential was supplied in this repository session.
+
+## Product roadmap after v0.22
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.22 — Google Sheets connector
 - Product v0.23 — business rules / Data Rules
 - Product v0.24 — reliability scorecards + trust badge
 - Product v0.25 — preconfigured source packs

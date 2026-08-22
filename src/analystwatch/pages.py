@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .google_sheets import public_google_sheets_location
 from .incidents import latest_incident
 from .models import DeliveryAttempt, NotificationCandidate, SourceDefinition, SourceType
 from .row_diff import strip_row_diff_raw_payloads
@@ -22,6 +23,8 @@ def _public_location(source: SourceDefinition) -> str:
         parsed = urlparse(source.location)
         table_name = (parse_qs(parsed.query).get("table") or [""])[0].strip()
         return f"Microsoft 365 Excel · {table_name}" if table_name else "Microsoft 365 Excel"
+    if source.source_type == SourceType.GOOGLE_SHEETS:
+        return public_google_sheets_location(source.location)
     if source.source_type != SourceType.API:
         return source.location
     parts = urlsplit(source.location)
