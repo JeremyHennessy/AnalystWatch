@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ guard.name }} · Power BI Guard · AnalystWatch</title>
+  <link rel="stylesheet" href="{{ static_css }}">
+</head>
+<body>
+  <main class="shell app-shell">
+    <nav class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark">AW</div>
+        <div><strong>AnalystWatch</strong><span>DashboardGuard</span></div>
+      </div>
+      <div class="topnav">
+        <a href="{{ home_href }}">SourceGuard</a>
+        <a class="active" href="{{ guards_href }}">Power BI Guard</a>
+      </div>
+    </nav>
+
+    <header class="product-hero">
+      <div>
+        <p class="eyebrow">POWER BI GUARD</p>
+        <h1>{{ guard.name }}</h1>
+        <p class="hero-copy">Semantic model trust combines Power BI refresh evidence with current upstream AnalystWatch source health.</p>
+      </div>
+      <div class="hero-status">
+        <span class="status status-{{ health|lower|replace(' ', '-') }}"><span class="dot"></span>{{ health }}</span>
+      </div>
+    </header>
+
+    {% if latest %}
+    <section class="dashboard-layout">
+      <div class="dashboard-main">
+        <section class="panel">
+          <div class="section-title"><div><p class="section-kicker">TRUST RESULT</p><h2>Can this dashboard be trusted?</h2></div><span>{{ latest.checked_at.strftime('%Y-%m-%d %H:%M UTC') }}</span></div>
+          <h3>{{ latest.summary }}</h3>
+          <p><strong>Trust case:</strong> {{ latest.trust_case|replace('_', ' ')|title }}</p>
+          {% if latest.latest_refresh %}
+            <div class="summary-grid">
+              <article class="summary-card"><span class="summary-label">Latest refresh</span><strong>{{ latest.latest_refresh.status }}</strong><p>{{ latest.latest_refresh.refresh_type or 'Refresh type unavailable' }}</p></article>
+              <article class="summary-card"><span class="summary-label">Refresh duration</span><strong>{% if latest.latest_refresh.duration_seconds is not none %}{{ latest.latest_refresh.duration_seconds|round|int }}s{% else %}—{% endif %}</strong><p>{% if latest.latest_refresh.end_time %}Ended {{ latest.latest_refresh.end_time.strftime('%b %d · %H:%M UTC') }}{% else %}End time unavailable{% endif %}</p></article>
+              <article class="summary-card"><span class="summary-label">Reports affected</span><strong>{{ latest.reports|length }}</strong><p>Reports currently linked to this semantic model</p></article>
+              <article class="summary-card"><span class="summary-label">Upstream sources</span><strong>{{ latest.upstream|length }}</strong><p>AnalystWatch sources used in trust correlation</p></article>
+            </div>
+          {% endif %}
+        </section>
+
+        <section class="panel">
+          <div class="section-title"><div><p class="section-kicker">UPSTREAM TRUST</p><h2>What feeds this model?</h2></div></div>
+          {% if latest.upstream %}
+            <div class="source-list product-source-list">
+              {% for upstream in latest.upstream %}
+              <div class="source-row product-source-row">
+                <div class="source-identity"><span class="source-icon">S</span><div><strong>{{ upstream.source_id }}</strong><span class="source-meta">AnalystWatch monitored source</span></div></div>
+                <div class="source-signal"><span class="status status-{{ (upstream.health.value if upstream.health else 'Not checked')|lower|replace(' ', '-') }}"><span class="dot"></span>{{ upstream.health.value if upstream.health else 'Not checked' }}</span></div>
+              </div>
+              {% endfor %}
+            </div>
+          {% else %}<div class="empty"><p>No upstream AnalystWatch sources are configured for this Guard.</p></div>{% endif %}
+        </section>
+
+        <section class="panel">
+          <div class="section-title"><div><p class="section-kicker">DOWNSTREAM IMPACT</p><h2>Reports using this model</h2></div><span>{{ latest.reports|length }}</span></div>
+          {% if latest.reports %}
+            <div class="source-list">
+              {% for report in latest.reports %}
+              <div class="source-row"><div><strong>{{ report.name }}</strong><span class="source-meta">Power BI report</span></div>{% if report.web_url %}<a href="{{ report.web_url }}" rel="noreferrer">Open report ↗</a>{% endif %}</div>
+              {% endfor %}
+            </div>
+          {% else %}<div class="empty"><p>No report relationships were returned or the current credential cannot read them.</p></div>{% endif %}
+        </section>
+
+        <section class="panel">
+          <div class="section-title"><div><p class="section-kicker">REFRESH HISTORY</p><h2>Recent Power BI refreshes</h2></div><span>{{ latest.refresh_history|length }}</span></div>
+          {% if latest.refresh_history %}
+            <div class="source-list">
+              {% for refresh in latest.refresh_history %}
+              <div class="source-row"><div><strong>{{ refresh.status }}</strong><span class="source-meta">{{ refresh.refresh_type or 'Unknown type' }}{% if refresh.start_time %} · {{ refresh.start_time.strftime('%b %d · %H:%M UTC') }}{% endif %}</span></div><span>{% if refresh.duration_seconds is not none %}{{ refresh.duration_seconds|round|int }}s{% else %}—{% endif %}</span></div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </section>
+      </div>
+
+      <aside class="dashboard-side">
+        <section class="panel attention-panel">
+          <div class="section-title"><div><p class="section-kicker">SEMANTIC MODEL</p><h2>Power BI evidence</h2></div></div>
+          <p><strong>Workspace:</strong> {{ latest.power_bi_workspace_name or 'Name unavailable' }}</p>
+          <p><strong>Model:</strong> {{ latest.semantic_model_name or guard.name }}</p>
+          <p><strong>Refreshable:</strong> {% if latest.is_refreshable is none %}Unknown{% else %}{{ 'Yes' if latest.is_refreshable else 'No' }}{% endif %}</p>
+          {% if latest.datasource_types %}
+            <p><strong>Datasource types:</strong></p>
+            {% for source_type, count in latest.datasource_types.items() %}<p>{{ source_type }} · {{ count }}</p>{% endfor %}
+          {% endif %}
+        </section>
+
+        {% if latest.evidence_warnings %}
+        <section class="panel">
+          <p class="section-kicker">EVIDENCE LIMITS</p>
+          <h2>Some metadata was unavailable</h2>
+          {% for warning in latest.evidence_warnings %}<p>{{ warning }}</p>{% endfor %}
+        </section>
+        {% endif %}
+      </aside>
+    </section>
+    {% else %}
+      <section class="panel empty product-empty">
+        <h2>This Guard has not been checked yet</h2>
+        <p>The definition is stored, but AnalystWatch has not yet collected refresh evidence. Use the Guard check API after configuring the token environment variable.</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
