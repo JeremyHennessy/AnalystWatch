@@ -49,6 +49,24 @@
       }
     },
     {
+      "id": "demo-claims-register",
+      "name": "Claims Register Workbook",
+      "source_type": "xlsx",
+      "location": "samples/demo_claims_register.xlsx",
+      "enabled": true,
+      "config": {
+        "monitor_interval_minutes": 120,
+        "expected_refresh_minutes": 4320,
+        "latest_date_field": "reported_date",
+        "sheet_name": "Claims",
+        "unique_keys": ["claim_id"],
+        "numeric_fields": ["reserve_amount", "paid_amount"],
+        "history_window_size": 5,
+        "min_history_observations": 3,
+        "notification_transitions": ["Opened", "Escalated", "Recovered"]
+      }
+    },
+    {
       "id": "bank-of-canada-usd-cad",
       "name": "Bank of Canada USD/CAD Daily Rate",
       "source_type": "api",
