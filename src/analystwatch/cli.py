@@ -17,6 +17,7 @@ from .models import (
 )
 from .namespaced_storage import NamespacedStorage
 from .pages import build_pages_site
+from .postgres_storage import PostgresStorage
 from .runtime_storage import (
     DEFAULT_STORAGE_BACKEND,
     SUPPORTED_STORAGE_BACKENDS,
@@ -28,8 +29,18 @@ from .storage import Storage
 from .workspace import DEFAULT_WORKSPACE_ID
 
 
-def _service(db: str, workspace_id: str, storage_backend: str) -> MonitorService:
-    runtime = create_runtime_storage(db, workspace_id, storage_backend)
+def _service(
+    db: str,
+    workspace_id: str,
+    storage_backend: str,
+    postgres_dsn: str | None,
+) -> MonitorService:
+    runtime = create_runtime_storage(
+        db,
+        workspace_id,
+        storage_backend,
+        postgres_dsn=postgres_dsn,
+    )
     return MonitorService(runtime.monitoring_store)
 
 
@@ -48,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--db",
         default=os.environ.get("ANALYSTWATCH_DB", "instance/analystwatch.db"),
-        help="SQLite database path",
+        help="SQLite database path used by legacy/namespaced backends",
     )
     parser.add_argument(
         "--workspace-id",
@@ -60,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("ANALYSTWATCH_STORAGE_BACKEND", DEFAULT_STORAGE_BACKEND),
         choices=SUPPORTED_STORAGE_BACKENDS,
         help="Runtime persistence backend (default: legacy)",
+    )
+    parser.add_argument(
+        "--postgres-dsn",
+        default=os.environ.get("ANALYSTWATCH_POSTGRES_DSN"),
+        help="PostgreSQL DSN; required only with --storage-backend postgres",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -175,6 +191,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate.add_argument("snapshot")
     migrate.add_argument("destination")
+    sub.add_parser(
+        "import-postgres-state",
+        help="Import the selected workspace from --db schema-v2 state into PostgreSQL",
+    )
 
     baseline_review = sub.add_parser("baseline-review", help="Review a baseline candidate")
     baseline_review.add_argument("source_id")
@@ -215,7 +235,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "verify-state":
-        verification = verify_runtime_database(args.db, args.storage_backend)
+        verification = verify_runtime_database(
+            args.db,
+            args.storage_backend,
+            postgres_dsn=args.postgres_dsn,
+        )
         print(verification.model_dump_json(indent=2))
         return 0
 
@@ -240,7 +264,30 @@ def main(argv: list[str] | None = None) -> int:
         print(result.model_dump_json(indent=2))
         return 0
 
-    service = _service(args.db, args.workspace_id, args.storage_backend)
+    if args.command == "import-postgres-state":
+        if args.storage_backend != "postgres":
+            raise SystemExit(
+                "import-postgres-state requires --storage-backend postgres"
+            )
+        if not args.postgres_dsn:
+            raise SystemExit("import-postgres-state requires --postgres-dsn")
+        source = create_runtime_storage(
+            args.db,
+            args.workspace_id,
+            "namespaced",
+        ).monitoring_store
+        destination = PostgresStorage(args.postgres_dsn, args.workspace_id)
+        destination.initialize()
+        verification = destination.import_workspace(source)
+        print(verification.model_dump_json(indent=2))
+        return 0
+
+    service = _service(
+        args.db,
+        args.workspace_id,
+        args.storage_backend,
+        args.postgres_dsn,
+    )
 
     if args.command == "add-source":
         config = MonitoringConfig(
@@ -389,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["ANALYSTWATCH_DB"] = str(Path(args.db))
         os.environ["ANALYSTWATCH_WORKSPACE_ID"] = args.workspace_id
         os.environ["ANALYSTWATCH_STORAGE_BACKEND"] = args.storage_backend
+        if args.postgres_dsn:
+            os.environ["ANALYSTWATCH_POSTGRES_DSN"] = args.postgres_dsn
         uvicorn.run("analystwatch.web:app", host=args.host, port=args.port, reload=False)
         return 0
 
