@@ -2,98 +2,96 @@
 
 **Reliability monitoring for analyst-owned data sources.**
 
-AnalystWatch detects silent changes in CSV, Excel, JSON, REST API and Microsoft 365 Excel inputs: stale data, schema changes, row loss, null explosions, scaling shifts, category changes and key duplication. The product question is simple: **can I trust the data feeding my analysis today?**
+AnalystWatch monitors CSV, Excel, JSON, REST API and Microsoft 365 Excel inputs for silent reliability failures and answers a practical analyst question: **can I trust the data feeding my analysis today?**
 
-## Product v0.17 status
+## Product v0.18 status
 
-Product v0.17 adds the first Microsoft 365 Excel connector for SharePoint and OneDrive workbooks while preserving the existing deterministic profiling, detector, incident and notification architecture.
+Product v0.18 adds **row-level / key-level change analysis** for sources with configured unique keys. It extends deterministic monitoring evidence without changing Health classification, detector thresholds, incident semantics or notification-state behavior.
 
-The connector is deliberately table-first. AnalystWatch reads an Excel Table through Microsoft Graph, converts it to the same pandas/DataFrame representation used by existing sources, and then runs the normal preflight/profile/detector pipeline. There is no Microsoft-specific health classifier.
+AnalystWatch can now answer not only that a dataset changed, but how the keyed records changed relative to:
 
-### Microsoft 365 Excel source
+- the previous successful observation; and
+- the active baseline.
 
-A Microsoft source uses the internal location contract:
+For each available comparison it reports:
 
-```text
-m365://<drive-id>/<item-id>?table=<table-name>[&worksheet=<sheet>][&page_size=500]
-```
+- Added rows;
+- Removed rows;
+- Changed rows;
+- Unchanged rows;
+- per-column changed-value counts;
+- bounded examples of added, removed and changed keys in the authenticated/local application view.
 
-The onboarding UI exposes this as separate fields for:
+The source detail page exposes this as **Key-level changes** under the existing analyst-facing Product v0.16.1 UI hierarchy.
 
-- SharePoint / OneDrive drive ID;
-- workbook item ID;
-- Excel table name;
-- optional worksheet;
-- delegated Microsoft Graph authorization environment variable.
+## Enabling row comparison
 
-The bearer token itself is never stored in the source definition. The source contains only the name of the environment variable that supplies the `Authorization` header at runtime.
+Row comparison requires configured `unique_keys`. Composite keys are supported.
 
-### Connector evidence
+Optional `row_diff_fields` can restrict which non-key columns are retained for comparison. When no field allowlist is supplied, AnalystWatch compares columns within the configured safety limits.
 
-The Graph adapter reads:
-
-- DriveItem metadata including `lastModifiedDateTime` and ETag when available;
-- Excel Table columns;
-- Excel Table rows;
-- Microsoft Graph pagination links.
-
-Rows are normalized into the existing tabular monitoring representation, so configured keys, numeric fields, freshness checks, schema drift, row-count drift, null-rate drift and the rest of the existing detector pipeline work without duplication.
-
-### Public-output protection
-
-Generated Pages and `state.json` do not publish Microsoft drive IDs, workbook item IDs or token environment-variable names. A Microsoft source is rendered publicly as a human label such as:
+The default safety configuration is intentionally bounded:
 
 ```text
-Microsoft 365 Excel · FinanceTable
+row_diff_max_rows = 5000
+row_diff_max_columns = 50
+row_diff_max_snapshot_bytes = 1000000
+row_diff_sample_limit = 20
+row_diff_snapshot_retention = 2
 ```
 
-### Authentication boundary
+The configurable hard ceilings remain bounded as well. A source with missing, null or duplicate configured keys, or a dataset that exceeds its configured snapshot limits, receives explicit row-diff-unavailable evidence instead of an unbounded raw-data capture.
 
-The Excel workbook APIs used by this connector require delegated Microsoft Graph access. Product v0.17 therefore does **not** claim application-only Microsoft Graph access for these workbook/table operations.
+Row-diff availability does **not** alter Healthy / Warning / Critical classification.
 
-The repository does not contain a real Microsoft tenant credential, and this milestone does not claim a live tenant connection. The connector and onboarding path are verified deterministically using mocked Graph responses.
+## Retention and privacy
 
-A future account-connection improvement should add the full user flow:
+AnalystWatch is not becoming a raw-data archive.
 
-```text
-Connect Microsoft 365
-→ choose SharePoint site / OneDrive
-→ choose workbook
-→ choose Excel table
-→ preflight
-→ monitor
-```
+The active baseline snapshot plus only the configured recent successful comparison snapshots are retained. Older observations keep aggregate row-diff counts but their raw snapshots and bounded sample values are removed.
 
-without changing the monitoring engine.
+This retention behavior is verified across:
 
-## Existing SaaS foundation
+- legacy SQLite;
+- namespaced SQLite;
+- `MemoryStore`;
+- PostgreSQL.
 
-Core v0.16 remains intact underneath v0.17:
+Generated public GitHub Pages and `state.json` do not publish the new row snapshots or row-diff key/value samples. They may show aggregate Added / Removed / Changed / Unchanged counts and changed-column counts.
 
-- authenticated workspace authorization from v0.15;
-- SQLite, namespaced SQLite and PostgreSQL persistence;
-- managed-runtime readiness and PostgreSQL recovery validation;
-- first live-email adapter behind the existing delivery-attempt state machine;
-- hosted GitHub Pages monitor still using legacy SQLite/local auth unless explicitly cut over.
+This v0.18 privacy boundary applies specifically to the new row-diff payload. Existing deterministic detector findings retain their established public-output policy; v0.18 does not silently redact or rewrite previously approved detector evidence.
 
-No production PostgreSQL cutover or successful real Resend delivery is implied by v0.17.
+## Existing product foundation
+
+Product v0.17 Microsoft 365 Excel support remains intact and feeds the same row-comparison path when keys are configured. The broader foundation also remains unchanged:
+
+- deterministic ingestion/profiling/detectors;
+- baseline/history/review and incident lifecycle;
+- workspace-aware SQLite/namespaced SQLite/PostgreSQL persistence;
+- authenticated workspace authorization;
+- managed-runtime readiness;
+- existing delivery-attempt/idempotency/reconciliation semantics;
+- GitHub Pages monitoring on the existing legacy/local hosted path.
+
+No production PostgreSQL cutover, real Microsoft tenant connection or successful real Resend side effect is implied by v0.18.
 
 ## Verification
 
-The v0.17 functional checkpoint passed:
+The v0.18 functional checkpoint passed:
 
 - Ruff;
-- compile/import gate;
-- **172 deterministic tests** against PostgreSQL 16 CI;
-- Microsoft Graph ingestion, pagination, failure and preflight regressions;
-- Microsoft onboarding regression coverage;
-- public Pages redaction tests for Microsoft identifiers;
-- live-source smoke against the existing public Bank of Canada / U.S. Treasury source set.
-
-No detector thresholds, persistence semantics, incident semantics or notification state-machine behavior changed in this milestone.
+- compile/import checks;
+- **183 deterministic tests** against PostgreSQL 16 CI;
+- exact row add/remove/change comparison tests;
+- composite-key and field-allowlist tests;
+- duplicate/null/oversized-key refusal tests;
+- four-backend snapshot-retention conformance;
+- public row-diff payload redaction tests;
+- analyst-facing source-detail row-change rendering;
+- live-source smoke against the unchanged Bank of Canada / U.S. Treasury sources.
 
 ## Next milestone
 
-Product v0.18 is **row-level / key-level change analysis**. For sources with configured keys, AnalystWatch should move from “something changed” to bounded, privacy-aware evidence showing which rows and columns were added, removed or changed relative to the previous successful observation and active baseline.
+Product v0.19 is **Power BI Guard**: monitor semantic-model refresh state and correlate it with AnalystWatch source health so a technically successful Power BI refresh is not mistaken for trustworthy data when its upstream source is stale or unhealthy.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).
