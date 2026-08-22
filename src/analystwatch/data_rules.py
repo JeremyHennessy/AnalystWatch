@@ -46,6 +46,23 @@ def _failure(
     )
 
 
+def _row_count_failure(rule: DataRule, row_count: int, why: str) -> Finding:
+    return Finding(
+        severity=rule.severity,
+        detector=f"data_rule:{rule.id}",
+        description=f"Data rule '{rule.name}' failed.",
+        current_value={"row_count": row_count},
+        baseline_value=_rule_condition(rule),
+        why_flagged=why,
+        confidence="high",
+        likely_impact=rule.likely_impact or "A declared business-data invariant is not satisfied.",
+        suggested_investigation=(
+            rule.suggested_investigation
+            or "Inspect the upstream records and confirm whether the rule or source data changed."
+        ),
+    )
+
+
 def _missing_field(rule: DataRule, row_count: int) -> Finding:
     return _failure(
         rule,
@@ -69,14 +86,7 @@ def evaluate_data_rules(frame: pd.DataFrame, rules: list[DataRule]) -> list[Find
                     why = f"Row count {row_count} is below the configured minimum {int(rule.minimum)}."
                 else:
                     why = f"Row count {row_count} exceeds the configured maximum {int(rule.maximum)}."
-                findings.append(
-                    _failure(
-                        rule,
-                        violation_count=1,
-                        row_count=1,
-                        why=why,
-                    )
-                )
+                findings.append(_row_count_failure(rule, row_count, why))
             continue
 
         field = rule.field
