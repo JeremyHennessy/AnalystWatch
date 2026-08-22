@@ -59,6 +59,7 @@ def configure_reconciliation_web(
             context={
                 "queue": current_queue,
                 "static_css": str(request.url_for("static", path="/app.css")),
+                "forms_css": str(request.url_for("static", path="/onboard.css")),
                 "home_href": "/",
             },
         )
