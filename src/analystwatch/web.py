@@ -22,6 +22,7 @@ from .models import (
     SourceType,
 )
 from .power_bi_web import configure_power_bi_web
+from .reconciliation_web import configure_reconciliation_web
 from .runtime_storage import DEFAULT_STORAGE_BACKEND, create_runtime_storage
 from .service import MonitorService
 from .teams_delivery import TeamsWorkflowAdapter
@@ -414,6 +415,11 @@ def create_app(
         app,
         monitoring_service=service,
         adapter=teams_adapter,
+    )
+    configure_reconciliation_web(
+        app,
+        templates=templates,
+        monitoring_service=service,
     )
     configure_web_authorization(
         app,
