@@ -94,86 +94,80 @@ No Power BI refresh triggering, full Fabric lineage catalogue, source Health red
 
 ## Product v0.20 — Microsoft Teams + dependency graph / blast radius — complete
 
-Implemented:
-
-- Microsoft Teams Workflows / Power Automate Adaptive Card delivery;
-- environment-backed Teams webhook/public base URL configuration;
-- reuse of existing eligible-candidate, atomic claim, idempotency, retry and reconciliation semantics;
-- Source / Workbook / Semantic Model / Report / Custom dependency assets;
-- explicit/discovered workspace-scoped dependency edges;
-- SQLite/PostgreSQL dependency persistence;
-- deterministic cycle-safe blast radius;
-- Power BI source → semantic model → report discovery;
-- additive source-detail downstream-impact context.
-
-Verified checkpoint: **212 tests**, Ruff/compile green, PostgreSQL 16 CI green. Merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`.
+Implemented Microsoft Teams Workflows / Power Automate delivery behind existing delivery safety, workspace-scoped dependency assets/edges, deterministic cycle-safe blast radius and Power BI source → semantic-model → report discovery. Verified checkpoint: **212 tests**, Ruff/compile/PostgreSQL 16 green. Merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`.
 
 No retired Office 365 Connector implementation, enterprise SQL-column lineage, separate Teams state machine, source Health changes or unverified Microsoft side-effect claims were introduced.
 
 ## Product v0.21 — reconciliation monitor / ambiguous delivery operations — complete
 
-Implemented:
-
-- read-only reconciliation queue derived from existing `Prepared` delivery attempts;
-- default 30-minute stale threshold;
-- oldest unresolved attempts first;
-- bounded 5,000-attempt scan and separate 100-item display/output limit;
-- explicit scan/output limit evidence;
-- queue privacy boundary excluding idempotency keys, claim owners, provider raw evidence and reconciliation notes;
-- `/reconciliation` Delivery Ops view and bounded read API;
-- evidence-note reconciliation to existing Succeeded/Failed states;
-- authenticated `reconciled_by` attribution for UI and API paths;
-- Viewer read / Operator reconcile boundaries;
-- dynamic-only Delivery Ops navigation, omitted from static Pages.
-
-Final exact-head CI passed **226 tests, 1 warning** with Ruff/compile/PostgreSQL 16. Merged to `main` at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`.
+Added the read-only Delivery Ops reconciliation queue over existing `Prepared` delivery attempts, bounded/privacy-safe output, explicit evidence-note reconciliation and authenticated reviewer attribution. Final exact-head CI passed **226 tests, 1 warning**. Merged to `main` at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`.
 
 No automatic ambiguity inference, automatic retry, provider-specific reconciliation polling, detector/Health change, UI redesign or new delivery-state schema was introduced.
 
-## Product v0.22 — Google Sheets connector — current release candidate
+## Product v0.22 — Google Sheets connector — complete
 
 Implemented from exact v0.21 merge baseline `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`:
 
 - new `google_sheets` source type;
 - `gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]` source location contract;
 - Google Sheets API v4 `spreadsheets.values.get` read path;
-- row-major retrieval with `UNFORMATTED_VALUE` numeric rendering and formatted date/time evidence;
+- row-major retrieval with deterministic numeric/date rendering;
 - environment-backed Authorization header reference through the existing `request_header_env` contract;
-- bearer-token value is never persisted in the source definition;
-- deterministic configured header-row parsing relative to the returned range;
-- short rows padded to the header width and fully blank rows ignored;
-- duplicate/empty headers and rows wider than the header fail closed;
+- deterministic configured header-row parsing and conservative ragged-row normalization;
 - existing numeric-field, unique-key, latest-date and freshness preflight contracts reused unchanged;
 - no fabricated Google Sheets modification timestamp;
 - expected refresh requires content-date evidence or preflight reports `freshness_unverifiable`;
 - static Pages redact spreadsheet ID, internal `gsheets://` location and token environment-variable name;
-- public location is bounded to `Google Sheets · <A1 range>`;
-- existing Add Source UI now exposes Spreadsheet ID, A1 range, header row and token environment reference;
-- no new UI/CSS architecture, detector thresholds, source Health semantics or persistence schema.
+- existing Add Source UI exposes Spreadsheet ID, A1 range, header row and token environment reference;
+- no new detector thresholds, source Health semantics or persistence schema.
 
-Functional checkpoint on `9cb60774817a2a637a1714a5c15ccd643faa4324`:
+Final verified feature head passed **236 tests, 1 warning** with Ruff/compile/PostgreSQL 16 green and live-source smoke green. Product v0.22 merged to `main` at `21c45c56f6f84328a88644b9df8e1c9ef474c383`.
 
-- **236 passed, 1 warning**;
+No real Google Workspace credential was supplied, so live Google Sheets tenant access was not claimed.
+
+## Product v0.23 — deterministic Data Rules — current release
+
+Implemented from exact v0.22 merge baseline `21c45c56f6f84328a88644b9df8e1c9ef474c383`:
+
+- typed deterministic rule kinds: `not_null`, `allowed_values`, `numeric_range`, `row_count_range`;
+- explicit rule ID, analyst-facing name, Warning/Critical failure severity and optional business guidance;
+- fail-closed rule-model validation and duplicate-rule-ID rejection;
+- deterministic DataFrame evaluator that returns ordinary `Finding` evidence;
+- no failing row values copied into Data Rule findings;
+- bounded aggregate violation counts/percentages for field-based failures;
+- preflight evaluates configured rules and refuses to accept a source already violating its declared contract;
+- runtime `check_source(...)` appends Data Rule findings before the existing single `health_from_findings(...)` derivation;
+- existing incident, notification, delivery, review and baseline behavior therefore remains downstream of ordinary Health rather than a parallel rule state machine;
+- typed Data Rule builder added to the existing Add Source UI;
+- authenticated/local source detail retains the private declared rule contract while failing row values remain absent;
+- public Pages genericize Data Rule findings and remove public profile/config/row-diff evidence for fields referenced by Data Rules;
+- ordinary detector findings that would reveal a private Data Rule field are genericized in public output;
+- unrelated public profile evidence remains visible, preserving the usefulness of the public demo;
+- package/FastAPI/module version metadata aligned at `0.23.0` during release closeout.
+
+Functional/UI/privacy checkpoint `ba779642aeaa971ceda38fa1799ea4f2387904a2`:
+
+- **253 passed, 1 warning**;
 - Ruff green;
 - compile/import green;
 - PostgreSQL 16 CI green;
-- live-source smoke #80 green.
+- live-source smoke #100 green.
 
-Explicit non-goals / unverified boundaries:
+Release-only metadata/docs are re-gated on their exact head before merge.
 
-- no Google SDK dependency;
-- no OAuth refresh-token management;
-- no service-account key exchange;
-- no Google Sheets write access;
-- no parallel onboarding/monitoring state machine;
-- no claim of live Google Workspace access because no real Google credential was supplied in this repository session.
+Explicit non-goals:
 
-## Product roadmap after v0.22
+- no SQL or arbitrary expression language;
+- no AI-defined rules or AI Health classification;
+- no detector-threshold rewrite;
+- no new observation/incident/persistence state machine;
+- no unrelated UI redesign.
+
+## Product roadmap after v0.23
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.23 — business rules / Data Rules
 - Product v0.24 — reliability scorecards + trust badge
 - Product v0.25 — preconfigured source packs
 
-AI investigation remains downstream of deterministic findings and must not redefine Health classification.
+After v0.25, prioritize self-service connection UX, credential lifecycle and real hosted pilot validation over connector accumulation. AI investigation remains downstream of deterministic findings and must not redefine Health classification.

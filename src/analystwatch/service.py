@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 
+from .data_rules import evaluate_data_rules
 from .delivery import DryRunDeliveryAdapter
 from .detectors import detect_freshness, detect_profile_changes, health_from_findings
 from .incidents import (
@@ -520,6 +521,7 @@ class MonitorService:
                 infer_latest_date_field=source.config.infer_latest_date_field,
                 numeric_fields=source.config.numeric_fields,
             )
+            findings.extend(evaluate_data_rules(result.dataframe, source.config.data_rules))
             findings.extend(
                 detect_freshness(
                     config=source.config,

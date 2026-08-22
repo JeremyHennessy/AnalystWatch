@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,36 @@ def _public_location(source: SourceDefinition) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def _private_data_rule_fields(source: SourceDefinition) -> set[str]:
+    return {rule.field for rule in source.config.data_rules if rule.field is not None}
+
+
+def _public_source(source: SourceDefinition) -> SourceDefinition:
+    private_fields = _private_data_rule_fields(source)
+    if not private_fields:
+        return source
+    config = source.config.model_copy(
+        update={
+            "latest_date_field": (
+                None
+                if source.config.latest_date_field in private_fields
+                else source.config.latest_date_field
+            ),
+            "numeric_fields": [
+                field for field in source.config.numeric_fields if field not in private_fields
+            ],
+            "unique_keys": [
+                field for field in source.config.unique_keys if field not in private_fields
+            ],
+            "row_diff_fields": [
+                field for field in source.config.row_diff_fields if field not in private_fields
+            ],
+            "data_rules": [],
+        }
+    )
+    return source.model_copy(update={"config": config})
+
+
 def _candidate_state_counts(candidates: list[NotificationCandidate]) -> dict[str, int]:
     counts = {"Pending": 0, "Eligible": 0, "Suppressed": 0}
     for candidate in candidates:
@@ -45,21 +76,130 @@ def _attempt_state_counts(attempts: list[DeliveryAttempt]) -> dict[str, int]:
     return counts
 
 
-def _public_observation(observation):
-    return strip_row_diff_raw_payloads(observation) if observation is not None else None
+def _value_mentions_private_field(value: object, private_fields: set[str]) -> bool:
+    if isinstance(value, str):
+        for field in private_fields:
+            pattern = rf"(?<![A-Za-z0-9_.-]){re.escape(field)}(?![A-Za-z0-9_.-])"
+            if re.search(pattern, value):
+                return True
+        return False
+    if isinstance(value, dict):
+        return any(
+            str(key) in private_fields or _value_mentions_private_field(item, private_fields)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple, set)):
+        return any(_value_mentions_private_field(item, private_fields) for item in value)
+    return False
 
 
-def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -> dict[str, object]:
+def _public_finding(finding, private_fields: set[str]):
+    if finding.detector.startswith("data_rule:"):
+        return finding.model_copy(
+            update={
+                "detector": "data_rule",
+                "description": "A configured Data Rule failed.",
+                "baseline_value": "Private configured Data Rule",
+                "why_flagged": "Current data did not satisfy a private configured Data Rule.",
+                "likely_impact": "A declared business-data invariant is not satisfied.",
+                "suggested_investigation": (
+                    "Review the private Data Rule in AnalystWatch and inspect the upstream data."
+                ),
+            }
+        )
+    if private_fields and _value_mentions_private_field(
+        finding.model_dump(mode="json"), private_fields
+    ):
+        return finding.model_copy(
+            update={
+                "description": "A reliability finding involves a private configured field.",
+                "current_value": "Private field evidence",
+                "baseline_value": "Private field evidence",
+                "why_flagged": (
+                    "A private configured field moved outside an existing reliability threshold."
+                ),
+                "likely_impact": "A private monitored field may affect downstream analysis.",
+                "suggested_investigation": (
+                    "Review the private field in AnalystWatch and inspect the upstream data."
+                ),
+            }
+        )
+    return finding
+
+
+def _public_profile(profile, private_fields: set[str]):
+    if profile is None or not private_fields:
+        return profile
+    columns = {
+        name: column for name, column in profile.columns.items() if name not in private_fields
+    }
+    private_latest_date = profile.latest_date_field in private_fields
+    return profile.model_copy(
+        update={
+            "column_count": len(columns),
+            "columns": columns,
+            "latest_date": None if private_latest_date else profile.latest_date,
+            "latest_date_field": None if private_latest_date else profile.latest_date_field,
+        }
+    )
+
+
+def _public_row_diff(row_diff, private_fields: set[str]):
+    if row_diff is None or not private_fields:
+        return row_diff
+
+    updates: dict[str, object] = {
+        "key_fields": [field for field in row_diff.key_fields if field not in private_fields]
+    }
+    if row_diff.snapshot_reason and any(
+        field in row_diff.snapshot_reason for field in private_fields
+    ):
+        updates["snapshot_reason"] = (
+            "Row-level comparison is unavailable for one or more private configured fields."
+        )
+    for field in ("previous", "baseline"):
+        comparison = getattr(row_diff, field)
+        if comparison is not None:
+            updates[field] = comparison.model_copy(
+                update={
+                    "changed_columns": {
+                        name: count
+                        for name, count in comparison.changed_columns.items()
+                        if name not in private_fields
+                    }
+                }
+            )
+    return row_diff.model_copy(update=updates)
+
+
+def _public_observation(observation, *, private_fields: set[str] | None = None):
+    if observation is None:
+        return None
+    fields = private_fields or set()
+    public = strip_row_diff_raw_payloads(observation)
+    return public.model_copy(
+        update={
+            "findings": [_public_finding(finding, fields) for finding in public.findings],
+            "profile": _public_profile(public.profile, fields),
+            "row_diff": _public_row_diff(public.row_diff, fields),
+        }
+    )
+
+
+def _source_view(
+    storage: Storage, source: SourceDefinition, *, now: datetime
+) -> dict[str, object]:
     latest = storage.get_latest(source.id)
     baseline = storage.get_baseline(source.id)
     last_successful = storage.get_last_successful(source.id)
     decision = run_decision(storage, source, now=now)
     candidates = storage.list_notification_candidates(source.id, limit=100)
     attempts = storage.list_delivery_attempts(source_id=source.id, limit=100)
+    private_fields = _private_data_rule_fields(source)
     return {
-        "source": source,
+        "source": _public_source(source),
         "public_location": _public_location(source),
-        "latest": _public_observation(latest),
+        "latest": _public_observation(latest, private_fields=private_fields),
         "baseline": baseline,
         "last_successful": last_successful,
         "latest_review": storage.get_review(latest.id) if latest else None,
@@ -78,7 +218,8 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
     sources: list[dict[str, object]] = []
     for source in storage.list_sources():
         latest = storage.get_latest(source.id)
-        public_latest = _public_observation(latest)
+        private_fields = _private_data_rule_fields(source)
+        public_latest = _public_observation(latest, private_fields=private_fields)
         baseline = storage.get_baseline(source.id)
         review = storage.get_review(latest.id) if latest else None
         incident = latest_incident(storage.list_observations(source.id, limit=200))
