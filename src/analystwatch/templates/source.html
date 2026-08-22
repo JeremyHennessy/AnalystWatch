@@ -7,148 +7,175 @@
   <link rel="stylesheet" href="{{ static_css }}">
 </head>
 <body>
-  <main class="shell">
-    <a class="back" href="{{ home_href }}">← All sources</a>
-    <header class="detail-header">
-      <div>
-        <p class="eyebrow">{{ source.source_type.value|upper }}</p>
-        <h1>{{ source.name }}</h1>
-        <p class="muted mono">{{ public_location }}</p>
+  <main class="shell app-shell">
+    <nav class="topbar detail-topbar">
+      <a class="brand-lockup brand-link" href="{{ home_href }}">
+        <span class="brand-mark">AW</span>
+        <span><strong>AnalystWatch</strong><span>Data reliability</span></span>
+      </a>
+      <div class="topnav"><a href="{{ home_href }}">Overview</a><a class="active" href="#summary">Source</a><a href="#history">History</a></div>
+      <a class="back-link" href="{{ home_href }}">← All sources</a>
+    </nav>
+
+    <header class="source-hero" id="summary">
+      <div class="source-heading">
+        <div class="source-icon large">{{ source.source_type.value[:1]|upper }}</div>
+        <div>
+          <p class="eyebrow">{{ source.source_type.value|upper }} SOURCE</p>
+          <h1>{{ source.name }}</h1>
+          <p class="muted mono source-url">{{ public_location }}</p>
+        </div>
       </div>
-      <div class="detail-actions">
-        <span class="status status-{{ health|lower|replace(' ', '-') }}"><span class="dot"></span>{{ health }}</span>
-        {% if not static_mode %}
-          <form method="post" action="/sources/{{ source.id }}/check"><button type="submit">Run check</button></form>
-        {% endif %}
+      <div class="source-hero-actions">
+        <span class="status status-large status-{{ health|lower|replace(' ', '-') }}"><span class="dot"></span>{{ health }}</span>
+        {% if not static_mode %}<form method="post" action="/sources/{{ source.id }}/check"><button class="button button-primary" type="submit">Run check</button></form>{% endif %}
       </div>
     </header>
 
     {% if static_mode %}
-      <div class="deployment-note compact">
-        <strong>Read-only Pages view</strong>
-        <span>Checks run on schedule in GitHub Actions; this page is regenerated after monitoring.</span>
-      </div>
+      <div class="deployment-note compact"><strong>Read-only monitoring snapshot</strong><span>Checks run automatically · Snapshot {{ generated_at.strftime('%Y-%m-%d %H:%M UTC') }}</span></div>
     {% endif %}
 
-    <section class="panel">
-      <div class="section-title"><h2>Monitoring contract</h2><span>{{ source.id }}</span></div>
-      <dl class="contract-grid">
-        <div><dt>Check cadence</dt><dd>Every {{ source.config.monitor_interval_minutes }} min</dd></div>
-        <div><dt>Expected refresh</dt><dd>{% if source.config.expected_refresh_minutes %}Every {{ source.config.expected_refresh_minutes }} min{% else %}Not configured{% endif %}</dd></div>
-        <div><dt>Freshness field</dt><dd>{% if source.config.latest_date_field %}{{ source.config.latest_date_field }}{% elif source.config.infer_latest_date_field %}Conservative inference{% else %}Not configured{% endif %}</dd></div>
-        <div><dt>Record path / sheet</dt><dd>{{ source.config.json_record_path or source.config.sheet_name or 'Default' }}</dd></div>
-        <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
-        <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
-        <div><dt>Notification policy</dt><dd>{% if source.config.notification_transitions %}Eligible transitions: {% for transition in source.config.notification_transitions %}{{ transition.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}No transitions enabled; candidates are suppressed{% endif %}</dd></div>
-        <div><dt>Delivery retry delay</dt><dd>{% if source.config.delivery_retry_minutes %}{{ source.config.delivery_retry_minutes }} min after Failed{% else %}Immediate after Failed{% endif %}</dd></div>
-        <div><dt>Request headers</dt><dd>{% if source.config.request_header_env %}{% if static_mode %}{{ source.config.request_header_env|length }} environment-backed header{{ '' if source.config.request_header_env|length == 1 else 's' }} configured; values are not stored{% else %}{% for header, env_name in source.config.request_header_env.items() %}<code>{{ header }}</code> ← <code>{{ env_name }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}{% else %}None configured{% endif %}</dd></div>
-      </dl>
-    </section>
-
     {% if latest %}
-      <section class="grid four">
-        <div class="panel metric-card"><span>Last checked</span><strong>{{ latest.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
-        <div class="panel metric-card"><span>Last successful update</span><strong>{% if last_successful %}{{ last_successful.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}No successful observation{% endif %}</strong></div>
-        <div class="panel metric-card"><span>Baseline</span><strong>{% if baseline %}{{ baseline.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}Not established{% endif %}</strong></div>
-        <div class="panel metric-card"><span>Next scheduled check</span><strong>{% if schedule.next_check_at %}{{ schedule.next_check_at.strftime('%Y-%m-%d %H:%M UTC') }}{% elif schedule.due %}Due now{% else %}Disabled{% endif %}</strong></div>
-      </section>
-
-      {% if incident %}
-      <section class="panel">
-        <div class="section-title"><h2>Incident lifecycle</h2><span>{{ incident.status.value }}</span></div>
-        <div class="grid four">
-          <div class="metric-card"><span>Opened</span><strong>{{ incident.opened_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
-          <div class="metric-card"><span>Peak health</span><strong class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</strong></div>
-          <div class="metric-card"><span>Incident observations</span><strong>{{ incident.observation_count }}</strong></div>
-          <div class="metric-card"><span>Notification candidates</span><strong>{{ notification_candidate_count }}</strong></div>
-        </div>
-        {% if incident.status.value == 'Recovered' %}
-          <p class="healthy-note"><strong>Recovered.</strong> The source returned to Healthy at {{ incident.recovered_at.strftime('%Y-%m-%d %H:%M UTC') }}.</p>
-        {% else %}
-          <p class="muted">The incident remains open at {{ incident.current_health.value }} health.</p>
-        {% endif %}
-        <p class="muted">Candidate policy: {{ notification_candidate_states.Eligible }} Eligible · {{ notification_candidate_states.Suppressed }} Suppressed · {{ notification_candidate_states.Pending }} Pending.</p>
-        <p class="muted">Dry-run attempts: {{ delivery_attempt_count }} total · {{ delivery_attempt_states.Succeeded }} Succeeded · {{ delivery_attempt_states.Failed }} Failed · {{ delivery_attempt_states.Prepared }} Prepared.</p>
-        <p class="muted">Eligible means the transition matches the source policy only. Core v0.6 still does not send email, Slack, webhooks, or other outbound notifications.</p>
-        <p class="muted">Core v0.7 dry-run attempts perform no external delivery or network request.</p>
-        <p class="muted">Core v0.8 keeps retry timing separate from monitoring and requires explicit review to reconcile an abandoned Prepared attempt.</p>
-      </section>
-      {% endif %}
-
       {% if latest.health.value != 'Healthy' %}
-      <section class="panel">
-        <div class="section-title"><h2>Operational review</h2><span>{% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed{% endif %}</span></div>
-        <p class="muted">Review state records analyst attention only. It does not claim the upstream issue is fixed.</p>
-        {% if not static_mode %}
-        <div class="detail-actions">
-          <form method="post" action="/sources/{{ source.id }}/review?state=Acknowledged"><button type="submit">Acknowledge</button></form>
-          <form method="post" action="/sources/{{ source.id }}/review?state=Reviewed"><button type="submit">Mark reviewed</button></form>
-        </div>
-        {% endif %}
-      </section>
-      {% endif %}
-
-      {% if baseline_review and baseline_review.candidate and baseline_review.current_baseline and baseline_review.candidate.id != baseline_review.current_baseline.id %}
-      <section class="panel">
-        <div class="section-title"><h2>Baseline review</h2><span>{{ 'Ready' if baseline_review.ready else 'Blocked' }}</span></div>
-        <div class="grid two">
-          <div class="metric-card"><span>Current baseline</span><strong>{{ baseline_review.current_baseline.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
-          <div class="metric-card"><span>Candidate</span><strong>{{ baseline_review.candidate.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</strong></div>
-        </div>
-        {% if baseline_review.blockers %}
-          <p class="muted">{{ baseline_review.blockers|join(' ') }}</p>
-        {% elif not static_mode %}
-          <p class="muted">The candidate is Healthy. Promotion is guarded against the current baseline changing after this review.</p>
-          <form method="post" action="/sources/{{ source.id }}/baseline?candidate_id={{ baseline_review.candidate.id }}&expected_current_baseline_id={{ baseline_review.current_baseline.id }}"><button type="submit">Promote reviewed baseline</button></form>
-        {% endif %}
-      </section>
-      {% endif %}
-
-      <section class="panel">
-        <div class="section-title"><h2>Findings</h2><span>{{ latest.findings|length }}</span></div>
-        {% if latest.findings %}
-          <div class="finding-list">
-          {% for finding in latest.findings %}
-            <article class="finding finding-{{ finding.severity.value|lower }}">
-              <div class="finding-top"><strong>{{ finding.detector|replace('_', ' ')|title }}</strong><span>{{ finding.severity.value }}</span></div>
-              <h3>{{ finding.description }}</h3>
-              <p>{{ finding.why_flagged }}</p>
-              <dl>
-                <div><dt>Reference</dt><dd>{{ finding.baseline_value }}</dd></div>
-                <div><dt>Current</dt><dd>{{ finding.current_value }}</dd></div>
-              </dl>
-              {% if finding.confidence %}<p><b>Confidence:</b> {{ finding.confidence }}</p>{% endif %}
-              {% if finding.likely_impact %}<p><b>Impact:</b> {{ finding.likely_impact }}</p>{% endif %}
-              {% if finding.suggested_investigation %}<p><b>Investigate:</b> {{ finding.suggested_investigation }}</p>{% endif %}
-            </article>
-          {% endfor %}
+      <section class="incident-hero incident-{{ latest.health.value|lower }}">
+        <div class="incident-hero-main">
+          <p class="section-kicker">WHAT HAPPENED?</p>
+          <h2>{% if incident %}{{ incident.status.value }} reliability incident{% else %}This source needs review{% endif %}</h2>
+          {% if latest.findings %}
+            <p class="incident-summary">{{ latest.findings[0].description }}</p>
+          {% else %}
+            <p class="incident-summary">The latest check moved outside expected reliability thresholds.</p>
+          {% endif %}
+          <div class="incident-facts">
+            <span><b>Severity</b> {{ latest.health.value }}</span>
+            <span><b>Started</b> {% if incident %}{{ incident.opened_at.strftime('%b %d · %H:%M UTC') }}{% else %}{{ latest.observed_at.strftime('%b %d · %H:%M UTC') }}{% endif %}</span>
+            <span><b>Review</b> {% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed{% endif %}</span>
           </div>
-        {% else %}
-          <div class="healthy-note"><strong>No material reliability findings.</strong><p>The current observation is within configured thresholds relative to its baseline/recent healthy history.</p></div>
+        </div>
+        {% if latest.findings and latest.findings[0].suggested_investigation %}
+        <aside class="next-step-card">
+          <span>Suggested next check</span>
+          <strong>{{ latest.findings[0].suggested_investigation }}</strong>
+        </aside>
         {% endif %}
       </section>
-
-      {% if latest.profile %}
-      <section class="panel">
-        <div class="section-title"><h2>Current profile</h2></div>
-        <div class="grid three">
-          <div class="metric-card"><span>Rows</span><strong>{{ latest.profile.row_count }}</strong></div>
-          <div class="metric-card"><span>Columns</span><strong>{{ latest.profile.column_count }}</strong></div>
-          <div class="metric-card"><span>Latest date</span><strong>{% if latest.profile.latest_date %}{{ latest.profile.latest_date }}{% if latest.profile.latest_date_field %} · {{ latest.profile.latest_date_field }}{% endif %}{% else %}Not established{% endif %}</strong></div>
-        </div>
+      {% else %}
+      <section class="trust-banner">
+        <div class="trust-icon">✓</div>
+        <div><p class="section-kicker">CURRENT TRUST STATUS</p><h2>Data verified</h2><p>No material reliability findings in the latest check.</p></div>
+        <div class="trust-time"><span>Last checked</span><strong>{{ latest.observed_at.strftime('%b %d · %H:%M UTC') }}</strong></div>
       </section>
       {% endif %}
 
-      <section class="panel">
-        <div class="section-title"><h2>Recent history</h2><span>Current vs recent vs baseline</span></div>
-        <div class="history-list">
-          {% for item in history %}
-          <div><span>{{ item.observed_at.strftime('%Y-%m-%d %H:%M UTC') }}</span><strong class="text-{{ item.health.value|lower }}">{{ item.health.value }}</strong><span>{% if baseline and item.id == baseline.id %}Baseline{% endif %}</span></div>
-          {% endfor %}
+      <section class="summary-grid source-summary-grid">
+        <article class="summary-card"><span class="summary-label">Last checked</span><strong>{{ latest.observed_at.strftime('%b %d · %H:%M') }}</strong><p>UTC</p></article>
+        <article class="summary-card"><span class="summary-label">Last successful update</span><strong>{% if last_successful %}{{ last_successful.observed_at.strftime('%b %d · %H:%M') }}{% else %}None yet{% endif %}</strong><p>{% if last_successful %}Most recent usable observation{% else %}No successful observation{% endif %}</p></article>
+        <article class="summary-card"><span class="summary-label">Baseline</span><strong>{% if baseline %}{{ baseline.observed_at.strftime('%b %d · %H:%M') }}{% else %}Not established{% endif %}</strong><p>Trusted comparison point</p></article>
+        <article class="summary-card"><span class="summary-label">Next check</span><strong>{% if schedule.next_check_at %}{{ schedule.next_check_at.strftime('%b %d · %H:%M') }}{% elif schedule.due %}Due now{% else %}Disabled{% endif %}</strong><p>Monitoring schedule</p></article>
+      </section>
+
+      <section class="detail-layout">
+        <div class="detail-main">
+          <section class="panel" id="changes">
+            <div class="section-title"><div><p class="section-kicker">WHAT CHANGED?</p><h2>Reliability findings</h2></div><span>{{ latest.findings|length }} finding{{ '' if latest.findings|length == 1 else 's' }}</span></div>
+            {% if latest.findings %}
+              <div class="finding-list product-findings">
+              {% for finding in latest.findings %}
+                <article class="finding finding-{{ finding.severity.value|lower }}">
+                  <div class="finding-top"><strong>{{ finding.detector|replace('_', ' ')|title }}</strong><span class="finding-severity">{{ finding.severity.value }}</span></div>
+                  <h3>{{ finding.description }}</h3>
+                  <p>{{ finding.why_flagged }}</p>
+                  <div class="change-values">
+                    <div><span>Expected / reference</span><strong>{{ finding.baseline_value }}</strong></div>
+                    <div><span>Current</span><strong>{{ finding.current_value }}</strong></div>
+                  </div>
+                  {% if finding.likely_impact %}<div class="finding-callout"><b>Why it matters</b><p>{{ finding.likely_impact }}</p></div>{% endif %}
+                  {% if finding.suggested_investigation %}<div class="finding-callout action-callout"><b>What to check</b><p>{{ finding.suggested_investigation }}</p></div>{% endif %}
+                </article>
+              {% endfor %}
+              </div>
+            {% else %}
+              <div class="healthy-note"><strong>No material reliability findings.</strong><p>The current observation is within configured thresholds relative to its baseline/recent healthy history.</p></div>
+            {% endif %}
+          </section>
+
+          <section class="panel" id="history">
+            <div class="section-title"><div><p class="section-kicker">WHEN DID IT CHANGE?</p><h2>Recent health history</h2></div><span>Latest {{ history|length }}</span></div>
+            <div class="health-timeline">
+              {% for item in history %}
+              <div class="timeline-item">
+                <span class="timeline-dot status-dot-{{ item.health.value|lower }}"></span>
+                <div><strong>{{ item.health.value }}</strong><span>{{ item.observed_at.strftime('%b %d · %H:%M UTC') }}</span></div>
+                {% if baseline and item.id == baseline.id %}<span class="baseline-chip">Baseline</span>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </section>
+
+          {% if latest.profile %}
+          <section class="panel">
+            <div class="section-title"><div><p class="section-kicker">CURRENT SNAPSHOT</p><h2>Current profile</h2></div></div>
+            <div class="profile-grid">
+              <div><span>Rows</span><strong>{{ latest.profile.row_count }}</strong></div>
+              <div><span>Columns</span><strong>{{ latest.profile.column_count }}</strong></div>
+              <div><span>Latest date</span><strong>{% if latest.profile.latest_date %}{{ latest.profile.latest_date }}{% else %}Not established{% endif %}</strong>{% if latest.profile.latest_date_field %}<small>{{ latest.profile.latest_date_field }}</small>{% endif %}</div>
+            </div>
+          </section>
+          {% endif %}
         </div>
+
+        <aside class="detail-side">
+          {% if latest.health.value != 'Healthy' %}
+          <section class="panel action-panel">
+            <p class="section-kicker">REVIEW STATUS</p>
+            <h2>{% if latest_review %}{{ latest_review.state.value }}{% else %}Unreviewed incident{% endif %}</h2>
+            <p>Review state records analyst attention. It does not claim the upstream issue is fixed.</p>
+            {% if not static_mode %}
+            <div class="stacked-actions">
+              <form method="post" action="/sources/{{ source.id }}/review?state=Acknowledged"><button class="button button-secondary" type="submit">Acknowledge</button></form>
+              <form method="post" action="/sources/{{ source.id }}/review?state=Reviewed"><button class="button button-primary" type="submit">Mark reviewed</button></form>
+            </div>
+            {% endif %}
+          </section>
+          {% endif %}
+
+          {% if incident %}
+          <section class="panel incident-stats">
+            <p class="section-kicker">INCIDENT</p><h2>{{ incident.status.value }}</h2>
+            <dl class="compact-stats">
+              <div><dt>Peak severity</dt><dd class="text-{{ incident.peak_health.value|lower }}">{{ incident.peak_health.value }}</dd></div>
+              <div><dt>Affected checks</dt><dd>{{ incident.observation_count }}</dd></div>
+              <div><dt>Notification candidates</dt><dd>{{ notification_candidate_count }}</dd></div>
+              <div><dt>Delivery attempts</dt><dd>{{ delivery_attempt_count }}</dd></div>
+            </dl>
+            {% if incident.status.value == 'Recovered' %}<p class="healthy-note compact-note"><strong>Recovered {{ incident.recovered_at.strftime('%b %d · %H:%M UTC') }}</strong></p>{% endif %}
+          </section>
+          {% endif %}
+
+          {% if baseline_review and baseline_review.candidate and baseline_review.current_baseline and baseline_review.candidate.id != baseline_review.current_baseline.id %}
+          <section class="panel action-panel">
+            <p class="section-kicker">BASELINE REVIEW</p><h2>{{ 'Ready to promote' if baseline_review.ready else 'Promotion blocked' }}</h2>
+            {% if baseline_review.blockers %}<p>{{ baseline_review.blockers|join(' ') }}</p>{% elif not static_mode %}<p>Candidate is Healthy and can become the new trusted comparison point.</p><form method="post" action="/sources/{{ source.id }}/baseline?candidate_id={{ baseline_review.candidate.id }}&expected_current_baseline_id={{ baseline_review.current_baseline.id }}"><button class="button button-secondary" type="submit">Promote baseline</button></form>{% endif %}
+          </section>
+          {% endif %}
+
+          <details class="panel contract-details">
+            <summary><span><span class="section-kicker">MONITORING SETUP</span><strong>Monitoring contract</strong></span><span>View</span></summary>
+            <dl class="contract-list">
+              <div><dt>Check cadence</dt><dd>Every {{ source.config.monitor_interval_minutes }} min</dd></div>
+              <div><dt>Expected refresh</dt><dd>{% if source.config.expected_refresh_minutes %}Every {{ source.config.expected_refresh_minutes }} min{% else %}Not configured{% endif %}</dd></div>
+              <div><dt>Freshness field</dt><dd>{% if source.config.latest_date_field %}{{ source.config.latest_date_field }}{% elif source.config.infer_latest_date_field %}Conservative inference{% else %}Not configured{% endif %}</dd></div>
+              <div><dt>Numeric fields</dt><dd>{{ source.config.numeric_fields|join(', ') if source.config.numeric_fields else 'None declared' }}</dd></div>
+              <div><dt>Unique keys</dt><dd>{{ source.config.unique_keys|join(', ') if source.config.unique_keys else 'None declared' }}</dd></div>
+              <div><dt>Notification policy</dt><dd>{% if source.config.notification_transitions %}{% for transition in source.config.notification_transitions %}{{ transition.value }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}No transitions enabled{% endif %}</dd></div>
+              <div><dt>Delivery retry delay</dt><dd>{% if source.config.delivery_retry_minutes %}{{ source.config.delivery_retry_minutes }} min{% else %}Immediate after Failed{% endif %}</dd></div>
+            </dl>
+          </details>
+        </aside>
       </section>
     {% else %}
-      <section class="panel empty"><h2>Not checked yet</h2><p>The next monitoring run will profile this source and establish its baseline.</p></section>
+      <section class="panel product-empty"><div class="empty-icon">↻</div><h2>Not checked yet</h2><p>The next monitoring run will profile this source and establish its baseline.</p>{% if not static_mode %}<form method="post" action="/sources/{{ source.id }}/check"><button class="button button-primary" type="submit">Run first check</button></form>{% endif %}</section>
     {% endif %}
   </main>
 </body>
