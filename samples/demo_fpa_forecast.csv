@@ -1,0 +1,7 @@
+department,period_end,budget,forecast,actual,owner
+Sales,2026-08-01,420000,438000,431500,Avery
+Operations,2026-08-01,265000,271500,269200,Morgan
+Marketing,2026-08-01,180000,193000,188400,Jordan
+Technology,2026-08-01,310000,304500,307900,Casey
+Finance,2026-08-01,145000,146500,144800,Riley
+People,2026-08-01,128000,132000,130600,Taylor
