@@ -52,7 +52,12 @@ def configure_dependency_web(
     def dependency_index(request: Request):
         roots = []
         for asset in service.roots():
-            roots.append({"asset": asset, "blast_radius": service.blast_radius(asset.kind, asset.id)})
+            roots.append(
+                {
+                    "asset": asset,
+                    "blast_radius": service.blast_radius(asset.kind, asset.id),
+                }
+            )
         return templates.TemplateResponse(
             request=request,
             name="dependencies.html",
@@ -73,9 +78,15 @@ def configure_dependency_web(
     @app.put("/api/dependencies/edges/{edge_id}")
     def api_upsert_dependency_edge(edge_id: str, edge: DependencyEdge):
         if edge_id != edge.id:
-            raise HTTPException(status_code=409, detail="Dependency edge ID does not match request path")
+            raise HTTPException(
+                status_code=409,
+                detail="Dependency edge ID does not match request path",
+            )
         if edge.workspace_id != workspace_id:
-            raise HTTPException(status_code=409, detail="Dependency edge belongs to another workspace")
+            raise HTTPException(
+                status_code=409,
+                detail="Dependency edge belongs to another workspace",
+            )
         try:
             return service.upsert_edge(edge)
         except ValueError as exc:
