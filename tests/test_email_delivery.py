@@ -193,12 +193,13 @@ def test_definitive_provider_rejection_records_failed_attempt(tmp_path: Path) ->
     storage = Storage(tmp_path / "state.db")
     _seed(storage)
 
+    def reject(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"message": "bad"})
+
     adapter = ResendEmailAdapter(
         "re_test_secret",
         _destination(),
-        client=httpx.Client(
-            transport=httpx.MockTransport(lambda request: httpx.Response(422, json={"message": "bad"}))
-        ),
+        client=httpx.Client(transport=httpx.MockTransport(reject)),
     )
     attempt = deliver_email_candidate(
         storage,
