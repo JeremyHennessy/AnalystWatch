@@ -67,7 +67,9 @@ def test_runtime_warning_rule_flows_through_existing_health_derivation(tmp_path:
     observation = service.check_source(source.id, now=NOW + timedelta(hours=1))
 
     rule_findings = [
-        finding for finding in observation.findings if finding.detector == "data_rule:amount-contract"
+        finding
+        for finding in observation.findings
+        if finding.detector == "data_rule:amount-contract"
     ]
     assert observation.health == HealthStatus.WARNING
     assert len(rule_findings) == 1
@@ -91,7 +93,9 @@ def test_critical_rule_uses_existing_incident_and_notification_lifecycle(tmp_pat
 
     assert observation.health == HealthStatus.CRITICAL
     rule_findings = [
-        finding for finding in observation.findings if finding.detector == "data_rule:amount-contract"
+        finding
+        for finding in observation.findings
+        if finding.detector == "data_rule:amount-contract"
     ]
     assert len(rule_findings) == 1
     assert rule_findings[0].severity == HealthStatus.CRITICAL
