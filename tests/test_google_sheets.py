@@ -156,7 +156,9 @@ def test_google_sheets_rejects_ambiguous_headers_and_wider_rows(monkeypatch) -> 
 
     for payload, message in zip(payloads, expected, strict=True):
         client = httpx.Client(
-            transport=httpx.MockTransport(lambda request, body=payload: httpx.Response(200, json=body))
+            transport=httpx.MockTransport(
+                lambda request, body=payload: httpx.Response(200, json=body)
+            )
         )
         result = ingest_source(_source(), client=client)
         client.close()
