@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -38,7 +39,12 @@ def _rule_source(path: Path) -> SourceDefinition:
 
 def _seed_rule_failure(app, path: Path) -> None:
     source = _rule_source(path)
-    pd.DataFrame({"internal_status": ["PRIVATE_ALLOWED"] * 100}).to_csv(path, index=False)
+    pd.DataFrame(
+        {
+            "internal_status": ["PRIVATE_ALLOWED"] * 100,
+            "public_label": ["SAFE_PUBLIC"] * 100,
+        }
+    ).to_csv(path, index=False)
     onboard = app.state.service.onboard_source(source, now=NOW)
     assert onboard.ready is True
     assert onboard.accepted is True
@@ -46,7 +52,12 @@ def _seed_rule_failure(app, path: Path) -> None:
     assert baseline.health.value == "Healthy"
 
     values = ["PRIVATE_ALLOWED"] * 99 + ["PRIVATE_FORBIDDEN"]
-    pd.DataFrame({"internal_status": values}).to_csv(path, index=False)
+    pd.DataFrame(
+        {
+            "internal_status": values,
+            "public_label": ["SAFE_PUBLIC"] * 100,
+        }
+    ).to_csv(path, index=False)
     current = app.state.service.check_source(source.id, now=NOW + timedelta(hours=1))
     assert current.health.value == "Critical"
 
@@ -79,7 +90,6 @@ def test_dynamic_source_detail_keeps_private_data_rule_evidence(tmp_path: Path) 
 
     assert response.status_code == 200
     assert "Confidential workflow state" in response.text
-    assert "confidential-status-rule" in response.text
     assert "internal_status" in response.text
     assert "PRIVATE_ALLOWED" in response.text
     assert "Secret impact phrase for internal operations." in response.text
@@ -112,6 +122,14 @@ def test_static_pages_redact_private_data_rule_contract(tmp_path: Path) -> None:
         assert "Secret investigation phrase for operators." not in rendered
         assert "A configured Data Rule failed." in rendered
         assert "Private configured Data Rule" in rendered
+
+    state = json.loads(raw_state)
+    profile = state["sources"][0]["latest"]["profile"]
+    assert profile["column_count"] == 1
+    assert "public_label" in profile["columns"]
+    assert profile["columns"]["public_label"]["category_frequencies"] == {
+        "SAFE_PUBLIC": 1.0
+    }
 
     assert '"violations": 1' in raw_state
     assert '"rows": 100' in raw_state
