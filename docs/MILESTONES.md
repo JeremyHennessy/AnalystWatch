@@ -48,46 +48,51 @@ Added structural `MonitoringStore`, backward-compatible default-local source own
 
 Added independent `MemoryStore`, shared conformance coverage, default-local CLI/FastAPI workspace binding and runtime isolation. Clean gate: 113 tests; hosted state verified after merge.
 
-## Core v0.12 — Workspace-aware persistent identity proof — current
+## Core v0.12 — Workspace-aware persistent identity proof — complete
+
+Added separate schema-v2 `NamespacedStorage`, composite workspace/domain keys, workspace-local idempotency and verified selected-workspace import from legacy snapshots. Clean gate: 121 tests; hosted legacy state verified after merge.
+
+## Core v0.13 — Controlled backend selection & migration rehearsal — current
 
 Implemented and verified on the functional checkpoint:
 
-- separate `NamespacedStorage` persistent adapter using schema version 2
-- composite workspace identity across sources, observations, reviews, candidates and attempts
-- workspace-local idempotency-key uniqueness
-- workspace-local candidate/adapter attempt numbering
-- same source/candidate/attempt IDs can coexist in different workspaces in one database
-- same idempotency value can coexist in different workspaces
-- adapter remains bound to one validated workspace per instance
-- adapter satisfies the existing `MonitoringStore` contract
-- read-only verified import from legacy schema-v1 snapshots
-- selected-workspace import only
-- imported baseline, review, candidate and delivery-attempt state preserved
-- import destination is create-only and never overwritten
-- imported schema-v2 database receives a new storage identity
-- corrupt or non-v1 sources are rejected before a target is retained
-- current hosted legacy runtime remains unchanged
-- eight new regressions
-- clean functional checkpoint reached **121 passing tests**
+- shared runtime storage factory for `legacy` and `namespaced` modes
+- safe default remains `legacy`
+- existing databases inspected read-only before runtime initialization
+- schema version 1 accepted only by `legacy`
+- schema version 2 accepted only by `namespaced`
+- corrupt or AnalystWatch-unknown existing state rejected without mutation
+- global CLI `--storage-backend` and `ANALYSTWATCH_STORAGE_BACKEND`
+- backend-aware `verify-state`
+- legacy backup/restore explicitly remain legacy-only
+- local `import-namespaced-state` command wraps the create-only v1 → v2 import
+- FastAPI accepts explicit/environment backend selection
+- FastAPI records selected backend in app state
+- end-to-end migration rehearsal starts from operational legacy state
+- rehearsal verifies Healthy baseline, later Critical history, Reviewed state, Eligible candidate and completed dry-run attempt
+- verified legacy snapshot imported into schema-v2
+- migrated state successfully opened through namespaced FastAPI
+- source/history/candidate/attempt continuity verified through API reads
+- migrated state successfully rendered through static Pages
+- eight new backend/migration regressions
+- clean functional checkpoint reached **129 passing tests**
 
-The live-source PR workflow is path-filtered to ingestion/model/profile/service changes and therefore does not run for this new-adapter-only milestone. Post-merge `monitor-state` advancement is the deployment compatibility gate for the unchanged legacy runtime.
+The live-source PR workflow is path-filtered to ingestion/model/profile/service changes and does not run for this runtime-only milestone. Post-merge `monitor-state` advancement remains the deployment compatibility gate proving the hosted default-legacy path still operates normally.
 
-## Candidate v0.13 — controlled backend selection & migration rehearsal
+## Candidate v0.14 — production persistence & authenticated workspace boundary
 
-Before any production database selection:
+Before enabling real external delivery:
 
-- add explicit runtime backend selection with safe legacy default
-- reject schema/backend mismatches before initialization
-- add a local CLI wrapper for verified legacy-to-namespaced import
-- rehearse legacy snapshot → schema-v2 import → FastAPI startup → Pages rendering
-- prove source/history/candidate/attempt continuity after import
-- keep hosted deployment on legacy until the rehearsal is independently green
+- select a deployment-grade persistent database behind the proven `MonitoringStore` contract
+- implement workspace-aware identity equivalent to the schema-v2 proof
+- define authenticated user/session identity
+- define workspace membership and authorization rules for remote reads/writes
+- define production migration/cutover from verified local snapshots
+- define managed backup/retention/audit policy
+- keep real notification delivery disabled until persistence/auth boundaries are proven
 
 ## Later
 
-- deployment-appropriate production database adapter
-- authenticated workspace/user authorization
-- retention/audit policy for observations, candidates and attempts
 - first opt-in provider integration behind the proven attempt abstraction
 - production notification delivery
 - SourceGuard productization
