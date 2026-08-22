@@ -66,6 +66,8 @@
         <article class="summary-card"><span class="summary-label">Next check</span><strong>{% if schedule.next_check_at %}{{ schedule.next_check_at.strftime('%b %d · %H:%M') }}{% elif schedule.due %}Due now{% else %}Disabled{% endif %}</strong><p>Monitoring schedule</p></article>
       </section>
 
+      {% include "_scorecard.html" %}
+
       <section class="detail-layout">
         <div class="detail-main">
           {% if latest.row_diff %}

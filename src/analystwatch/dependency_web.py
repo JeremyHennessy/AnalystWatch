@@ -9,6 +9,8 @@ from fastapi.templating import Jinja2Templates
 from .dependencies import AssetKind, DependencyEdge
 from .dependency_service import DependencyService
 from .dependency_storage import PostgresDependencyStore, SQLiteDependencyStore
+from .scorecard_service import ReliabilityScorecardService
+from .scorecard_web import configure_scorecard_web
 
 
 def _dependency_store(
@@ -47,6 +49,11 @@ def configure_dependency_web(
     service = DependencyService(store)
     app.state.dependency_store = store
     app.state.dependency_service = service
+
+    scorecard_service = ReliabilityScorecardService(app.state.workspace_storage)
+    app.state.scorecard_service = scorecard_service
+    templates.env.globals["reliability_scorecard_for"] = scorecard_service.scorecard
+    configure_scorecard_web(app)
 
     @app.get("/dependencies", response_class=HTMLResponse)
     def dependency_index(request: Request):
