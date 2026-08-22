@@ -182,7 +182,9 @@ def read_microsoft_excel_table(
                     payload = next_response.json()
                     extra_items = payload.get("value", [])
                     if not isinstance(extra_items, list):
-                        raise ValueError("Microsoft Graph rows response did not contain a value array")
+                        raise ValueError(
+                            "Microsoft Graph rows response did not contain a value array"
+                        )
                     for row in extra_items:
                         values = row.get("values") if isinstance(row, dict) else None
                         if isinstance(values, list) and values and isinstance(values[0], list):
