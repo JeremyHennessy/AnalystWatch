@@ -119,7 +119,7 @@ Explicit non-goals preserved:
 - no separate notification state machine;
 - no claim of live Microsoft tenant access without a real credential.
 
-## Product v0.20 — Microsoft Teams + dependency graph / blast radius — current release candidate
+## Product v0.20 — Microsoft Teams + dependency graph / blast radius — complete
 
 Implemented on top of the verified v0.19 baseline:
 
@@ -142,7 +142,8 @@ Implemented on top of the verified v0.19 baseline:
 - additive source-detail Downstream impact panel using the recorded dependency graph
 - dynamic SourceGuard / Power BI Guard navigation to the Dependency Map
 - no detector, source Health, baseline, incident or existing delivery-state semantics changed
-- verified functional checkpoint: **212 tests**, Ruff/compile green, PostgreSQL 16 CI green
+- verified checkpoint: **212 tests**, Ruff/compile green, PostgreSQL 16 CI green
+- merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`
 
 Explicit non-goals / unverified boundaries preserved:
 
@@ -154,11 +155,42 @@ Explicit non-goals / unverified boundaries preserved:
 - no claim of live Microsoft Power BI tenant access because no real tenant credential was supplied;
 - static GitHub Pages do not fabricate dynamic Teams, Power BI or dependency state.
 
-## Product roadmap after v0.20
+## Product v0.21 — reconciliation monitor / ambiguous delivery operations — current release
+
+Implemented from the exact verified v0.20 merge baseline:
+
+- read-only reconciliation queue derived from existing delivery-attempt state
+- only unresolved `Prepared` attempts enter the queue
+- default stale threshold of 30 minutes
+- oldest unresolved attempts first
+- bounded 5,000-attempt storage scan and separate 100-item output/display limit
+- explicit `scan_limit_reached` and `item_limit_reached` evidence instead of claiming exhaustive history
+- bounded queue fields exclude idempotency keys, claim owners, provider raw results/errors and reconciliation notes
+- analyst-facing `/reconciliation` Delivery Ops view
+- `GET /api/delivery-reconciliation` bounded read API
+- evidence-note reconciliation form for explicit Succeeded / Failed outcomes
+- existing reconciliation state transition remains authoritative; no new notification/delivery state machine
+- no automatic retry when an operator reconciles an attempt to Failed
+- existing retry policy continues to decide whether/when a later attempt can be claimed
+- signed-bearer UI and API reconciliation persist the authenticated operator as `reconciled_by`
+- Viewer read / Operator reconciliation boundaries; other mutations remain fail closed
+- dynamic application navigation exposes Delivery Ops without adding it to the static Pages overview
+- functional checkpoint: **225 tests**, Ruff/compile green, PostgreSQL 16 CI green
+
+Explicit non-goals preserved:
+
+- no automatic guessing of an ambiguous provider outcome;
+- no automatic retry of Prepared attempts;
+- no provider-specific reconciliation polling in this milestone;
+- no detector threshold or source Health changes;
+- no unrelated UI redesign;
+- no new delivery-attempt persistence schema;
+- static GitHub Pages do not fabricate reconciliation state.
+
+## Product roadmap after v0.21
 
 Proceed sequentially unless evidence changes a dependency:
 
-- Product v0.21 — reconciliation monitors / ambiguous-delivery operations
 - Product v0.22 — Google Sheets connector
 - Product v0.23 — business rules / Data Rules
 - Product v0.24 — reliability scorecards + trust badge
