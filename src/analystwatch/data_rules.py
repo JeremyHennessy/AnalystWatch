@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .models import DataRule, DataRuleKind, Finding, HealthStatus
+from .models import DataRule, DataRuleKind, Finding
 
 
 def _rule_condition(rule: DataRule) -> dict[str, object]:
@@ -146,12 +146,3 @@ def evaluate_data_rules(frame: pd.DataFrame, rules: list[DataRule]) -> list[Find
             continue
 
     return findings
-
-
-def rule_health(findings: list[Finding]) -> HealthStatus:
-    severities = {finding.severity for finding in findings}
-    if HealthStatus.CRITICAL in severities:
-        return HealthStatus.CRITICAL
-    if HealthStatus.WARNING in severities:
-        return HealthStatus.WARNING
-    return HealthStatus.HEALTHY
