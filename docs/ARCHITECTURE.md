@@ -1,128 +1,131 @@
-# AnalystWatch Core v0.16 Architecture
+# AnalystWatch Product v0.17 Architecture
 
 ## Decision
 
-Core v0.16 extends the verified v0.15 security boundary in two controlled directions: managed-runtime readiness and the first live email delivery adapter. It does not change deterministic detector logic, incident derivation, notification-candidate eligibility or the established delivery-attempt lifecycle.
+Product v0.17 adds Microsoft 365 Excel as a connector to the existing AnalystWatch ingestion boundary. It does **not** introduce a second profiling, detector, incident or notification architecture.
 
-The architecture keeps infrastructure readiness and external side effects separable so neither can be inferred from the other.
+The connector normalizes a SharePoint / OneDrive Excel Table into the same pandas DataFrame used by CSV, local XLSX, JSON and API sources. Everything after ingestion remains deterministic and unchanged.
 
-## Managed runtime boundary
+## Source contract
 
-`managed_runtime.py` defines an environment-backed deployment contract for:
-
-- managed PostgreSQL DSN;
-- bound workspace;
-- signed-bearer authentication secret;
-- trusted bootstrap Admin principal;
-- Resend API key;
-- sender and recipients;
-- public application base URL.
-
-Secrets are consumed at runtime and are not written to repository configuration, monitoring state or public Pages output.
-
-`prepare_managed_runtime(...)` performs the startup sequence:
-
-1. construct workspace-bound `PostgresStorage`;
-2. initialize the AnalystWatch PostgreSQL schema;
-3. initialize `PostgresMembershipStore`;
-4. look up the configured bootstrap principal;
-5. create that principal as Admin only when absent;
-6. refuse startup if that existing principal is not Admin;
-7. verify AnalystWatch PostgreSQL schema/storage identity;
-8. return non-secret readiness counts.
-
-This is the trusted first-Admin provisioning path promised by v0.15. No unauthenticated web bootstrap endpoint is introduced.
-
-## Managed PostgreSQL validation
-
-A dedicated external managed PostgreSQL validation project was provisioned for v0.16 without changing the hosted GitHub runtime.
-
-The validation environment contains the same AnalystWatch PostgreSQL schema-v1 contract used in CI, including monitoring state, delivery attempts and workspace memberships. Schema version and persistent storage identity were verified after initialization.
-
-### Recovery rehearsal
-
-Recovery was tested on an isolated managed-database branch:
-
-1. clone the validation database state;
-2. verify storage identity, validation source and Admin membership on the clone;
-3. deliberately remove validation state from the clone;
-4. confirm the clone is degraded;
-5. reset the clone from its parent state;
-6. verify the original storage identity, source and Admin membership are restored;
-7. delete the temporary recovery branches.
-
-The primary validation branch was not damaged during this test. This proves provider recovery mechanics for the validation environment; it is not evidence that the GitHub-hosted application has been cut over to managed PostgreSQL.
-
-## Delivery mode extension
-
-`DeliveryMode` now contains:
+`SourceType.MICROSOFT_EXCEL` uses an internal location descriptor:
 
 ```text
-dry-run | live
+m365://<drive-id>/<item-id>?table=<table-name>[&worksheet=<sheet>][&page_size=500]
 ```
 
-The existing dry-run path is preserved unchanged. Live email delivery reuses the existing persistence contract rather than introducing a second notification state machine.
+The descriptor identifies the workbook and Excel Table but contains no bearer token.
 
-## Resend email adapter
-
-`email_delivery.py` adds `ResendEmailAdapter` and `EmailDestination`.
-
-A live email operation resolves the existing candidate, source and observation and then calls the existing atomic `claim_delivery_attempt(...)` storage operation. Only an Eligible candidate can therefore be attempted.
-
-The provider request carries the same AnalystWatch idempotency key in the Resend `Idempotency-Key` header.
-
-### State ordering
-
-The existing storage claim creates a Prepared attempt. Before network I/O, the attempt is updated to `DeliveryMode.LIVE`. This means persisted state records that an external side effect was about to occur before the provider is contacted.
-
-### Outcome handling
-
-Provider acceptance:
+Delegated Microsoft Graph authorization is supplied through the existing `request_header_env` mechanism:
 
 ```text
-Prepared/live → Succeeded/live
+Authorization → <environment variable name>
 ```
 
-with a non-secret provider message-ID summary.
+Only the environment-variable name is persisted. The credential value remains external runtime configuration.
 
-Definitive HTTP/provider rejection:
+## Microsoft Graph adapter
+
+`microsoft_excel.py` owns connector-specific Graph behavior:
+
+1. validate the `m365://` descriptor;
+2. require an injected `Authorization` header;
+3. read DriveItem metadata for modified-time / ETag evidence;
+4. read Excel Table columns;
+5. read Excel Table rows;
+6. follow Graph pagination safely;
+7. normalize row width to the declared columns;
+8. return a DataFrame plus standard ingestion metadata.
+
+The adapter accepts only pagination URLs under `https://graph.microsoft.com/v1.0/` before following them.
+
+Non-2xx Graph responses become normal ingestion availability evidence rather than uncaught monitor failures.
+
+## Delegated-access boundary
+
+The Excel workbook/table Graph operations used by v0.17 require delegated user access. This milestone does not claim application-permission support for those workbook APIs.
+
+There is no OAuth account browser in v0.17. A production SaaS onboarding flow should later obtain the delegated token and discover tenant/site/drive/workbook/table identifiers for the user instead of asking them to supply identifiers manually.
+
+That future UX can change the selection experience without changing this ingestion or detector boundary.
+
+## Existing pipeline reuse
+
+After connector ingestion, Microsoft Excel data flows through the same sequence as other tabular sources:
 
 ```text
-Prepared/live → Failed/live
+Microsoft Graph Excel Table
+→ DataFrame
+→ preflight
+→ profile
+→ configured contracts
+→ deterministic detectors
+→ Health
+→ observation/history
+→ incident
+→ notification candidate
 ```
 
-Transport uncertainty:
+This preserves detector comparability across source types and avoids Microsoft-specific reliability semantics.
+
+## Metadata evidence
+
+Where Graph supplies it, the connector records:
+
+- DriveItem `lastModifiedDateTime` as `source_modified_at`;
+- DriveItem ETag as `response_etag`;
+- Graph HTTP status and request duration.
+
+These values are source evidence; they do not independently redefine Health.
+
+## Public-output boundary
+
+Internal Microsoft identifiers are not useful on a public/static status page. `pages.py` therefore redacts the raw `m365://` descriptor and publishes only a label such as:
 
 ```text
-Prepared/live → Prepared/live
+Microsoft 365 Excel · FinanceTable
 ```
 
-The last case is intentional. A timeout or connection failure can happen after a provider accepted the request, so AnalystWatch does not blindly mark the attempt Failed and allow a duplicate retry. Existing explicit reconciliation remains required.
+Regression coverage proves that generated Pages and `state.json` do not contain the drive ID, workbook item ID or authorization environment-variable name.
 
-Same-key replay returns the stored attempt without a second provider request.
+This redaction does not alter the persisted source definition used by the authenticated/local application runtime.
 
-## Email content
+## Onboarding
 
-The first email template remains intentionally simple and analyst-oriented. It includes source/workspace, transition, severity, observed time, candidate reason, deterministic findings, likely impact, suggested investigation and a source-detail link.
+The existing source-onboarding page now includes Microsoft 365 Excel. It collects:
 
-It does not include API credentials, PostgreSQL DSNs, authorization headers or idempotency keys.
+- drive ID;
+- workbook item ID;
+- Excel Table;
+- optional worksheet;
+- delegated-token environment-variable name;
+- normal cadence, freshness, numeric and key contracts.
+
+The form synthesizes the internal source descriptor and then calls the same `/api/preflight` and `/api/onboard` paths used by existing sources.
+
+The established rule remains: **Validate before monitoring.**
 
 ## Verification boundary
 
-Core v0.16 has three distinct evidence levels:
+Product v0.17 is verified through deterministic mocked-Graph tests, PostgreSQL-backed full CI and the existing live public-source smoke gate.
 
-1. **deterministic provider integration tests** — mocked HTTP verifies request shape, idempotency, success/rejection/uncertainty behavior and secret redaction;
-2. **managed PostgreSQL validation** — an external managed database and isolated recovery rehearsal prove infrastructure/storage mechanics;
-3. **real email side effect** — requires a real Resend credential, verified sender and provider acceptance. This is not claimed merely from mocked tests.
+The functional checkpoint passed **172 tests** plus Ruff and compile checks. Coverage includes parsing, row normalization, Graph pagination, metadata, authorization absence, Graph rejection, preflight reuse, onboarding UI and public-output redaction.
 
-The v0.16 functional checkpoint passed Ruff, compile, **164 tests** against PostgreSQL 16 CI, and live-source smoke.
+No live Microsoft tenant credential was used in this repository session, so a real SharePoint/OneDrive tenant connection is not claimed.
 
-## Hosted compatibility
+## Preserved Core v0.16 behavior
 
-The existing GitHub Pages monitor remains legacy SQLite and local auth. No production PostgreSQL DSN, signed-bearer deployment secret or email provider secret is added to that workflow by v0.16.
+v0.17 does not change:
 
-A future production deployment must explicitly configure managed runtime values and should retain a rollback path until the managed application deployment itself has been verified.
+- detector thresholds;
+- monitoring schedule semantics;
+- storage schemas;
+- workspace authorization;
+- incident derivation;
+- notification-candidate policy;
+- delivery idempotency/reconciliation;
+- hosted legacy SQLite/local-auth defaults.
 
 ## Next architecture step
 
-Product v0.17 should add the SharePoint / OneDrive Excel connector through the existing ingestion/profile/detector pipeline. Microsoft authentication and workbook/table selection should remain connector concerns; they must not fork the deterministic health/incident architecture.
+Product v0.18 should add bounded row/key change evidence. The key architectural requirement is to persist only the minimum comparison material necessary for configured-key diffs, with explicit retention and sample limits, rather than turning AnalystWatch into an unlimited raw-data archive.
