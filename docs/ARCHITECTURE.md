@@ -1,265 +1,209 @@
-# AnalystWatch Product v0.22 Architecture
+# AnalystWatch Product v0.23 Architecture
 
 ## Decision
 
-Product v0.22 adds Google Sheets as another `SourceType` while preserving the existing AnalystWatch ingestion, preflight, monitoring, persistence and UI architecture.
+Product v0.23 adds deterministic analyst-defined Data Rules to the existing source evidence pipeline.
 
-The architectural rule is: **Google Sheets is a connector into the existing source pipeline, not a parallel monitoring product.**
+The architectural rule is: **a Data Rule is another deterministic source finding, not a second Health system.**
 
 ```text
-SourceDefinition(type=google_sheets)
+SourceDefinition + MonitoringConfig.data_rules
         ↓
-environment-backed Authorization header resolution
-        ↓
-Google Sheets API v4 spreadsheets.values.get
-        ↓
-deterministic row-major values normalization
+existing connector ingestion
         ↓
 pandas DataFrame
         ↓
-existing preflight / profiling / detectors
+existing profiling / source evidence
         ↓
-existing observations / baselines / row diff / incidents
+Data Rule evaluation
+        ↓
+ordinary Finding[]
+        ↓
+existing health_from_findings(...)
+        ↓
+existing observations / incidents / notifications / reviews
 ```
 
-No Google-specific observation, baseline, incident, detector or persistence model is introduced.
+No rule-specific observation, incident, notification, baseline or persistence state machine is introduced.
 
-## Source contract
+## Rule model
 
-`SourceType.GOOGLE_SHEETS` uses the location format:
+`MonitoringConfig.data_rules` contains typed `DataRule` objects.
 
-```text
-gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]
-```
+Supported kinds are:
 
-`GoogleSheetsLocation` contains:
+- `not_null` — requires `field` and accepts no range/allowed-value parameters;
+- `allowed_values` — requires `field` plus a non-empty unique allowed-value list;
+- `numeric_range` — requires `field` and at least one numeric minimum/maximum;
+- `row_count_range` — accepts integer row-count minimum/maximum and no field.
 
-- `spreadsheet_id`;
-- explicit A1 `range_name`;
-- `header_row`, one-based and relative to the values returned for that range.
+Every rule has:
 
-The parser requires a spreadsheet ID and range. Header row defaults to 1 and is bounded to 1..1000.
+- stable explicit `id`;
+- analyst-facing `name`;
+- failure `severity` of Warning or Critical;
+- optional `likely_impact`;
+- optional `suggested_investigation`.
 
-The source still uses the ordinary `MonitoringConfig` for monitor cadence, freshness expectations, numeric fields, unique keys, row-diff settings and request-header environment references.
+Pydantic validation fails closed for incompatible/missing parameters, invalid bounds, empty/duplicate allowed values, invalid severity and duplicate rule IDs within one monitoring configuration.
 
-## Provider/API boundary
+## Deterministic evaluation boundary
 
-`google_sheets.py` calls the Google Sheets API v4 values endpoint:
+`data_rules.evaluate_data_rules(...)` receives the already-ingested DataFrame and configured rules.
 
-```text
-GET /v4/spreadsheets/{spreadsheetId}/values/{range}
-```
+It does not execute SQL, user code or an expression language. It evaluates only the four typed operations above.
 
-Request parameters are deliberately deterministic:
-
-- `majorDimension=ROWS`;
-- `valueRenderOption=UNFORMATTED_VALUE`;
-- `dateTimeRenderOption=FORMATTED_STRING`.
-
-The connector uses `httpx`, matching the existing provider/client approach. Product v0.22 does not introduce the Google SDK.
-
-Provider non-2xx responses are converted to normal ingestion availability evidence with the HTTP status. If Google supplies an ETag it is retained as `response_etag`.
-
-## Authorization boundary
-
-Authorization reuses the existing environment-backed request-header contract.
-
-A typical source definition stores only:
+Field-based failures produce aggregate evidence:
 
 ```text
-request_header_env = {
-  "Authorization": "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
+{
+  violations: <count>,
+  rows: <row count>,
+  violation_pct: <bounded ratio>
 }
 ```
 
-At runtime `_request_headers(...)` resolves the environment variable and passes the resulting header to the connector.
+The finding also retains the declared rule condition for authenticated/local investigation. Failing row values are never copied into the Data Rule finding.
 
-The credential value is not written into the source definition, public Pages output or Google-specific storage because no Google-specific storage exists.
+A missing configured rule field is itself deterministic rule-failure evidence.
 
-Product v0.22 intentionally does not implement:
+## Preflight boundary
 
-- OAuth refresh-token persistence/rotation;
-- service-account private-key exchange;
-- Google SDK credential objects;
-- write scopes or Sheets mutations.
+Preflight uses the same ingested DataFrame that would be monitored and evaluates configured Data Rules before source acceptance.
 
-Those capabilities would require a separate credential-lifecycle design and are outside this connector milestone.
+A configured rule failure makes preflight not ready, even when the rule's runtime failure severity is Warning. This is intentional: onboarding must not establish a newly declared contract around data that already violates that contract.
 
-## Values → DataFrame normalization
+Preflight therefore remains the single source-acceptance boundary for connector availability, declared field/key/date contracts and Data Rules.
 
-Google's values API can return ragged rows. The connector therefore applies explicit table-shape rules before the existing monitor sees the data.
+There is no Data-Rule-specific onboarding endpoint.
 
-1. The response `values` member must be an array.
-2. The configured header row must exist.
-3. The header must contain at least one column.
-4. Header names must be non-empty.
-5. Header names must be unique.
-6. Data rows may be shorter than the header and are padded with `None`.
-7. Fully empty data rows are ignored.
-8. A data row wider than the header fails closed.
+## Runtime Health boundary
 
-These rules prevent a provider-shape quirk from silently changing the DataFrame schema or shifting values into inferred columns.
+During `MonitorService.check_source(...)`, deterministic Data Rule findings are appended to the existing finding collection before the existing `health_from_findings(...)` call.
 
-Once normalized, the result is a normal pandas DataFrame and all existing profiling/detector logic applies unchanged.
+This preserves one Health derivation:
 
-## Preflight reuse
+- no findings → Healthy;
+- one or more Warning findings and no Critical → Warning;
+- any Critical finding → Critical.
 
-Google Sheets does not get provider-specific detector logic.
+Data Rules therefore reuse existing incident transition, notification candidate, delivery, review and baseline behavior without directly mutating those systems.
 
-`preflight_source(...)` continues to validate the same contracts after ingestion:
+A rule cannot separately mark an incident Open/Recovered or override another detector's severity.
 
-- availability;
-- row/column profile;
-- configured numeric fields;
-- configured unique keys;
-- latest-date field or conservative inference;
-- expected refresh evidence.
+## Analyst-facing UI boundary
 
-This preserves one onboarding acceptance boundary across file, API, Microsoft Excel and Google Sheets sources.
+The existing Add Source screen contains a typed Data Rule builder. It collects the same typed contract represented by `DataRule` and sends it through the normal preflight/onboarding API flow.
 
-## Freshness evidence boundary
+The existing generic source-detail Finding renderer is deliberately reused for runtime rule evidence. No separate rule finding-card architecture is introduced.
 
-The values read used in Product v0.22 does not expose a trustworthy sheet modification timestamp that AnalystWatch can directly map to `source_modified_at`.
+Authenticated/local source detail can show the private declared rule condition and custom guidance because it is an operator surface. The evaluator still omits failing row values.
 
-The connector therefore leaves `source_modified_at=None` rather than inventing a modification date.
+## Public/static privacy boundary
 
-If `expected_refresh_minutes` is configured, the normal preflight rule must obtain freshness from content, for example:
+The public GitHub Pages snapshot is less privileged than the authenticated/local application.
 
-- a configured `latest_date_field`; or
-- the existing conservative date-field inference.
+For each source, fields referenced by configured Data Rules are treated as private public-export metadata. The static exporter therefore:
 
-Without content-date evidence, preflight reports `freshness_unverifiable` and refuses to claim the refresh expectation can be checked.
+1. Genericizes Data Rule findings:
+   - detector ID becomes generic `data_rule`;
+   - rule ID/name are removed;
+   - declared field, allowed set and numeric bounds are removed;
+   - custom impact/investigation text is replaced by generic guidance;
+   - aggregate current evidence such as violation count/rows/percentage remains.
+2. Removes Data-Rule-referenced fields from the exported `DatasetProfile.columns` map and recalculates the public profile column count.
+3. Clears public latest-date evidence if the latest-date field is itself a Data Rule field.
+4. Removes those fields from static-visible numeric-field, unique-key and row-diff configuration metadata.
+5. Removes those field names from row-diff key/changed-column metadata and genericizes a row-diff reason that would expose one.
+6. Genericizes ordinary detector findings when their serialized evidence would reveal a private Data Rule field.
 
-A future metadata enhancement may add independently verified Google modification evidence, but it must not retroactively reinterpret current values-read evidence.
+This policy is deliberately **selective**. Unrelated public profile evidence remains visible so the public monitoring demo retains useful non-private context.
 
-## Static/public privacy boundary
+Existing row-diff raw samples/row snapshots remain excluded from public output by the earlier Product v0.18 privacy boundary.
 
-Private/runtime Google source locations contain the spreadsheet ID and can contain an authorization environment-variable reference in configuration.
+## Single evidence pipeline
 
-`pages.py` special-cases Google Sheets public locations through `public_google_sheets_location(...)` and renders only:
+Product v0.23 preserves the distinction between:
 
-```text
-Google Sheets · <A1 range>
-```
+- ingestion/provider evidence;
+- deterministic profile/detector evidence;
+- deterministic Data Rule evidence;
+- derived Health;
+- derived incident/delivery operations.
 
-The static index, source detail and `state.json` are regression-tested to exclude:
-
-- spreadsheet ID;
-- internal `gsheets://` location;
-- authorization environment-variable name.
-
-The A1 range remains visible because it describes the monitored data slice without exposing the private spreadsheet identifier.
-
-## Onboarding boundary
-
-The existing Add Source page is extended using the existing connector-specific form pattern.
-
-For `google_sheets` it collects:
-
-- Spreadsheet ID;
-- A1 range;
-- header row;
-- Google Authorization environment-variable reference.
-
-Client-side code constructs the canonical `gsheets://` location and normal `request_header_env` mapping, then submits the same `/api/preflight` and `/api/onboard` requests used by every other source type.
-
-No separate Google onboarding endpoint or persistence flow is introduced.
-
-The UI also states the freshness limitation: a range read does not itself provide a sheet modification timestamp, so an expected-refresh contract should include trustworthy content-date evidence.
-
-## Preserved Product v0.21 architecture
-
-Product v0.21 Delivery Ops remains unchanged:
-
-- reconciliation queue is derived from existing `Prepared` delivery attempts;
-- Prepared remains neither success nor failure;
-- retry remains blocked until explicit evidence-backed reconciliation;
-- no automatic retry is created by reconciliation;
-- signed-bearer reconciliation records the authenticated reviewer;
-- bounded queue output avoids exposing idempotency keys, claim owners, provider raw evidence or reconciliation notes.
-
-Product v0.21 was merged to `main` at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5` after final exact-head CI passed 226 tests, 1 warning.
-
-## Preserved Teams / dependency / Power BI architecture
-
-Product v0.22 does not change:
-
-- Teams Workflows delivery or its existing candidate/attempt/idempotency/reconciliation model;
-- dependency graph asset/edge storage or cycle-safe blast radius;
-- Power BI Guard trust correlation;
-- Power BI discovered-edge namespaces;
-- source-detail downstream-impact rendering;
-- Viewer / Operator / Admin authorization model.
-
-A Google Sheets source can participate in the existing SourceGuard and dependency model exactly like another source ID; no Google-specific graph semantics are required.
+Data Rules do not reinterpret connector availability or source timestamps and do not alter existing detector thresholds.
 
 ## Persistence
 
-No Google-specific database schema is introduced.
+No database migration is required for Product v0.23.
 
-`SourceDefinition` already persists the source type, location and `MonitoringConfig`. Existing legacy/namespaced/PostgreSQL storage therefore carries Google Sheets configuration through the same source-definition contract.
+`DataRule` is part of `MonitoringConfig`, which already persists inside `SourceDefinition` through the existing legacy/namespaced/PostgreSQL source-definition contract.
 
-Only the authorization environment-variable name is persisted, not the credential value.
+No separate Data Rule result table is introduced; runtime results are ordinary `Finding` objects inside normal observations.
 
-## Public/static application boundary
+## Preserved connector architecture
 
-The public GitHub Pages build remains a read-only source-monitoring snapshot.
+Product v0.23 does not change the connector semantics established through v0.22:
 
-It may show a redacted Google Sheets source and its published monitoring result, but it does not expose private spreadsheet identifiers or credentials and still does not fabricate:
+- CSV, XLSX, JSON and REST API ingestion;
+- Microsoft 365 Excel-table ingestion through Microsoft Graph delegated access;
+- Google Sheets range ingestion through Google Sheets API v4;
+- environment-backed request-header credential references;
+- provider availability evidence;
+- Google Sheets freshness limitation: values reads do not fabricate `source_modified_at` and expected refresh requires content-date evidence;
+- public Google Sheets location redaction to `Google Sheets · <A1 range>`.
 
-- Teams delivery configuration/outcomes;
-- Power BI tenant evidence;
-- dynamic dependency graph state;
-- reconciliation queue state.
+No real Google Workspace credential was exercised in this repository work, so live Google tenant access is not claimed.
 
-## Preserved behavior
+## Preserved product architecture
 
-Product v0.22 does not change:
+Product v0.23 does not change:
 
-- existing CSV/XLSX/JSON/API/Microsoft Excel ingestion semantics;
-- source detector thresholds;
-- Healthy / Warning / Critical classification;
+- detector thresholds or Healthy/Warning/Critical semantics;
 - baseline promotion/review;
-- row-level comparison semantics/retention;
+- Healthy-history reference behavior;
 - incident lifecycle;
-- notification candidate policy;
+- notification policy;
 - Prepared/Succeeded/Failed delivery semantics;
-- retry/reconciliation safety;
-- dependency traversal/storage;
-- Power BI trust logic;
-- source scheduler;
-- approved UI layout/CSS architecture.
+- idempotency, retry or explicit reconciliation safety;
+- Viewer / Operator / Admin authorization;
+- workspace persistence boundaries;
+- key-level row comparison semantics/retention;
+- Power BI Guard trust logic;
+- dependency graph traversal/storage;
+- Teams delivery state handling;
+- Delivery Ops reconciliation model;
+- approved source-detail UI layout.
 
 ## Verification
 
-The verified Product v0.22 functional checkpoint is `9cb60774817a2a637a1714a5c15ccd643faa4324`.
-
-CI #495 passed:
+The functional/UI/privacy checkpoint `ba779642aeaa971ceda38fa1799ea4f2387904a2` passed:
 
 - Ruff;
 - compile/import checks;
 - PostgreSQL 16-backed suite;
-- **236 passed, 1 warning**.
+- **253 passed, 1 warning**;
+- live-source smoke #100.
 
-Live-source smoke #80 also passed.
+Coverage proves:
 
-Coverage includes:
+- typed validation and duplicate-ID rejection;
+- all four deterministic rule kinds;
+- bounded field-level rule evidence;
+- preflight failure before onboarding acceptance;
+- runtime Warning and Critical Health integration;
+- reuse of existing incident/notification lifecycle;
+- no failing row values in Data Rule findings;
+- typed onboarding builder;
+- full authenticated/local rule evidence;
+- static rule-contract redaction;
+- selective profile/config/row-diff redaction for Data-Rule-referenced fields;
+- preservation of unrelated public profile evidence.
 
-- canonical location parsing and public location;
-- Google Authorization environment-reference enforcement;
-- API path/options and ETag evidence;
-- header-row handling;
-- ragged-row normalization;
-- duplicate/empty-header and over-wide-row failures;
-- provider HTTP rejection evidence;
-- existing numeric/key/date preflight reuse;
-- freshness-unverifiable behavior without content-date evidence;
-- static Pages privacy redaction;
-- connector-specific onboarding fields;
-- all existing Product v0.21 regressions.
-
-No real Google Workspace credential was supplied in this repository session, so live Google Sheets access is not claimed.
+Release-only version/documentation changes are gated again on their exact head before merge.
 
 ## Next architecture step
 
-Product v0.23 should add deterministic business/Data Rules through the existing source evidence pipeline. Rules should be explicit, auditable assertions over ingested/profiled data and must not create an opaque AI-driven Health classification path.
+Product v0.24 should derive deterministic reliability scorecards/trust badges from existing observation history, incident history and rule/detector outcomes. Any score must remain explainable back to the underlying evidence and must not become a second opaque Health classifier.
+
+Product v0.25 should then add preconfigured source packs over existing configuration primitives. AI investigation, if added later, remains an explanation/summarization layer downstream of deterministic evidence.
