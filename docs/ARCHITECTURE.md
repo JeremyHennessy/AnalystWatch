@@ -1,136 +1,181 @@
-# AnalystWatch Product v0.18 Architecture
+# AnalystWatch Product v0.19 Architecture
 
 ## Decision
 
-Product v0.18 adds bounded row/key comparison evidence to the existing observation pipeline. It does not introduce a second Health classifier, incident engine or raw-data warehouse.
+Product v0.19 introduces **Power BI Guard** as a separate DashboardGuard evidence boundary that correlates Power BI refresh state with existing AnalystWatch source health.
 
-The feature is enabled only when a source has configured `unique_keys`.
-
-```text
-ingestion
-→ DataFrame
-→ existing deterministic profile/detectors
-→ bounded row snapshot
-→ compare with previous successful observation
-→ compare with active baseline
-→ row-diff evidence
-→ existing observation persistence
-```
-
-Row-diff evidence is informational and does not independently change Healthy / Warning / Critical state.
-
-## Snapshot contract
-
-`RowSnapshot` stores only the bounded comparison material required for configured-key diffs:
-
-- configured key fields;
-- selected comparison value fields;
-- normalized row values;
-- row count;
-- serialized-size evidence.
-
-`row_diff_fields` may explicitly allowlist comparison fields. If omitted, the source columns are used subject to safety limits.
-
-Snapshot creation refuses comparison when:
-
-- configured keys are missing;
-- key values are null;
-- configured keys are not unique;
-- configured comparison fields are missing;
-- row count exceeds the configured limit;
-- retained column count exceeds the configured limit;
-- serialized snapshot size exceeds the configured limit.
-
-The refusal is explicit `RowDiffEvidence`; it does not turn a Healthy source into Warning or Critical.
-
-## Comparison contract
-
-A successful keyed comparison produces deterministic counts for:
-
-- added keys;
-- removed keys;
-- changed keys;
-- unchanged keys;
-- changed-value count by column.
-
-Bounded examples may contain:
-
-- added key/value examples;
-- removed key/value examples;
-- changed keys with previous/current values by changed column.
-
-Comparison is performed independently against the previous successful observation and the active baseline when those reference snapshots are available.
-
-## Retention boundary
-
-Raw comparison material is deliberately short-lived.
-
-After a successful check, AnalystWatch retains:
-
-1. the active baseline row snapshot; and
-2. the configured number of most recent successful row snapshots.
-
-Older observations retain aggregate row-diff evidence but lose their raw `row_snapshot` and bounded sample lists.
-
-The pruning contract is part of `MonitoringStore` and is verified across legacy SQLite, namespaced SQLite, `MemoryStore` and PostgreSQL. Product v0.18 therefore does not depend on one storage backend behaving more permissively than another.
-
-## Public-output boundary
-
-Static GitHub Pages use `strip_row_diff_raw_payloads(...)` before rendering/public JSON serialization.
-
-Public output retains useful aggregate evidence while removing the new raw row payload:
+It does not redefine source Health, detector thresholds, incident semantics or notification-state behavior.
 
 ```text
-row_snapshot = null
-added_samples = []
-removed_samples = []
-changed_samples = []
+AnalystWatch source observations
+        +
+Power BI semantic-model refresh evidence
+        ↓
+deterministic trust correlation
+        ↓
+Power BI Guard snapshot
+        ↓
+DashboardGuard overview/detail
 ```
 
-Aggregate counts and changed-column counts may remain visible.
+The primary product risk addressed is false confidence: a Power BI refresh can complete successfully even when its upstream data is stale, incomplete or otherwise Critical.
 
-The authenticated/local source detail can display bounded examples because it receives the full workspace-authorized observation.
+## Guard definition
 
-This boundary is intentionally specific to v0.18 row-diff material. Existing detector findings, including category/numeric evidence already exposed by the approved product, retain their pre-v0.18 public-output behavior. Hiding that evidence would be a separate product/security decision and is not smuggled into this milestone.
+`PowerBIGuardDefinition` contains only identifiers and a secret reference:
+
+- AnalystWatch workspace ID;
+- Guard ID/name;
+- Power BI workspace/group ID;
+- semantic-model/dataset ID;
+- environment-variable name for the bearer token;
+- upstream AnalystWatch source IDs;
+- refresh-history limit.
+
+The bearer-token value is resolved at check time and is never written to the Guard definition or snapshot.
+
+## Evidence collection
+
+`read_power_bi_guard(...)` uses the Power BI REST API under `https://api.powerbi.com/v1.0/myorg`.
+
+Required evidence:
+
+- semantic-model metadata;
+- refresh history.
+
+Best-effort evidence:
+
+- workspace metadata;
+- report relationships;
+- datasource metadata.
+
+Required evidence failure returns an explicit unavailable/Warning Guard snapshot. Best-effort permission failures append evidence warnings but do not masquerade as a source-data failure.
+
+Provider error bodies and bearer values are not copied into persisted error evidence.
+
+## Deterministic trust correlation
+
+`correlate_power_bi_trust(...)` is deterministic and auditable.
+
+Important cases:
+
+```text
+refresh Completed + upstream all Healthy
+→ Healthy
+
+refresh Completed + any upstream Critical
+→ Critical
+→ explicit false-confidence warning
+
+refresh Completed + any upstream Warning
+→ Warning
+
+refresh Completed + upstream not observed
+→ Warning
+
+refresh Failed / Cancelled / Disabled
+→ Critical
+
+refresh InProgress / NotStarted / unknown
+→ Warning
+
+no refresh history
+→ Warning
+```
+
+The Guard result never mutates the upstream source observation.
+
+## Orchestration
+
+`PowerBIGuardService` owns the integration seam:
+
+1. load the stored Guard definition;
+2. resolve the bearer token from its configured environment-variable name;
+3. load the latest AnalystWatch observation for each configured upstream source;
+4. pass those source Health values to the deterministic Power BI reader/correlator;
+5. persist the returned Guard snapshot.
+
+A missing upstream source observation becomes `None` and is handled explicitly by the trust correlation.
+
+## Persistence
+
+`PowerBIGuardStore` is separate from `MonitoringStore`.
+
+Local/SQLite runtime:
+
+- companion `*.powerbi.db` file;
+- `(workspace_id, guard_id)` identity;
+- immutable time-keyed snapshot history.
+
+PostgreSQL runtime:
+
+- Guard definitions and snapshots live in the existing AnalystWatch PostgreSQL schema;
+- workspace-scoped composite identity;
+- no token value persisted.
+
+This separation avoids changing verified source-observation schemas merely to add downstream dashboard evidence.
+
+## Web/API boundary
+
+`power_bi_web.py` registers DashboardGuard routes without folding Power BI logic into the existing source controller.
+
+Read surfaces:
+
+- `GET /power-bi`;
+- `GET /power-bi/{guard_id}`;
+- Guard list/detail APIs.
+
+Mutation surfaces:
+
+- Guard configuration upsert;
+- explicit Guard check.
+
+Authorization remains centralized in the existing web authorization layer:
+
+- Viewer → read;
+- Operator → check;
+- Admin → Guard configuration mutation.
+
+Cross-workspace Guard definitions are rejected before persistence.
 
 ## Analyst-facing UI
 
-The approved Product v0.16.1 shell is preserved. v0.18 adds one source-detail section, **Key-level changes**, before the existing reliability findings.
+The dynamic application exposes DashboardGuard from the existing product navigation.
 
-For each available reference it answers:
+The overview explains why a successful refresh can still be unsafe. The detail page prioritizes:
 
-```text
-Compare with previous successful / active baseline
-Added
-Removed
-Changed
-Unchanged
-Most affected columns
-```
+1. trust result;
+2. latest refresh state and duration;
+3. upstream AnalystWatch source health;
+4. reports potentially affected;
+5. recent refresh history;
+6. datasource/workspace evidence and permission limitations.
 
-In the dynamic authenticated/local application, bounded changed-key examples can be expanded. In static Pages, those examples are not rendered and the UI explains that only aggregate row-change evidence is public.
+The static GitHub Pages build does not show the dynamic DashboardGuard navigation when no hosted Guard state/tenant credential exists. AnalystWatch does not fabricate Power BI health for the public demo.
 
 ## Preserved behavior
 
-Product v0.18 does not change:
+Product v0.19 does not change:
 
-- ingestion semantics for CSV/XLSX/JSON/API/Microsoft Excel;
-- detector thresholds or deterministic Health classification;
-- source scheduling;
-- baseline-promotion rules;
-- review semantics;
-- incident lifecycle;
+- CSV/XLSX/JSON/API/Microsoft Excel ingestion;
+- source detector thresholds;
+- source Healthy / Warning / Critical classification;
+- source baseline promotion or review;
+- row-level comparison semantics/retention;
+- source incident lifecycle;
 - notification candidate policy;
-- delivery idempotency/retry/reconciliation;
-- workspace authorization;
-- hosted legacy SQLite/local-auth defaults.
+- email/dry-run delivery state machine;
+- source scheduler;
+- existing public Pages source-state policy.
 
 ## Verification
 
-The frozen v0.18 functional checkpoint passed **183 tests**, Ruff and compile checks against PostgreSQL 16 CI, plus the existing live-source smoke gate.
+The frozen v0.19 functional checkpoint passed **196 tests**, Ruff and compile checks against PostgreSQL 16 CI.
 
-Coverage includes exact row comparison, composite keys, field allowlists, size/key refusal, retention/pruning across all persistence implementations, public row-diff redaction and analyst-facing source-detail rendering.
+Coverage includes deterministic Power BI trust cases, REST evidence handling, secret redaction, SQLite/PostgreSQL Guard persistence, orchestration with current AnalystWatch source health, web rendering, workspace rejection and Viewer/Operator/Admin route classification.
+
+No real Microsoft tenant credential was available in this repository session. Therefore the implementation/API contract is verified, but live tenant access is not claimed.
 
 ## Next architecture step
 
-Product v0.19 should introduce Power BI Guard as a new external asset/refresh evidence boundary. It should correlate Power BI refresh health with existing AnalystWatch source reliability rather than interpreting a successful dashboard refresh as proof that the upstream data was trustworthy.
+Product v0.20 should add Microsoft Teams through the existing delivery-attempt architecture and introduce lightweight dependency edges/blast-radius calculation across analyst-facing assets. It should not attempt enterprise SQL-column lineage.
