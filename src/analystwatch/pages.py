@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .incidents import latest_incident
 from .models import DeliveryAttempt, NotificationCandidate, SourceDefinition, SourceType
+from .row_diff import strip_row_diff_raw_payloads
 from .scheduler import run_decision
 from .storage import Storage
 
@@ -41,6 +42,10 @@ def _attempt_state_counts(attempts: list[DeliveryAttempt]) -> dict[str, int]:
     return counts
 
 
+def _public_observation(observation):
+    return strip_row_diff_raw_payloads(observation) if observation is not None else None
+
+
 def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -> dict[str, object]:
     latest = storage.get_latest(source.id)
     baseline = storage.get_baseline(source.id)
@@ -51,7 +56,7 @@ def _source_view(storage: Storage, source: SourceDefinition, *, now: datetime) -
     return {
         "source": source,
         "public_location": _public_location(source),
-        "latest": latest,
+        "latest": _public_observation(latest),
         "baseline": baseline,
         "last_successful": last_successful,
         "latest_review": storage.get_review(latest.id) if latest else None,
@@ -70,6 +75,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
     sources: list[dict[str, object]] = []
     for source in storage.list_sources():
         latest = storage.get_latest(source.id)
+        public_latest = _public_observation(latest)
         baseline = storage.get_baseline(source.id)
         review = storage.get_review(latest.id) if latest else None
         incident = latest_incident(storage.list_observations(source.id, limit=200))
@@ -94,7 +100,7 @@ def _public_state(storage: Storage, *, generated_at: datetime) -> dict[str, obje
                 "notification_candidate_states": _candidate_state_counts(candidates),
                 "delivery_attempt_count": len(attempts),
                 "delivery_attempt_states": _attempt_state_counts(attempts),
-                "latest": json.loads(latest.model_dump_json()) if latest else None,
+                "latest": json.loads(public_latest.model_dump_json()) if public_latest else None,
                 "baseline_id": baseline.id if baseline else None,
             }
         )
