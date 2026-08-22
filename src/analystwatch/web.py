@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .auth_storage import MembershipStore
+from .dependencies import AssetKind
 from .dependency_web import configure_dependency_web
 from .models import (
     DeliveryAttempt,
@@ -116,6 +117,16 @@ def create_app(
         baseline_review = service.baseline_review(source.id) if latest and baseline else None
         candidates = service.notification_candidates(source.id, limit=100)
         attempts = service.delivery_attempts(source_id=source.id, limit=100)
+        downstream_impact = None
+        dependency_service = getattr(app.state, "dependency_service", None)
+        if dependency_service is not None:
+            try:
+                downstream_impact = dependency_service.blast_radius(
+                    AssetKind.SOURCE,
+                    source.id,
+                )
+            except KeyError:
+                downstream_impact = None
         return {
             "source": source,
             "public_location": _public_location(source),
@@ -131,6 +142,7 @@ def create_app(
             "delivery_attempts": attempts,
             "delivery_attempt_count": len(attempts),
             "delivery_attempt_states": _attempt_state_counts(attempts),
+            "downstream_impact": downstream_impact,
             "health": latest.health.value if latest else "Not checked",
             "schedule": service.get_run_decision(source.id),
             "href": f"/sources/{source.id}",
