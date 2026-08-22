@@ -17,6 +17,27 @@ class DependencyService:
     def delete_edge(self, edge_id: str) -> bool:
         return self.store.delete_edge(edge_id)
 
+    def replace_discovered_edges(
+        self,
+        namespace: str,
+        edges: list[DependencyEdge],
+    ) -> list[DependencyEdge]:
+        if not namespace or namespace != namespace.strip():
+            raise ValueError("dependency discovery namespace must be non-empty and trimmed")
+        if any(not edge.discovered or not edge.id.startswith(namespace) for edge in edges):
+            raise ValueError("replacement edges must be discovered and match the namespace")
+        desired_ids = {edge.id for edge in edges}
+        for current in self.store.list_edges():
+            if (
+                current.discovered
+                and current.id.startswith(namespace)
+                and current.id not in desired_ids
+            ):
+                self.store.delete_edge(current.id)
+        for edge in edges:
+            self.store.upsert_edge(edge)
+        return edges
+
     def assets(self) -> list[AssetRef]:
         by_key: dict[str, AssetRef] = {}
         for edge in self.store.list_edges():
