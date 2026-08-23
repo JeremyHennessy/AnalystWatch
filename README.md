@@ -117,7 +117,7 @@ Product v0.25 preserves the previously verified architecture, including determin
 
 ## Verification
 
-The Product v0.25 functional/API/UI checkpoint `a3f3703f6bdd29191329e497fef60234474888c0` passed:
+The Product v0.25 final functional/API/UI checkpoint `a3f3703f6bdd29191329e497fef60234474888c0` passed:
 
 - Ruff;
 - compile/import checks;
@@ -128,7 +128,7 @@ Earlier isolated checkpoints passed **294 tests** for the pure pack materializer
 
 Coverage includes pack-model validation, six-pack catalog behavior, role mapping, optional-role handling, duplicate/invalid mapping rejection, schedule overrides, generated key/freshness/numeric/row-diff/rule contracts, bounded row-diff fallback, non-persistent APIs, successful and failing normal preflight paths, explicit onboarding preview/apply behavior, editable row-comparison fields, and stale-preflight invalidation after configuration changes.
 
-Release head `f3df908b3fae452d7bd4355d325bd5a82c2e2def` then passed the final release gate with **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green, and package/FastAPI/module versions aligned at `0.25.0`.
+Release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def` passed **303 tests, 1 warning**, Ruff/compile/PostgreSQL 16 green, with package/FastAPI/module versions aligned at `0.25.0`. Verification-note documentation changes are re-gated on their exact merge candidate head.
 
 Live-source smoke was not triggered for Product v0.25 and is not claimed; the release does not change source-ingestion workflow paths.
 
