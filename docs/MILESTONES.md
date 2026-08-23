@@ -200,6 +200,8 @@ Implemented from exact v0.24 merge baseline `ac542a73db8657c455b5ea990ce5e1df3f9
 - existing Add Source page now supports choose → role map → preview → explicit apply → normal preflight;
 - selecting a pack without applying it cannot silently alter a source;
 - applying a pack copies ordinary config into existing onboarding controls and does not persist pack metadata;
+- row-comparison fields are visible/editable after pack application rather than retained as hidden browser state;
+- any contract edit after a successful preflight invalidates stale acceptance evidence and requires preflight again;
 - no persistence migration or second source/config state model;
 - package/FastAPI/module version metadata aligned at `0.25.0` during release closeout.
 
@@ -207,9 +209,11 @@ Isolated checkpoints:
 
 - pure pack materializer: **294 passed, 1 warning**;
 - catalog/materialization API + normal-preflight integration: **299 passed, 1 warning**;
-- functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d`: **302 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green.
+- initial functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d`: **302 passed, 1 warning**;
+- final editable-contract/preflight-safety checkpoint `a3f3703f6bdd29191329e497fef60234474888c0`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green;
+- release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package version `0.25.0` verified.
 
-Release-only metadata/docs are re-gated on their exact head before merge.
+Verification-note documentation changes are re-gated on their exact merge head. Live-source smoke was not triggered by Product v0.25 and is not claimed because source-ingestion workflow paths were unchanged.
 
 Explicit non-goals:
 
