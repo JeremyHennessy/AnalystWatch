@@ -213,7 +213,7 @@ Isolated checkpoints:
 - final editable-contract/preflight-safety checkpoint `a3f3703f6bdd29191329e497fef60234474888c0`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green;
 - release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package version `0.25.0` verified.
 
-Verification-note documentation changes are re-gated on their exact merge head. Live-source smoke was not triggered by Product v0.25 and is not claimed because source-ingestion workflow paths were unchanged.
+Verification-note documentation changes are re-gated on their exact merge candidate head. Live-source smoke was not triggered by Product v0.25 and is not claimed because source-ingestion workflow paths were unchanged.
 
 Explicit non-goals:
 
