@@ -47,6 +47,18 @@
           </div>
         </div>
 
+        <div class="form-section span-two"><strong>Start with a source pack <small>optional</small></strong><span>Choose a common analyst workflow, map its business roles to your real columns, preview the generated monitoring contract, then apply it. Packs never bypass preflight.</span></div>
+        <label class="span-two"><span>Workflow preset</span><select id="source-pack-select"><option value="">No pack — configure manually</option></select><small>Source packs generate ordinary keys, freshness settings, numeric fields, row comparison fields and deterministic Data Rules.</small></label>
+        <div id="source-pack-details" class="span-two" hidden>
+          <div class="form-section"><strong id="source-pack-name">Source pack</strong><span id="source-pack-description"></span></div>
+          <div id="source-pack-roles" class="form-grid"></div>
+          <div class="form-actions">
+            <button id="preview-pack-button" class="secondary" type="button">Preview generated contract</button>
+            <button id="apply-pack-button" class="secondary" type="button" disabled>Apply pack contract</button>
+          </div>
+          <div id="source-pack-preview" class="healthy-note" hidden></div>
+        </div>
+
         <div class="form-section span-two"><strong>Run policy</strong><span>How often AnalystWatch checks is separate from how often the source should refresh.</span></div>
         <label><span>Check every (minutes)</span><input id="monitor-interval" type="number" min="1" value="60"></label>
         <label><span>Expected refresh (minutes)</span><input id="refresh-interval" type="number" min="1" placeholder="Optional"></label>
@@ -90,8 +102,20 @@ const panel = document.getElementById('preflight-panel');
 const sourceType = document.getElementById('source-type');
 const dataRuleList = document.getElementById('data-rule-list');
 const addRuleButton = document.getElementById('add-rule-button');
+const sourcePackSelect = document.getElementById('source-pack-select');
+const sourcePackDetails = document.getElementById('source-pack-details');
+const sourcePackName = document.getElementById('source-pack-name');
+const sourcePackDescription = document.getElementById('source-pack-description');
+const sourcePackRoles = document.getElementById('source-pack-roles');
+const sourcePackPreview = document.getElementById('source-pack-preview');
+const previewPackButton = document.getElementById('preview-pack-button');
+const applyPackButton = document.getElementById('apply-pack-button');
 let lastPreflight = null;
 let ruleSequence = 0;
+let sourcePacks = [];
+let pendingPackMaterialization = null;
+let activePackId = null;
+let packRowDiffFields = [];
 
 function value(id) { return document.getElementById(id).value.trim(); }
 function list(id) { return value(id).split(',').map(v => v.trim()).filter(Boolean); }
@@ -162,7 +186,7 @@ function refreshRuleEmptyState() {
   }
 }
 
-function addDataRule() {
+function addDataRule(initialRule = null) {
   ruleSequence += 1;
   const card = document.createElement('div');
   card.className = 'data-rule-card';
@@ -190,7 +214,29 @@ function addDataRule() {
   });
   dataRuleList.append(card);
   refreshRuleEmptyState();
+  if (initialRule) {
+    for (const field of ['id', 'name', 'kind', 'severity', 'field', 'likely_impact', 'suggested_investigation']) {
+      const input = card.querySelector(`[data-rule-field="${field}"]`);
+      if (input && initialRule[field] !== null && initialRule[field] !== undefined) {
+        input.value = String(initialRule[field]);
+      }
+    }
+    card.querySelector('[data-rule-field="allowed_values"]').value = (initialRule.allowed_values || []).join(', ');
+    if (initialRule.minimum !== null && initialRule.minimum !== undefined) {
+      card.querySelector('[data-rule-field="minimum"]').value = String(initialRule.minimum);
+    }
+    if (initialRule.maximum !== null && initialRule.maximum !== undefined) {
+      card.querySelector('[data-rule-field="maximum"]').value = String(initialRule.maximum);
+    }
+  }
   updateRuleFields(card);
+}
+
+function replaceDataRules(rules) {
+  dataRuleList.innerHTML = '';
+  ruleSequence = 0;
+  for (const rule of rules || []) addDataRule(rule);
+  refreshRuleEmptyState();
 }
 
 function dataRules() {
@@ -228,10 +274,169 @@ function dataRules() {
   return rules;
 }
 
+function invalidatePackMaterialization() {
+  pendingPackMaterialization = null;
+  activePackId = null;
+  packRowDiffFields = [];
+  applyPackButton.disabled = true;
+  applyPackButton.textContent = 'Apply pack contract';
+  sourcePackPreview.hidden = true;
+  sourcePackPreview.innerHTML = '';
+  lastPreflight = null;
+  acceptButton.disabled = true;
+}
+
+function selectedSourcePack() {
+  return sourcePacks.find(pack => pack.id === value('source-pack-select')) || null;
+}
+
+function renderSourcePackSelection() {
+  invalidatePackMaterialization();
+  sourcePackRoles.innerHTML = '';
+  const pack = selectedSourcePack();
+  sourcePackDetails.hidden = !pack;
+  previewPackButton.disabled = !pack;
+  if (!pack) return;
+  sourcePackName.textContent = pack.name;
+  sourcePackDescription.textContent = pack.description;
+  for (const role of pack.roles) {
+    const label = document.createElement('label');
+    const title = document.createElement('span');
+    title.textContent = `${role.label}${role.required ? '' : ' (optional)'}`;
+    const input = document.createElement('input');
+    input.dataset.packRole = role.id;
+    input.placeholder = 'Source column name';
+    input.required = role.required;
+    input.addEventListener('input', invalidatePackMaterialization);
+    const help = document.createElement('small');
+    help.textContent = role.description;
+    label.append(title, input, help);
+    sourcePackRoles.append(label);
+  }
+}
+
+function sourcePackRoleMapping() {
+  const pack = selectedSourcePack();
+  if (!pack) throw new Error('Choose a source pack first.');
+  const result = {};
+  for (const role of pack.roles) {
+    const input = sourcePackRoles.querySelector(`[data-pack-role="${role.id}"]`);
+    const field = input.value.trim();
+    if (role.required && !field) throw new Error(`${role.label} is required for ${pack.name}.`);
+    if (field) result[role.id] = field;
+  }
+  return result;
+}
+
+function appendPackPreviewLine(label, valueText) {
+  const line = document.createElement('p');
+  const strong = document.createElement('strong');
+  strong.textContent = `${label}: `;
+  line.append(strong, document.createTextNode(valueText || 'None'));
+  sourcePackPreview.append(line);
+}
+
+function renderPackPreview(materialization, applied = false) {
+  const config = materialization.config;
+  sourcePackPreview.className = 'healthy-note';
+  sourcePackPreview.innerHTML = '';
+  sourcePackPreview.hidden = false;
+  const title = document.createElement('strong');
+  title.textContent = applied ? `${materialization.pack_name} contract applied.` : `${materialization.pack_name} generated contract preview`;
+  sourcePackPreview.append(title);
+  appendPackPreviewLine('Check cadence', `Every ${config.monitor_interval_minutes} min`);
+  appendPackPreviewLine('Expected refresh', config.expected_refresh_minutes ? `Every ${config.expected_refresh_minutes} min` : 'Not configured');
+  appendPackPreviewLine('Freshness field', config.latest_date_field || 'Not configured');
+  appendPackPreviewLine('Unique keys', (config.unique_keys || []).join(', '));
+  appendPackPreviewLine('Numeric fields', (config.numeric_fields || []).join(', '));
+  appendPackPreviewLine('Row comparison fields', (config.row_diff_fields || []).join(', '));
+  appendPackPreviewLine('Generated Data Rules', (config.data_rules || []).map(rule => rule.name).join(' · '));
+  const note = document.createElement('p');
+  note.textContent = applied
+    ? 'You can edit the generated cadence, fields and Data Rules below before running preflight.'
+    : 'Review this contract before applying it. Applying does not save or onboard the source.';
+  sourcePackPreview.append(note);
+}
+
+async function loadSourcePacks() {
+  try {
+    const response = await fetch('/api/source-packs');
+    if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+    sourcePacks = await response.json();
+    for (const pack of sourcePacks) {
+      const option = document.createElement('option');
+      option.value = pack.id;
+      option.textContent = pack.name;
+      sourcePackSelect.append(option);
+    }
+  } catch (error) {
+    sourcePackSelect.disabled = true;
+    const option = document.createElement('option');
+    option.textContent = 'Source packs unavailable — configure manually';
+    sourcePackSelect.append(option);
+  }
+}
+
+async function postPayload(url, payload) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status}: ${body}`);
+  }
+  return response.json();
+}
+
+async function previewSourcePack() {
+  previewPackButton.disabled = true;
+  applyPackButton.disabled = true;
+  try {
+    pendingPackMaterialization = await postPayload('/api/source-packs/materialize', {
+      pack_id: value('source-pack-select'),
+      role_mapping: sourcePackRoleMapping()
+    });
+    renderPackPreview(pendingPackMaterialization);
+    applyPackButton.disabled = false;
+  } catch (error) {
+    pendingPackMaterialization = null;
+    sourcePackPreview.className = 'contract-issue issue-error';
+    sourcePackPreview.textContent = String(error);
+    sourcePackPreview.hidden = false;
+  } finally {
+    previewPackButton.disabled = false;
+  }
+}
+
+function applySourcePack() {
+  if (!pendingPackMaterialization) return;
+  const config = pendingPackMaterialization.config;
+  activePackId = pendingPackMaterialization.pack_id;
+  packRowDiffFields = [...(config.row_diff_fields || [])];
+  document.getElementById('monitor-interval').value = String(config.monitor_interval_minutes);
+  document.getElementById('refresh-interval').value = config.expected_refresh_minutes || '';
+  document.getElementById('latest-date').value = config.latest_date_field || '';
+  document.getElementById('infer-date').checked = Boolean(config.infer_latest_date_field);
+  document.getElementById('numeric-fields').value = (config.numeric_fields || []).join(', ');
+  document.getElementById('unique-keys').value = (config.unique_keys || []).join(', ');
+  replaceDataRules(config.data_rules || []);
+  renderPackPreview(pendingPackMaterialization, true);
+  applyPackButton.disabled = true;
+  applyPackButton.textContent = 'Pack applied';
+  lastPreflight = null;
+  acceptButton.disabled = true;
+}
+
 function sourcePayload() {
   const type = value('source-type');
   const isMicrosoft = type === 'microsoft_excel';
   const isGoogle = type === 'google_sheets';
+  const selectedPackId = value('source-pack-select');
+  if (selectedPackId && activePackId !== selectedPackId) {
+    throw new Error('Preview and apply the selected source pack before preflight.');
+  }
   let headers = mapping('request-header-env');
   let location = value('source-location');
   if (isMicrosoft) {
@@ -261,6 +466,7 @@ function sourcePayload() {
       json_record_path: type === 'json' ? (value('json-path') || null) : null,
       numeric_fields: list('numeric-fields'),
       unique_keys: list('unique-keys'),
+      row_diff_fields: packRowDiffFields,
       data_rules: dataRules(),
       request_header_env: headers
     }
@@ -327,21 +533,16 @@ function render(result) {
 }
 
 async function postJson(url) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(sourcePayload())
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${response.status}: ${body}`);
-  }
-  return response.json();
+  return postPayload(url, sourcePayload());
 }
 
 sourceType.addEventListener('change', updateSourceFields);
-addRuleButton.addEventListener('click', addDataRule);
+sourcePackSelect.addEventListener('change', renderSourcePackSelection);
+previewPackButton.addEventListener('click', previewSourcePack);
+applyPackButton.addEventListener('click', applySourcePack);
+addRuleButton.addEventListener('click', () => addDataRule());
 updateSourceFields();
+loadSourcePacks();
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
