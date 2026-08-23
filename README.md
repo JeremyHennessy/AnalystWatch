@@ -64,13 +64,15 @@ The existing Add Source page now supports an optional Source Pack flow:
 3. **Preview generated contract**;
 4. review cadence, freshness, keys, numeric fields, row-comparison fields and generated rules;
 5. **Apply pack contract**;
-6. optionally edit the generated visible monitoring settings and Data Rules;
+6. optionally edit the generated cadence, fields, row-comparison fields and Data Rules;
 7. run the normal source preflight;
 8. add the monitored source only after preflight passes.
 
 Selecting a pack is never sufficient by itself. The UI requires explicit preview and apply before preflight, and applying a pack does not save or onboard the source.
 
 The pack ID and role mapping are not stored as a parallel persistence model. Only the resulting ordinary source configuration is persisted when onboarding succeeds.
+
+Any configuration edit after a successful preflight invalidates that stale preflight evidence and requires preflight to run again before onboarding can be accepted.
 
 ## Reliability scorecards retained
 
@@ -115,18 +117,20 @@ Product v0.25 preserves the previously verified architecture, including determin
 
 ## Verification
 
-The Product v0.25 functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d` passed:
+The Product v0.25 functional/API/UI checkpoint `a3f3703f6bdd29191329e497fef60234474888c0` passed:
 
 - Ruff;
 - compile/import checks;
 - PostgreSQL 16-backed test suite;
-- **302 passed, 1 warning**.
+- **303 passed, 1 warning**.
 
-Earlier isolated checkpoints also passed **294 tests** for the pure pack materializer and **299 tests** after catalog/materialization API + normal-preflight integration.
+Earlier isolated checkpoints passed **294 tests** for the pure pack materializer, **299 tests** after catalog/materialization API + normal-preflight integration, and **302 tests** before the final editable row-comparison / stale-preflight safety refinement.
 
-Coverage includes pack-model validation, six-pack catalog behavior, role mapping, optional-role handling, duplicate/invalid mapping rejection, schedule overrides, generated key/freshness/numeric/row-diff/rule contracts, bounded row-diff fallback, non-persistent APIs, successful and failing normal preflight paths, and explicit onboarding preview/apply behavior.
+Coverage includes pack-model validation, six-pack catalog behavior, role mapping, optional-role handling, duplicate/invalid mapping rejection, schedule overrides, generated key/freshness/numeric/row-diff/rule contracts, bounded row-diff fallback, non-persistent APIs, successful and failing normal preflight paths, explicit onboarding preview/apply behavior, editable row-comparison fields, and stale-preflight invalidation after configuration changes.
 
-Release-only version/documentation changes are gated again on their exact head before merge.
+Release head `f3df908b3fae452d7bd4355d325bd5a82c2e2def` then passed the final release gate with **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green, and package/FastAPI/module versions aligned at `0.25.0`.
+
+Live-source smoke was not triggered for Product v0.25 and is not claimed; the release does not change source-ingestion workflow paths.
 
 ## What comes next
 
