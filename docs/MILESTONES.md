@@ -149,7 +149,7 @@ Functional/UI/privacy checkpoint `ba779642aeaa971ceda38fa1799ea4f2387904a2` pass
 
 Explicit non-goals remained: no SQL/arbitrary expression language, no AI-defined rules/Health, no detector-threshold rewrite, no new observation/incident/persistence state machine, and no unrelated UI redesign.
 
-## Product v0.24 — reliability scorecards + trust badge — current release
+## Product v0.24 — reliability scorecards + trust badge — complete
 
 Implemented from exact v0.23 merge baseline `e95b2d44fccbf23a2e694dab00299e54c08e2ba2`:
 
@@ -173,19 +173,69 @@ Implemented from exact v0.23 merge baseline `e95b2d44fccbf23a2e694dab00299e54c08
 - v0.23 private Data Rule contracts remain redacted while aggregate rule-failure occurrence counts remain available;
 - no database migration, new connector, detector-threshold change or numeric black-box score.
 
-Functional/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe`:
+Feature/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe` passed **275 tests, 1 warning** with Ruff/compile/PostgreSQL 16 green. Release head `381137d1a3d337585fbe749bbdca04f2820fa267` passed the final CI gate and Product v0.24 merged to `main` at `ac542a73db8657c455b5ea990ce5e1df3f93b1fb`.
 
-- **275 passed, 1 warning**;
-- Ruff green;
-- compile/import green;
-- PostgreSQL 16 CI green.
+Live-source smoke was not triggered by the v0.24 change set and was not claimed. Post-merge `monitor-state` persistence advanced on the v0.24 release.
 
-Release-only metadata/docs are re-gated on their exact head before merge.
+## Product v0.25 — role-mapped Source Packs — current release
 
-## Product roadmap after v0.24
+Implemented from exact v0.24 merge baseline `ac542a73db8657c455b5ea990ce5e1df3f93b1fb`:
 
-Proceed sequentially unless evidence changes a dependency:
+- six typed workflow packs: FP&A Forecast, Sales Pipeline, Claims Register, Operations Orders, Finance Close and Customer Export;
+- semantic roles instead of canned customer-specific field names;
+- explicit analyst mapping from roles to real source columns;
+- fail-closed required-role, unknown-role, blank/untrimmed and duplicate-field validation;
+- optional roles omitted rather than guessed;
+- pack schedule defaults with explicit positive-value overrides;
+- materialization into the existing `MonitoringConfig` only;
+- generated existing freshness field, unique-key, numeric-field and bounded row-diff settings;
+- conservative generated `not_null` and non-empty `row_count_range` Data Rules only;
+- no hidden allowed-value sets, numeric bounds, detector thresholds, SQL or AI rules;
+- bounded row-diff fallback prevents omitted optional pack roles from silently expanding comparison to every source column;
+- non-persistent `GET /api/source-packs` catalog;
+- non-persistent `POST /api/source-packs/materialize` contract preview;
+- materialization does not create, persist, baseline or monitor a source;
+- materialized configs still pass through the existing authoritative `/api/preflight` boundary;
+- generated Data Rule failures reject preflight exactly like manually configured rules;
+- existing Add Source page now supports choose → role map → preview → explicit apply → normal preflight;
+- selecting a pack without applying it cannot silently alter a source;
+- applying a pack copies ordinary config into existing onboarding controls and does not persist pack metadata;
+- row-comparison fields are visible/editable after pack application rather than retained as hidden browser state;
+- any contract edit after a successful preflight invalidates stale acceptance evidence and requires preflight again;
+- no persistence migration or second source/config state model;
+- package/FastAPI/module version metadata aligned at `0.25.0` during release closeout.
 
-- Product v0.25 — preconfigured source packs
+Isolated checkpoints:
 
-After v0.25, prioritize self-service Microsoft/Google connection UX, credential lifecycle and real hosted pilot validation over connector accumulation. AI investigation remains downstream of deterministic findings and must not redefine Health classification.
+- pure pack materializer: **294 passed, 1 warning**;
+- catalog/materialization API + normal-preflight integration: **299 passed, 1 warning**;
+- initial functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d`: **302 passed, 1 warning**;
+- final editable-contract/preflight-safety checkpoint `a3f3703f6bdd29191329e497fef60234474888c0`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green;
+- release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package version `0.25.0` verified.
+
+Verification-note documentation changes are re-gated on their exact merge candidate head. Live-source smoke was not triggered by Product v0.25 and is not claimed because source-ingestion workflow paths were unchanged.
+
+Explicit non-goals:
+
+- no connector expansion;
+- no schema guessing or AI role mapping;
+- no hidden business-state enum assumptions;
+- no numeric business-limit assumptions;
+- no detector-threshold changes;
+- no pack-specific persistence model;
+- no preflight bypass;
+- no new Health or incident state machine.
+
+## Roadmap after v0.25
+
+The immediate feature-focused sequence ends with Product v0.25. Prioritize product usability and real-world validation next:
+
+1. self-service Microsoft connection UX for account authorization and workbook/table selection;
+2. self-service Google connection UX for account authorization and spreadsheet/sheet/range selection;
+3. credential lifecycle: health, reconnect and revoke;
+4. authenticated hosted pilot on managed PostgreSQL;
+5. real Microsoft/Google/Power BI/email/Teams end-to-end failure drills;
+6. five-minute first-value onboarding with test alerts and safe failure simulation;
+7. customer/pilot validation before broad connector accumulation or billing complexity.
+
+AI investigation remains downstream of deterministic evidence and must not redefine Health classification.

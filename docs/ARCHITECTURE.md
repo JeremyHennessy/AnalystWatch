@@ -1,240 +1,248 @@
-# AnalystWatch Product v0.24 Architecture
+# AnalystWatch Product v0.25 Architecture
 
 ## Decision
 
-Product v0.24 derives an explainable reliability scorecard from existing source observations without introducing a second Health classifier.
+Product v0.25 adds Source Packs as **thin, typed configuration generators over the existing `MonitoringConfig`**.
 
-The architectural rule is: **current Health remains authoritative; the trust badge mirrors it and historical scorecard metrics only explain recent reliability.**
+The architectural rule is: **a pack reduces setup effort; it does not create a second source model, persistence model, Health classifier, or onboarding boundary.**
 
 ```text
-existing Observation history
+SourcePack catalog
         ↓
-existing Health + Finding evidence
+semantic role mapping supplied by analyst
         ↓
-existing incident_transition(...)
+materialize_source_pack(...)
         ↓
-ReliabilityScorecardService
+ordinary MonitoringConfig
         ↓
-ReliabilityScorecard
-        ├── current trust badge
-        ├── 7-day evidence
-        └── 30-day evidence
+ordinary SourceDefinition
+        ↓
+existing preflight
+        ↓
+existing guarded onboarding
+        ↓
+existing monitoring / Health / incidents / delivery
 ```
 
-No scorecard-specific persistence, incident state machine, detector threshold or Health derivation is introduced.
+## Pack model
 
-## Trust badge boundary
+A `SourcePack` contains:
 
-`TrustBadge` is intentionally deterministic and non-numeric:
+- stable pack ID and analyst-facing name/description;
+- typed semantic roles;
+- required/optional role status;
+- default monitoring/refresh cadence;
+- role references for freshness, keys, numeric fields and row comparison;
+- conservative typed Data Rule templates.
 
-- no eligible observation → `Not monitored`;
-- current `Healthy` → `Trusted`;
-- current `Warning` → `Attention`;
-- current `Critical` → `Critical`.
+The initial catalog is:
 
-Historical reliability cannot upgrade or downgrade the badge. Downstream blast radius cannot upgrade or downgrade the badge. There is no weighted or opaque reliability score.
+- FP&A Forecast;
+- Sales Pipeline;
+- Claims Register;
+- Operations Orders;
+- Finance Close;
+- Customer Export.
 
-## Reliability windows
+Roles are business concepts, not customer-specific field names. For example, the Sales Pipeline pack asks the analyst to map `Opportunity ID`, `Last updated date`, `Pipeline stage`, and optional `Opportunity amount` to their actual source columns.
 
-`ReliabilityScorecard` contains explicit 7-day and 30-day `ReliabilityWindow` objects.
+## Mapping validation
 
-Each window contains:
+`materialize_source_pack(...)` fails closed when:
 
-- `check_count`;
-- `successful_check_count` and `successful_check_pct`;
-- `healthy_count` and `healthy_check_pct`;
-- `warning_count`;
-- `critical_count`;
-- `incident_count`;
-- `recovered_incident_count`;
-- `stale_occurrence_count`;
-- `data_rule_failure_occurrence_count`;
-- `mttr_minutes` when recovery duration is actually known.
+- a required role is missing;
+- an unknown role is supplied;
+- a mapped field is blank or untrimmed;
+- multiple semantic roles are mapped to the same source field;
+- an unsupported pack ID is requested;
+- a schedule override violates the existing positive cadence constraints.
 
-A successful check reuses the established AnalystWatch usability condition: the observation is available and has a profile.
+Optional roles are omitted rather than inferred.
 
-Stale and Data Rule failures are counted once per observation, not once per individual finding. This keeps the metric interpretable as occurrence frequency rather than detector volume.
+No schema inspection or AI inference is used to guess role mappings.
 
-## Incident and MTTR boundary
+## Materialization boundary
 
-Scorecards reuse the existing `incident_transition(previous, current)` function. They do not implement a second incident model.
+Pack materialization returns `SourcePackMaterialization`, containing the pack identity, normalized role mapping, and the generated ordinary `MonitoringConfig`.
 
-For ordered observations:
+The generated config uses only existing fields:
 
-- a transition into Warning/Critical can produce `Opened`;
-- Warning → Critical can produce `Escalated`;
-- unhealthy → Healthy can produce `Recovered`;
-- MTTR is calculated from a known opening timestamp to a known recovery timestamp.
+- `monitor_interval_minutes`;
+- `expected_refresh_minutes`;
+- `latest_date_field`;
+- `unique_keys`;
+- `numeric_fields`;
+- `row_diff_fields`;
+- `data_rules`.
 
-Incident counts are attributed to the window containing the opening transition. Recoveries are attributed to the window containing the recovery transition.
+Existing detector thresholds, request credentials, notification policy, retry behavior, history configuration and other unrelated settings remain the normal `MonitoringConfig` defaults.
 
-A recovery can therefore appear in a 7-day window for an incident opened before that window, while the opening still belongs to the 30-day window or earlier.
+## Data Rule boundary
 
-## Time semantics
+The first Source Pack release generates only conservative rule templates:
 
-Scorecard timestamps must be timezone-aware and are normalized to UTC.
+- `not_null` for explicit mapped fields that the workflow requires;
+- `row_count_range` with minimum one for non-empty workflow extracts.
 
-Window boundaries are inclusive:
+Source Packs do not generate:
 
-`as_of - N days <= observed_at <= as_of`
+- `allowed_values` enumerations based on guessed business states;
+- numeric minimum/maximum thresholds;
+- SQL or arbitrary expressions;
+- AI-authored rules;
+- direct Health decisions.
 
-Future observations are excluded from the scorecard at the requested `as_of` time.
+Generated rules are ordinary Product v0.23 `DataRule` objects and therefore enter the same deterministic finding pipeline and single `health_from_findings(...)` boundary.
 
-Mixed-source observation lists fail closed.
+## Row-comparison safety
 
-## Adaptive bounded history
+Existing row-diff semantics interpret an empty `row_diff_fields` list as “all columns within safety limits.” That behavior is useful for manual configuration but is too broad as an accidental pack fallback.
 
-A fixed observation limit is not sufficient for a 30-day scorecard because source cadences vary from minutes to days and an incident can begin before the window.
+Product v0.25 therefore ensures that when a pack's optional comparison-value roles are all omitted, the materialized pack uses mapped unique-key fields as the bounded comparison field list rather than silently expanding to every source column.
 
-`ReliabilityScorecardService` therefore computes an initial history request from the source's configured `monitor_interval_minutes` and expands the newest-first history when more context is needed.
+When optional comparison roles are mapped, only those explicit mapped fields are added.
 
-The service considers incident context complete when:
+The onboarding form exposes `Row comparison fields` as an ordinary editable contract control. Applying a pack populates that visible control, and subsequent manual edits are serialized through the same `MonitoringConfig.row_diff_fields` field. This keeps the pack-generated row comparison contract transparent rather than carrying it as hidden browser state.
 
-- the store returns fewer observations than requested, proving no older retained history exists; or
-- the oldest eligible visible observation is older than the 30-day cutoff and Healthy, establishing a pre-window non-incident state.
+## Non-persistent API boundary
 
-Otherwise the requested history limit doubles until the configured safety cap is reached. The default cap is 50,000 observations.
+Two dedicated endpoints support catalog discovery and preview:
 
-If the cap is reached before enough earlier context exists, `ReliabilityScorecard.history_complete` is false.
+```text
+GET  /api/source-packs
+POST /api/source-packs/materialize
+```
 
-For incomplete history, the first visible unhealthy observation is not fabricated into an `Opened` transition. A later recovery may still be observed, but MTTR stays `None` when the actual opening timestamp is unknown.
+`GET /api/source-packs` returns the typed pack catalog.
 
-This is a claim-safety boundary: the product exposes partial history rather than manufacturing precision.
+`POST /api/source-packs/materialize` validates a pack ID, role mapping, and optional schedule overrides, then returns the generated `SourcePackMaterialization`.
+
+Neither endpoint creates a source, writes monitoring state, establishes a baseline, or starts monitoring. The materialization POST is a calculation/preview surface only.
+
+The routes use direct `app.add_api_route(...)` registration to preserve the repository's established FastAPI route-regression contract.
+
+## Preflight and onboarding boundary
+
+Source Packs do not add a pack-specific preflight or onboarding endpoint.
+
+After materialization, the caller builds the normal `SourceDefinition` and submits it to the existing `/api/preflight` path. That preflight remains authoritative for:
+
+- connector availability;
+- declared fields/keys;
+- freshness evidence;
+- generated Data Rules;
+- all other existing source acceptance checks.
+
+A generated pack rule that fails causes ordinary preflight rejection exactly like a manually configured rule.
+
+Only the existing guarded onboarding path persists an accepted source.
+
+The browser invalidates a previously successful preflight whenever the onboarding contract changes. Input/change events, Data Rule add/remove actions, or a new pack mapping clear the prior acceptance evidence and require preflight to run again before the Add Source action can be enabled. This prevents stale preflight evidence from authorizing a modified contract.
+
+## Analyst-facing onboarding flow
+
+The existing Add Source page contains an optional Source Pack section.
+
+The flow is intentionally explicit:
+
+1. choose a pack;
+2. map each semantic role to a real source column;
+3. request a non-persistent generated-contract preview;
+4. review the generated cadence/freshness/key/numeric/row-diff/Data Rule contract;
+5. explicitly apply the pack;
+6. optionally edit the resulting visible cadence, field, row-comparison and Data Rule controls;
+7. run normal preflight;
+8. onboard only if preflight passes.
+
+Selecting a pack alone is insufficient. If a pack is selected but not previewed/applied, the browser refuses to run preflight with that pack selection.
+
+Applying a pack only copies the generated ordinary configuration into the current onboarding form. It does not persist anything.
 
 ## Persistence
 
-Product v0.24 adds **no database migration**.
+Product v0.25 requires **no database migration**.
 
-Scorecards are derived on read from existing observations and existing source configuration. The adaptive service requires only:
+Pack definitions are code-level product presets. A pack ID or role mapping is not persisted as a parallel source record.
 
-- `get_source(source_id)`;
-- newest-first `list_observations(source_id, limit=...)`.
+After successful onboarding, storage contains the normal `SourceDefinition` with its materialized `MonitoringConfig`, exactly as if the analyst had configured those fields manually.
 
-SQLite, namespaced storage and PostgreSQL therefore reuse their existing observation persistence unchanged.
+SQLite, namespaced storage and PostgreSQL therefore require no pack-specific tables or migration logic.
 
-## API boundary
+## Authorization
 
-`GET /api/sources/{source_id}/scorecard` returns:
+Source Packs do not change the existing authorization policy. Catalog discovery is a normal read surface. Materialization and source creation remain subject to the existing web authorization rules, and actual persistence still requires the existing source onboarding mutation boundary.
 
-```text
-ReliabilityScorecardResponse
-  scorecard: ReliabilityScorecard
-  downstream_impact:
-    total: int
-    counts: dict[asset_kind, int]
-```
+No pack can bypass workspace isolation or source-creation authorization.
 
-The downstream summary deliberately contains counts only. The scorecard route does not publish dependency asset names, report names, IDs or URLs.
+## Preserved v0.24 reliability architecture
 
-Dependency context is computed through the existing `DependencyService.blast_radius(...)` path after scorecard derivation and cannot affect the scorecard badge or metrics.
+Source Packs do not modify reliability scorecards or trust badges.
 
-The route is registered directly with `app.add_api_route(...)` to preserve the repository's existing `app.routes` regression contract; an intermediate FastAPI included-router object is not added.
-
-## Analyst-facing UI boundary
-
-The existing source-detail template includes one compact Reliability Scorecard panel after the established four-card source summary and before the existing detail layout.
-
-The panel reuses existing UI primitives (`panel`, `status`, `finding`, `profile-grid`) rather than introducing a new styling system or redesigning source detail.
-
-It displays:
-
-- current trust badge;
-- 7-day and 30-day check counts;
-- Healthy percentage;
-- successful-check percentage;
-- incident openings;
-- stale occurrences;
-- Data Rule failure occurrences;
-- MTTR in hours when known.
-
-The panel states explicitly that the badge mirrors current Health and historical metrics do not reclassify the source.
-
-When `history_complete` is false, the UI displays a partial-history safety note.
-
-## Dynamic rendering boundary
-
-The application creates one workspace-bound `ReliabilityScorecardService` during web configuration and stores it on `app.state.scorecard_service`.
-
-The scorecard API uses that same service. The Jinja environment receives a narrow `reliability_scorecard_for(source_id)` global for authenticated source-detail rendering, avoiding a broad rewrite of the established `web.py` source-view composition.
-
-## Static Pages boundary
-
-`build_pages_site(...)` creates a scorecard service over the existing static-storage boundary and uses the same deterministic derivation for source-detail HTML and public `state.json`.
-
-The exported scorecard contains aggregate reliability metrics only.
-
-Product v0.23's public Data Rule privacy boundary remains authoritative:
-
-- private rule IDs/names are not exposed;
-- referenced private fields are not exposed;
-- allowed sets/bounds are not exposed;
-- custom impact/investigation guidance is not exposed;
-- failing row values are not exposed.
-
-The scorecard may expose only the aggregate count that one or more Data Rule failures occurred in a given observation window.
-
-## Preserved v0.23 Data Rule architecture
-
-Product v0.24 does not modify the deterministic Data Rule engine:
-
-- `not_null`;
-- `allowed_values`;
-- `numeric_range`;
-- `row_count_range`.
-
-Data Rule findings still join ordinary source findings before the single existing `health_from_findings(...)` derivation. Scorecards consume the resulting observation evidence downstream.
+Current source Health remains authoritative; seven-day and 30-day scorecards remain explanatory derived evidence. Pack-generated rules may affect Health only through the same normal rule → Finding → `health_from_findings(...)` path used by manually authored rules.
 
 ## Preserved product architecture
 
-Product v0.24 does not change:
+Product v0.25 does not change:
 
 - connector ingestion semantics;
 - detector thresholds;
 - Healthy / Warning / Critical classification;
-- Data Rule evaluation semantics;
-- source preflight/onboarding acceptance;
+- Data Rule evaluator semantics;
 - baseline promotion/review;
-- incident transition semantics;
+- Healthy-history reference behavior;
+- incident lifecycle;
 - notification policy;
 - delivery attempt state/idempotency/retry/reconciliation;
-- Viewer / Operator / Admin authorization;
 - workspace persistence boundaries;
-- row-diff retention/privacy;
+- Viewer / Operator / Admin role model;
 - Power BI Guard trust logic;
-- dependency graph traversal/storage;
+- dependency graph and blast radius;
 - Teams delivery state handling;
 - Delivery Ops reconciliation;
-- approved finding/history/sidebar source-detail layout.
+- scorecard derivation;
+- static Pages privacy boundaries.
 
 ## Verification
 
-The functional/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe` passed:
+The final functional/API/UI checkpoint `a3f3703f6bdd29191329e497fef60234474888c0` passed:
 
 - Ruff;
 - compile/import checks;
 - PostgreSQL 16-backed suite;
-- **275 passed, 1 warning**.
+- **303 passed, 1 warning**.
+
+Earlier isolated checkpoints passed 294 tests for the pure materializer, 299 tests after the catalog/materialization API + normal-preflight integration, and 302 tests before the editable row-comparison / stale-preflight safety refinement.
 
 Coverage proves:
 
-- current Health → trust badge mapping;
-- 7-day / 30-day deterministic metrics;
-- inclusive time windows and future-observation exclusion;
-- incident/recovery/MTTR reuse of existing transition logic;
-- per-observation stale/Data Rule occurrence counting;
-- adaptive cadence-aware history loading;
-- bounded incomplete-history claim safety;
-- scorecard API 404 behavior;
-- count-only downstream impact privacy;
-- downstream impact cannot change the badge;
-- authenticated source-detail scorecard rendering;
-- static Pages/state scorecard parity;
-- public Data Rule contract remains private while aggregate failure occurrence is retained.
+- all six packs are present and typed;
+- required/optional role behavior;
+- fail-closed unknown/blank/duplicate mappings;
+- schedule overrides;
+- generated freshness/key/numeric/row-diff fields;
+- conservative generated Data Rules;
+- bounded row-diff fallback when optional roles are omitted;
+- catalog/materialization APIs do not persist sources;
+- materialized configs still pass through normal successful/failing preflight behavior;
+- onboarding exposes role mapping, preview and explicit apply;
+- applying a pack reuses the existing contract controls rather than a parallel config model;
+- row-comparison fields remain visible/editable after pack application;
+- any subsequent contract edit invalidates stale preflight evidence.
 
-Release-only version/documentation changes are gated again on their exact head before merge.
+Release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def` passed the release gate with **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green, and package/FastAPI/module versions aligned at `0.25.0`. Verification-note documentation changes are gated again on their exact merge candidate head.
+
+Live-source smoke was not triggered by Product v0.25 and is not claimed because the release does not change source-ingestion workflow paths.
 
 ## Next architecture step
 
-Product v0.25 should implement preconfigured source packs as thin, typed presets over existing `MonitoringConfig` primitives. Packs should reduce onboarding configuration burden without creating a second source model or hiding assumptions.
+Product v0.25 closes the immediate feature-focused sequence.
 
-After v0.25, architecture priority shifts to real connection/credential lifecycle and hosted pilot validation. AI investigation, if added later, remains an explanation layer downstream of deterministic evidence and must not redefine Health.
+The next architecture priority is **connection lifecycle + hosted pilot validation**:
+
+1. real Microsoft OAuth/connection selection for workbook/table discovery;
+2. real Google connection selection for spreadsheet/sheet/range discovery;
+3. reconnect, revoke and credential-health states;
+4. managed PostgreSQL authenticated hosted pilot;
+5. real provider-side end-to-end failure drills through monitoring, incident, blast radius, notification and reconciliation.
+
+AI investigation can later summarize and prioritize deterministic evidence, but it remains downstream and must never redefine Health.

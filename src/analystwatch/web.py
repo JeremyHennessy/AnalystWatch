@@ -25,6 +25,7 @@ from .power_bi_web import configure_power_bi_web
 from .reconciliation_web import configure_reconciliation_web
 from .runtime_storage import DEFAULT_STORAGE_BACKEND, create_runtime_storage
 from .service import MonitorService
+from .source_pack_web import configure_source_pack_web
 from .teams_delivery import TeamsWorkflowAdapter
 from .teams_web import configure_teams_web
 from .web_auth import configure_web_authorization
@@ -91,7 +92,7 @@ def create_app(
     storage = runtime.monitoring_store
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.24.0")
+    app = FastAPI(title="AnalystWatch", version="0.25.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.storage_backend = runtime.backend
@@ -429,6 +430,7 @@ def create_app(
         templates=templates,
         monitoring_service=service,
     )
+    configure_source_pack_web(app)
     configure_web_authorization(
         app,
         workspace_id=resolved_workspace,
