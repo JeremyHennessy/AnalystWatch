@@ -32,14 +32,16 @@ def test_onboarding_requires_explicit_pack_application_before_preflight(tmp_path
     assert "Applying does not save or onboard the source." in response.text
 
 
-def test_applied_pack_reuses_existing_contract_controls(tmp_path) -> None:
+def test_applied_pack_reuses_existing_editable_contract_controls(tmp_path) -> None:
     client = TestClient(create_app(tmp_path / "pack-contract.db"))
 
     response = client.get("/sources/new")
 
     assert response.status_code == 200
     assert "replaceDataRules(config.data_rules || [])" in response.text
-    assert "row_diff_fields: packRowDiffFields" in response.text
+    assert 'id="row-diff-fields"' in response.text
+    assert "row_diff_fields: list('row-diff-fields')" in response.text
+    assert "document.getElementById('row-diff-fields').value" in response.text
     assert "document.getElementById('monitor-interval').value" in response.text
     assert "document.getElementById('refresh-interval').value" in response.text
     assert "document.getElementById('latest-date').value" in response.text
@@ -50,3 +52,16 @@ def test_applied_pack_reuses_existing_contract_controls(tmp_path) -> None:
         "before running preflight."
         in response.text
     )
+
+
+def test_contract_edits_invalidate_prior_preflight_evidence(tmp_path) -> None:
+    client = TestClient(create_app(tmp_path / "pack-preflight-safety.db"))
+
+    response = client.get("/sources/new")
+
+    assert response.status_code == 200
+    assert "function invalidatePreflight()" in response.text
+    assert "Configuration changed · run preflight again" in response.text
+    assert "form.addEventListener('input', invalidatePreflight)" in response.text
+    assert "form.addEventListener('change', invalidatePreflight)" in response.text
+    assert "invalidatePreflight();" in response.text

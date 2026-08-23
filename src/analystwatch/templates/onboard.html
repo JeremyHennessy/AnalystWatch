@@ -70,6 +70,7 @@
         <label class="check-label"><input id="infer-date" type="checkbox"><span>Infer a conservative date field if none is configured</span></label>
         <label class="span-two"><span>Numeric fields</span><input id="numeric-fields" placeholder="amount, total_value"></label>
         <label class="span-two"><span>Unique keys</span><input id="unique-keys" placeholder="id, record_id"></label>
+        <label class="span-two"><span>Row comparison fields</span><input id="row-diff-fields" placeholder="status, amount"><small>Leave blank for the existing all-column comparison behavior. Source packs populate this explicitly to keep their comparison contract bounded.</small></label>
 
         <div class="form-section span-two"><strong>Data Rules</strong><span>Optional deterministic business assertions. Every configured rule must pass preflight before this source can be accepted.</span></div>
         <div id="data-rule-list" class="data-rule-list span-two"><div class="rule-empty">No Data Rules configured. Add one only for a business invariant you want AnalystWatch to enforce explicitly.</div></div>
@@ -115,7 +116,6 @@ let ruleSequence = 0;
 let sourcePacks = [];
 let pendingPackMaterialization = null;
 let activePackId = null;
-let packRowDiffFields = [];
 
 function value(id) { return document.getElementById(id).value.trim(); }
 function list(id) { return value(id).split(',').map(v => v.trim()).filter(Boolean); }
@@ -132,6 +132,17 @@ function mapping(id) {
     result[header] = envName;
   }
   return result;
+}
+
+function invalidatePreflight() {
+  if (!lastPreflight) return;
+  lastPreflight = null;
+  acceptButton.disabled = true;
+  if (!panel.hidden) {
+    const status = document.getElementById('preflight-status');
+    status.textContent = 'Configuration changed · run preflight again';
+    status.className = 'text-warning';
+  }
 }
 
 function microsoftLocation() {
@@ -211,6 +222,7 @@ function addDataRule(initialRule = null) {
   card.querySelector('.rule-remove').addEventListener('click', () => {
     card.remove();
     refreshRuleEmptyState();
+    invalidatePreflight();
   });
   dataRuleList.append(card);
   refreshRuleEmptyState();
@@ -277,13 +289,11 @@ function dataRules() {
 function invalidatePackMaterialization() {
   pendingPackMaterialization = null;
   activePackId = null;
-  packRowDiffFields = [];
   applyPackButton.disabled = true;
   applyPackButton.textContent = 'Apply pack contract';
   sourcePackPreview.hidden = true;
   sourcePackPreview.innerHTML = '';
-  lastPreflight = null;
-  acceptButton.disabled = true;
+  invalidatePreflight();
 }
 
 function selectedSourcePack() {
@@ -414,19 +424,18 @@ function applySourcePack() {
   if (!pendingPackMaterialization) return;
   const config = pendingPackMaterialization.config;
   activePackId = pendingPackMaterialization.pack_id;
-  packRowDiffFields = [...(config.row_diff_fields || [])];
   document.getElementById('monitor-interval').value = String(config.monitor_interval_minutes);
   document.getElementById('refresh-interval').value = config.expected_refresh_minutes || '';
   document.getElementById('latest-date').value = config.latest_date_field || '';
   document.getElementById('infer-date').checked = Boolean(config.infer_latest_date_field);
   document.getElementById('numeric-fields').value = (config.numeric_fields || []).join(', ');
   document.getElementById('unique-keys').value = (config.unique_keys || []).join(', ');
+  document.getElementById('row-diff-fields').value = (config.row_diff_fields || []).join(', ');
   replaceDataRules(config.data_rules || []);
   renderPackPreview(pendingPackMaterialization, true);
   applyPackButton.disabled = true;
   applyPackButton.textContent = 'Pack applied';
-  lastPreflight = null;
-  acceptButton.disabled = true;
+  invalidatePreflight();
 }
 
 function sourcePayload() {
@@ -466,7 +475,7 @@ function sourcePayload() {
       json_record_path: type === 'json' ? (value('json-path') || null) : null,
       numeric_fields: list('numeric-fields'),
       unique_keys: list('unique-keys'),
-      row_diff_fields: packRowDiffFields,
+      row_diff_fields: list('row-diff-fields'),
       data_rules: dataRules(),
       request_header_env: headers
     }
@@ -540,7 +549,12 @@ sourceType.addEventListener('change', updateSourceFields);
 sourcePackSelect.addEventListener('change', renderSourcePackSelection);
 previewPackButton.addEventListener('click', previewSourcePack);
 applyPackButton.addEventListener('click', applySourcePack);
-addRuleButton.addEventListener('click', () => addDataRule());
+addRuleButton.addEventListener('click', () => {
+  addDataRule();
+  invalidatePreflight();
+});
+form.addEventListener('input', invalidatePreflight);
+form.addEventListener('change', invalidatePreflight);
 updateSourceFields();
 loadSourcePacks();
 
