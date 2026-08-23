@@ -102,7 +102,7 @@ Product v0.25 therefore ensures that when a pack's optional comparison-value rol
 
 When optional comparison roles are mapped, only those explicit mapped fields are added.
 
-The onboarding form now exposes `Row comparison fields` as an ordinary editable contract control. Applying a pack populates that visible control, and subsequent manual edits are serialized through the same `MonitoringConfig.row_diff_fields` field. This keeps the pack-generated row comparison contract transparent rather than carrying it as hidden browser state.
+The onboarding form exposes `Row comparison fields` as an ordinary editable contract control. Applying a pack populates that visible control, and subsequent manual edits are serialized through the same `MonitoringConfig.row_diff_fields` field. This keeps the pack-generated row comparison contract transparent rather than carrying it as hidden browser state.
 
 ## Non-persistent API boundary
 
@@ -137,7 +137,7 @@ A generated pack rule that fails causes ordinary preflight rejection exactly lik
 
 Only the existing guarded onboarding path persists an accepted source.
 
-The browser also invalidates a previously successful preflight whenever the onboarding contract changes. Input/change events, Data Rule add/remove actions, or a new pack mapping clear the prior acceptance evidence and require preflight to run again before the Add Source action can be enabled. This prevents stale preflight evidence from authorizing a modified contract.
+The browser invalidates a previously successful preflight whenever the onboarding contract changes. Input/change events, Data Rule add/remove actions, or a new pack mapping clear the prior acceptance evidence and require preflight to run again before the Add Source action can be enabled. This prevents stale preflight evidence from authorizing a modified contract.
 
 ## Analyst-facing onboarding flow
 
@@ -229,7 +229,7 @@ Coverage proves:
 - row-comparison fields remain visible/editable after pack application;
 - any subsequent contract edit invalidates stale preflight evidence.
 
-Release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def` passed the release gate with **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green, and package/FastAPI/module versions aligned at `0.25.0`. Verification-note documentation changes are gated again on their exact merge head.
+Release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def` passed the release gate with **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green, and package/FastAPI/module versions aligned at `0.25.0`. Verification-note documentation changes are gated again on their exact merge candidate head.
 
 Live-source smoke was not triggered by Product v0.25 and is not claimed because the release does not change source-ingestion workflow paths.
 
