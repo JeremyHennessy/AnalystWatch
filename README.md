@@ -1,86 +1,104 @@
 # AnalystWatch
 
-**Reliability monitoring for analyst-owned data and reporting workflows.**
+**The trust layer for analyst-owned reporting.**
 
-AnalystWatch monitors analyst-owned data inputs for silent reliability failures, explains the evidence behind trust changes, shows downstream reporting exposure, and keeps ambiguous delivery outcomes visible until an operator resolves them.
+AnalystWatch monitors analyst-owned data inputs for silent reliability failures, explains the deterministic evidence behind trust changes, shows downstream reporting exposure, and keeps ambiguous delivery outcomes visible until an operator resolves them.
 
-The product question is: **can I trust the data feeding this analysis or report today, what has been happening recently, what is affected if I cannot, and are any delivery outcomes still operationally unresolved?**
+The product question is: **can I trust the data feeding this analysis or report today, what changed, what has been happening recently, and what is affected if I cannot?**
 
-## Product v0.24 status
+## Product v0.25 status
 
-Product v0.24 adds **deterministic reliability scorecards + trust badges** over the observation evidence AnalystWatch already stores.
+Product v0.25 adds **role-mapped Source Packs** that reduce onboarding configuration work without introducing a second source model or hiding business assumptions.
 
-The release deliberately does **not** create a new reliability classifier or opaque numeric score. The badge is a presentation of the current source Health only:
+The first pack catalog contains:
+
+- **FP&A Forecast**;
+- **Sales Pipeline**;
+- **Claims Register**;
+- **Operations Orders**;
+- **Finance Close**;
+- **Customer Export**.
+
+A pack describes semantic roles such as `Opportunity ID`, `Last updated date`, `Pipeline stage`, or `Amount`. The analyst maps those roles to the actual column names in the source. AnalystWatch then materializes the mapping into the existing typed `MonitoringConfig`.
+
+There are no canned customer field names and no automatic schema guessing in the pack contract.
+
+## Transparent pack materialization
+
+A Source Pack can populate existing monitoring primitives only:
+
+- monitoring cadence;
+- expected refresh cadence;
+- freshness date field;
+- unique keys;
+- numeric fields;
+- bounded row-comparison fields;
+- deterministic Data Rules.
+
+The initial release deliberately generates only conservative rule types:
+
+- `not_null` for explicitly mapped required business fields;
+- `row_count_range` with a minimum of one row for workflows that should not silently become empty.
+
+Packs do **not** invent allowed-value enumerations, numeric bounds, detector thresholds, SQL expressions, or AI-generated rules.
+
+Optional roles remain optional. If an optional row-comparison role is omitted, the pack does not silently fall back to comparing every source column; row comparison remains bounded to mapped identity/context fields.
+
+## Catalog and preview API
+
+Two non-persistent endpoints support the onboarding experience:
+
+- `GET /api/source-packs` — returns the typed pack catalog;
+- `POST /api/source-packs/materialize` — validates role mappings and returns the generated `MonitoringConfig` preview.
+
+Materialization does not create a source, establish a baseline, run monitoring, or persist a pack selection.
+
+The generated source definition must still pass the existing `POST /api/preflight` acceptance boundary and is only persisted through the existing guarded onboarding path.
+
+## Onboarding flow
+
+The existing Add Source page now supports an optional Source Pack flow:
+
+1. choose a workflow preset;
+2. map the pack's semantic roles to real source columns;
+3. **Preview generated contract**;
+4. review cadence, freshness, keys, numeric fields, row-comparison fields and generated rules;
+5. **Apply pack contract**;
+6. optionally edit the generated visible monitoring settings and Data Rules;
+7. run the normal source preflight;
+8. add the monitored source only after preflight passes.
+
+Selecting a pack is never sufficient by itself. The UI requires explicit preview and apply before preflight, and applying a pack does not save or onboard the source.
+
+The pack ID and role mapping are not stored as a parallel persistence model. Only the resulting ordinary source configuration is persisted when onboarding succeeds.
+
+## Reliability scorecards retained
+
+Product v0.25 preserves Product v0.24 reliability scorecards and trust badges.
+
+Current Health remains authoritative:
 
 - no eligible observation → `Not monitored`;
 - `Healthy` → `Trusted`;
 - `Warning` → `Attention`;
 - `Critical` → `Critical`.
 
-Historical metrics explain recent reliability but cannot override or recalculate Healthy / Warning / Critical.
+Seven-day and 30-day scorecards continue to expose explainable check/success/Health ratios, incident openings and recoveries, stale occurrences, Data Rule failure occurrences, and MTTR when the true incident start is known. There is no opaque composite reliability score.
 
-## Explainable 7-day and 30-day scorecards
+## Deterministic Data Rules retained
 
-Each source scorecard exposes explicit 7-day and 30-day windows with:
-
-- check count;
-- successful-check count and percentage, using the existing AnalystWatch definition of a usable observation (`available` plus a profile);
-- Healthy-check count and percentage;
-- Warning and Critical counts;
-- incident openings and recoveries derived through the existing incident-transition logic;
-- stale-occurrence count, measured once per observation;
-- Data Rule failure-occurrence count, measured once per observation;
-- mean time to recovery (MTTR) when the incident start is actually known.
-
-There is no `94/100`-style composite reliability score. Every displayed metric can be traced directly to stored observations, deterministic findings or existing incident transitions.
-
-## Bounded history and claim safety
-
-Scorecard history is loaded adaptively from the source's configured monitoring cadence instead of assuming a fixed observation count represents 30 days.
-
-The scorecard service expands the history window until it has enough pre-window Healthy context to establish incident boundaries, or until a safety cap is reached. The default cap is 50,000 observations per scorecard evaluation.
-
-If the cap is reached before enough earlier context is available:
-
-- `history_complete` is false;
-- the UI explicitly labels the history partial;
-- the first visible unhealthy observation is not fabricated into a known incident opening;
-- recovery can still be counted when observed;
-- MTTR remains unavailable when the actual opening time is unknown.
-
-## API and downstream context
-
-`GET /api/sources/{source_id}/scorecard` returns:
-
-- the deterministic `ReliabilityScorecard`;
-- a bounded downstream-impact summary containing only total count and counts by asset kind.
-
-Downstream asset names, identifiers, report names and URLs are not returned by this scorecard endpoint. Blast radius is contextual evidence only and cannot influence the trust badge or source Health.
-
-## Analyst UI and public Pages parity
-
-The existing source-detail layout now includes a compact **Reliability Scorecard** between the source summary and the established detail layout.
-
-The panel shows the trust badge plus 7-day / 30-day evidence for Healthy %, successful %, incidents, stale occurrences, Data Rule failure occurrences and MTTR. Existing finding, row-change, history, incident, review, dependency and monitoring-contract layouts remain unchanged.
-
-The same aggregate scorecard is rendered into read-only GitHub Pages and serialized in public `state.json`.
-
-Product v0.23's selective Data Rule privacy boundary remains in force. Public scorecards may report that a Data Rule failure occurred, but they do not publish the private rule ID/name, referenced field, allowed values/bounds, custom guidance or failing row values.
-
-## Product v0.23 foundation retained
-
-Product v0.24 preserves deterministic Data Rules from v0.23:
+The four existing Data Rule kinds remain unchanged:
 
 - `not_null`;
 - `allowed_values`;
 - `numeric_range`;
 - `row_count_range`.
 
-Data Rules still enter the existing source `Finding` pipeline before the single `health_from_findings(...)` boundary. They do not have their own Health, incident or persistence state machine.
+Data Rules still enter the ordinary `Finding` pipeline before the single existing `health_from_findings(...)` boundary. Source Packs merely generate some of those existing typed rules; they do not have their own Health or incident state machine.
 
 ## Source connectors
 
-Existing source connectors remain unchanged by Product v0.24:
+Existing connectors remain unchanged by Product v0.25:
 
 - CSV;
 - XLSX;
@@ -89,48 +107,37 @@ Existing source connectors remain unchanged by Product v0.24:
 - Microsoft 365 SharePoint / OneDrive Excel tables through Microsoft Graph delegated access;
 - Google Sheets ranges through Google Sheets API v4.
 
-Credentials remain environment-backed where configured and provider-specific public identifiers continue to follow the existing Pages-redaction rules.
-
-No new live-tenant claim is implied by Product v0.24. A provider path is only considered externally verified when corresponding credentials and side effects were actually exercised.
+Credentials remain environment-backed where configured. No new live-tenant or provider-side-effect claim is implied by Source Packs.
 
 ## Existing product foundation
 
-Product v0.24 preserves the previously verified architecture, including:
-
-- deterministic ingestion, profiling, source detectors and Data Rules;
-- mandatory source preflight and guarded onboarding;
-- Healthy-history references, freshness evidence and guarded baseline promotion/review;
-- incident lifecycle and notification policy;
-- dry-run/live delivery attempt state, idempotency, retry and explicit reconciliation;
-- workspace-aware SQLite/namespaced/PostgreSQL persistence;
-- Viewer / Operator / Admin authorization;
-- bounded key-level row change analysis;
-- Power BI Guard trust correlation;
-- dependency mapping and deterministic blast radius;
-- Microsoft Teams Workflows delivery architecture;
-- Delivery Ops reconciliation monitoring;
-- Google Sheets and Microsoft 365 Excel connector boundaries;
-- read-only GitHub Pages monitoring snapshots.
+Product v0.25 preserves the previously verified architecture, including deterministic ingestion/profiling/detectors, mandatory preflight, Healthy-history references, guarded baselines, incident lifecycle, notification policy, delivery attempt safety/reconciliation, workspace-aware persistence, Viewer/Operator/Admin authorization, bounded key-level row changes, Power BI Guard, dependency/blast-radius analysis, Teams Workflows delivery, Delivery Ops, reliability scorecards, and read-only GitHub Pages snapshots.
 
 ## Verification
 
-The Product v0.24 functional/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe` passed:
+The Product v0.25 functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d` passed:
 
 - Ruff;
 - compile/import checks;
 - PostgreSQL 16-backed test suite;
-- **275 passed, 1 warning**.
+- **302 passed, 1 warning**.
 
-Coverage includes badge/Health mapping, 7-day and 30-day metrics, inclusive time boundaries, incident/recovery/MTTR derivation, stale/Data Rule occurrence counting, future-observation exclusion, adaptive history loading, incomplete-history claim safety, bounded downstream API context, authenticated source-detail rendering, static Pages/state parity, and Data Rule privacy regression coverage.
+Earlier isolated checkpoints also passed **294 tests** for the pure pack materializer and **299 tests** after catalog/materialization API + normal-preflight integration.
 
-Release-only metadata and documentation changes are gated again on their exact head before merge.
+Coverage includes pack-model validation, six-pack catalog behavior, role mapping, optional-role handling, duplicate/invalid mapping rejection, schedule overrides, generated key/freshness/numeric/row-diff/rule contracts, bounded row-diff fallback, non-persistent APIs, successful and failing normal preflight paths, and explicit onboarding preview/apply behavior.
 
-## Next milestone
+Release-only version/documentation changes are gated again on their exact head before merge.
 
-Product v0.25 is **preconfigured source packs**: reusable analyst-facing presets that populate existing keys, freshness contracts, row-comparison settings and deterministic Data Rules for common reporting workflows.
+## What comes next
 
-After v0.25, priority shifts toward self-service Microsoft/Google connection UX, credential lifecycle and real hosted pilot validation rather than connector accumulation.
+Product v0.25 completes the immediate feature-focused sequence. The next priority is **self-service connection and real pilot validation**, not connector accumulation:
 
-AI investigation remains downstream of deterministic evidence and must not redefine Health classification.
+1. Microsoft connection UX: connect account → choose workbook/table → credential health/reconnect/revoke;
+2. Google connection UX: connect account → choose spreadsheet/sheet/range → credential health/reconnect/revoke;
+3. authenticated hosted pilot on managed PostgreSQL with real Microsoft, Google, Power BI and notification destinations;
+4. end-to-end failure drills from source → finding/rule → Health → incident → blast radius → notification → reconciliation;
+5. a five-minute first-value onboarding path with test/simulation tools.
+
+AI investigation can follow as an explanation layer over deterministic evidence, but it must not redefine Health classification.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MILESTONES.md`](docs/MILESTONES.md).
