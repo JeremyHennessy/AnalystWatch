@@ -45,4 +45,8 @@ def test_applied_pack_reuses_existing_contract_controls(tmp_path) -> None:
     assert "document.getElementById('latest-date').value" in response.text
     assert "document.getElementById('numeric-fields').value" in response.text
     assert "document.getElementById('unique-keys').value" in response.text
-    assert "You can edit the generated cadence, fields and Data Rules below before running preflight." in response.text
+    assert (
+        "You can edit the generated cadence, fields and Data Rules below "
+        "before running preflight."
+        in response.text
+    )
