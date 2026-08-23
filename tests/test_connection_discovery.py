@@ -167,7 +167,12 @@ def test_microsoft_workbook_search_filters_to_excel_files(monkeypatch) -> None:
                     {
                         "id": "item-1",
                         "name": "Forecast.xlsx",
-                        "file": {"mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+                        "file": {
+                            "mimeType": (
+                                "application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet"
+                            )
+                        },
                         "webUrl": "https://example.sharepoint.com/Forecast.xlsx",
                         "lastModifiedDateTime": "2026-08-23T15:00:00Z",
                     },

@@ -610,7 +610,8 @@ def build_google_sheets_location(
     range_name = _trimmed_text(range_name, "Google Sheets A1 range")
     if header_row < 1 or header_row > 1000:
         raise ValueError("Google Sheets header_row must be between 1 and 1000")
-    location = f"gsheets://{spreadsheet_id}?{urlencode({'range': range_name, 'header_row': header_row})}"
+    query = urlencode({"range": range_name, "header_row": header_row})
+    location = f"gsheets://{spreadsheet_id}?{query}"
     parse_google_sheets_location(location)
     return location
 
