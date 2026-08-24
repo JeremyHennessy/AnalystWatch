@@ -21,6 +21,7 @@ from .connection_discovery import (
 )
 from .connection_identity import ConnectionAccountIdentity, inspect_connection_identity
 from .connection_lifecycle import CredentialLifecycle, credential_lifecycle
+from .oauth_web import configure_oauth_start_web
 
 MICROSOFT_AUTH_ENV = "ANALYSTWATCH_MICROSOFT_AUTHORIZATION"
 GOOGLE_AUTH_ENV = "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
@@ -207,3 +208,4 @@ def configure_connection_web(app: FastAPI) -> None:
         methods=["POST"],
         response_model=list[GoogleSheetOption],
     )
+    configure_oauth_start_web(app)
