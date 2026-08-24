@@ -32,7 +32,7 @@ analystwatch = "analystwatch.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-analystwatch = ["templates/*.html", "static/*.css"]
+analystwatch = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
