@@ -61,7 +61,9 @@ def test_connection_check_redacts_fixed_server_environment_name(tmp_path, monkey
     assert connection_web.MICROSOFT_AUTH_ENV not in response.text
 
 
-def test_discovery_api_uses_fixed_server_reference_without_persisting(tmp_path, monkeypatch) -> None:
+def test_discovery_api_uses_fixed_server_reference_without_persisting(
+    tmp_path, monkeypatch
+) -> None:
     seen: list[str] = []
 
     def fake_drives(environment_variable):
