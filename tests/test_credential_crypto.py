@@ -17,29 +17,52 @@ def key(byte: int) -> bytes:
     return bytes([byte]) * 32
 
 
+def aad(
+    workspace_id: str = "default-local",
+    provider: ConnectionProvider | str = "microsoft",
+    credential_id: str = "credential-1",
+    subject_id: str = "subject-1",
+    secret_kind: str = "access_token",
+) -> bytes:
+    return credential_associated_data(
+        workspace_id,
+        provider,
+        credential_id,
+        subject_id,
+        secret_kind,  # type: ignore[arg-type]
+    )
+
+
 def test_aes_gcm_round_trip_never_serializes_plaintext_or_key() -> None:
     keyring = CredentialKeyring({"key-2026-08": key(7)}, active_key_id="key-2026-08")
-    aad = credential_associated_data("default-local", "microsoft", "credential-1")
     plaintext = b"Bearer provider-secret-token"
 
-    envelope = keyring.encrypt(plaintext, associated_data=aad)
+    envelope = keyring.encrypt(plaintext, associated_data=aad())
 
     assert envelope.algorithm == "AES-256-GCM"
     assert envelope.key_id == "key-2026-08"
     assert plaintext.decode() not in envelope.model_dump_json()
     assert base64.urlsafe_b64encode(key(7)).decode() not in envelope.model_dump_json()
-    assert keyring.decrypt(envelope, associated_data=aad) == plaintext
+    assert keyring.decrypt(envelope, associated_data=aad()) == plaintext
 
 
-def test_ciphertext_is_bound_to_workspace_provider_and_credential() -> None:
+def test_ciphertext_is_bound_to_record_account_and_secret_role() -> None:
     keyring = CredentialKeyring({"active": key(9)}, active_key_id="active")
-    original_aad = credential_associated_data("workspace-a", "google", "credential-1")
+    original_aad = aad(
+        workspace_id="workspace-a",
+        provider="google",
+        credential_id="credential-1",
+        subject_id="account-1",
+        secret_kind="refresh_token",
+    )
     envelope = keyring.encrypt(b"refresh-secret", associated_data=original_aad)
 
     for mismatched_aad in [
-        credential_associated_data("workspace-b", "google", "credential-1"),
-        credential_associated_data("workspace-a", "microsoft", "credential-1"),
-        credential_associated_data("workspace-a", "google", "credential-2"),
+        aad("workspace-b", "google", "credential-1", "account-1", "refresh_token"),
+        aad("workspace-a", "microsoft", "credential-1", "account-1", "refresh_token"),
+        aad("workspace-a", "google", "credential-2", "account-1", "refresh_token"),
+        aad("workspace-a", "google", "credential-1", "account-2", "refresh_token"),
+        aad("workspace-a", "google", "credential-1", "account-1", "access_token"),
     ]:
         with pytest.raises(CredentialCryptoError, match="could not be authenticated"):
             keyring.decrypt(envelope, associated_data=mismatched_aad)
@@ -47,8 +70,8 @@ def test_ciphertext_is_bound_to_workspace_provider_and_credential() -> None:
 
 def test_tampered_ciphertext_fails_with_safe_error() -> None:
     keyring = CredentialKeyring({"active": key(3)}, active_key_id="active")
-    aad = credential_associated_data("default-local", "google", "credential-1")
-    envelope = keyring.encrypt(b"private-token", associated_data=aad)
+    associated_data = aad(provider="google")
+    envelope = keyring.encrypt(b"private-token", associated_data=associated_data)
     raw = bytearray(base64.urlsafe_b64decode(envelope.ciphertext_b64 + "=="))
     raw[-1] ^= 1
     tampered = envelope.model_copy(
@@ -56,7 +79,7 @@ def test_tampered_ciphertext_fails_with_safe_error() -> None:
     )
 
     with pytest.raises(CredentialCryptoError, match="could not be authenticated") as exc:
-        keyring.decrypt(tampered, associated_data=aad)
+        keyring.decrypt(tampered, associated_data=associated_data)
 
     assert "private-token" not in str(exc.value)
     assert tampered.ciphertext_b64 not in str(exc.value)
@@ -64,19 +87,19 @@ def test_tampered_ciphertext_fails_with_safe_error() -> None:
 
 def test_key_rotation_keeps_old_ciphertext_decryptable_and_reencrypts_with_active_key() -> None:
     old_keyring = CredentialKeyring({"old": key(1)}, active_key_id="old")
-    aad = credential_associated_data("default-local", ConnectionProvider.MICROSOFT, "cred")
-    old_envelope = old_keyring.encrypt(b"secret", associated_data=aad)
+    associated_data = aad(credential_id="cred")
+    old_envelope = old_keyring.encrypt(b"secret", associated_data=associated_data)
 
     rotating = CredentialKeyring(
         {"old": key(1), "new": key(2)},
         active_key_id="new",
     )
-    new_envelope = rotating.reencrypt(old_envelope, associated_data=aad)
+    new_envelope = rotating.reencrypt(old_envelope, associated_data=associated_data)
 
-    assert rotating.decrypt(old_envelope, associated_data=aad) == b"secret"
+    assert rotating.decrypt(old_envelope, associated_data=associated_data) == b"secret"
     assert new_envelope.key_id == "new"
     assert new_envelope.ciphertext_b64 != old_envelope.ciphertext_b64
-    assert rotating.decrypt(new_envelope, associated_data=aad) == b"secret"
+    assert rotating.decrypt(new_envelope, associated_data=associated_data) == b"secret"
 
 
 def test_unknown_key_id_fails_without_exposing_envelope() -> None:
@@ -111,15 +134,17 @@ def test_envelope_rejects_untrimmed_key_id() -> None:
 
 
 def test_associated_data_is_canonical_and_validated() -> None:
-    first = credential_associated_data("default-local", "google", "credential-1")
-    second = credential_associated_data(
-        "default-local",
-        ConnectionProvider.GOOGLE,
-        "credential-1",
-    )
+    first = aad(provider="google")
+    second = aad(provider=ConnectionProvider.GOOGLE)
 
     assert first == second
     assert b"default-local" in first
     assert b"google" in first
+    assert b"subject-1" in first
+    assert b"access_token" in first
     with pytest.raises(ValueError, match="credential_id"):
-        credential_associated_data("default-local", "google", " bad ")
+        aad(provider="google", credential_id=" bad ")
+    with pytest.raises(ValueError, match="subject_id"):
+        aad(provider="google", subject_id=" bad ")
+    with pytest.raises(ValueError, match="secret_kind"):
+        aad(provider="google", secret_kind="wrong")
