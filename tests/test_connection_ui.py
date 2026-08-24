@@ -34,16 +34,18 @@ def test_connection_browser_exposes_provider_browse_flow_and_bounded_google_rang
 
     assert response.status_code == 200
     script = response.text
-    for endpoint in [
-        "/api/connections/microsoft/check",
-        "/api/connections/microsoft/drives",
-        "/api/connections/microsoft/workbooks",
-        "/api/connections/microsoft/tables",
-        "/api/connections/google/check",
-        "/api/connections/google/spreadsheets",
-        "/api/connections/google/sheets",
+    assert "const MICROSOFT_PREFIX = '/api/connections/microsoft'" in script
+    assert "const GOOGLE_PREFIX = '/api/connections/google'" in script
+    for route_expression in [
+        "${MICROSOFT_PREFIX}/check",
+        "${MICROSOFT_PREFIX}/drives",
+        "${MICROSOFT_PREFIX}/workbooks",
+        "${MICROSOFT_PREFIX}/tables",
+        "${GOOGLE_PREFIX}/check",
+        "${GOOGLE_PREFIX}/spreadsheets",
+        "${GOOGLE_PREFIX}/sheets",
     ]:
-        assert endpoint in script
+        assert route_expression in script
     assert "Test Microsoft connection" in script
     assert "Browse drives" in script
     assert "Search workbooks" in script
