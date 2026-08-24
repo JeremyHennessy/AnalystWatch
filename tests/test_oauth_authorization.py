@@ -107,6 +107,22 @@ def test_pkce_ciphertext_is_bound_to_user_provider_credential_and_transaction() 
             )
 
 
+def test_invalid_copied_transaction_metadata_fails_with_bounded_error() -> None:
+    started = start()
+    tampered = started.transaction.model_copy(update={"provider": "not-a-provider"}, deep=True)
+
+    with pytest.raises(OAuthAuthorizationError, match="metadata is invalid") as exc:
+        consume_authorization_transaction(
+            tampered,
+            keyring(),
+            state=started.state,
+            now=NOW + timedelta(minutes=1),
+        )
+
+    assert "not-a-provider" not in str(exc.value)
+    assert started.state not in str(exc.value)
+
+
 def test_authorization_transaction_rejects_bad_ttl_and_naive_time() -> None:
     for ttl in [0, 16]:
         with pytest.raises(ValueError, match="TTL"):
