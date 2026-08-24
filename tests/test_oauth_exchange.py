@@ -135,9 +135,10 @@ def test_rejected_or_invalid_provider_responses_never_echo_secret_material() -> 
         {"token_type": "Bearer", "expires_in": 3600, "access_token": "token", "scope": 7},
     ]
     for payload in invalid_payloads:
-        with httpx.Client(
-            transport=httpx.MockTransport(lambda _request, value=payload: httpx.Response(200, json=value))
-        ) as client:
+        transport = httpx.MockTransport(
+            lambda _request, value=payload: httpx.Response(200, json=value)
+        )
+        with httpx.Client(transport=transport) as client:
             with pytest.raises(OAuthTokenExchangeError):
                 exchange_authorization_code(
                     config,
