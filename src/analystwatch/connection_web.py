@@ -20,6 +20,7 @@ from .connection_discovery import (
     search_microsoft_workbooks,
 )
 from .connection_identity import ConnectionAccountIdentity, inspect_connection_identity
+from .connection_lifecycle import CredentialLifecycle, credential_lifecycle
 
 MICROSOFT_AUTH_ENV = "ANALYSTWATCH_MICROSOFT_AUTHORIZATION"
 GOOGLE_AUTH_ENV = "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
@@ -93,6 +94,9 @@ def configure_connection_web(app: FastAPI) -> None:
             MICROSOFT_AUTH_ENV,
         )
 
+    def microsoft_lifecycle() -> CredentialLifecycle:
+        return credential_lifecycle(ConnectionProvider.MICROSOFT, MICROSOFT_AUTH_ENV)
+
     def microsoft_drives() -> list[MicrosoftDriveOption]:
         return _validated_call(list_microsoft_drives, MICROSOFT_AUTH_ENV)
 
@@ -124,6 +128,9 @@ def configure_connection_web(app: FastAPI) -> None:
             GOOGLE_AUTH_ENV,
         )
 
+    def google_lifecycle() -> CredentialLifecycle:
+        return credential_lifecycle(ConnectionProvider.GOOGLE, GOOGLE_AUTH_ENV)
+
     def google_spreadsheets() -> list[GoogleSpreadsheetOption]:
         return _validated_call(list_google_spreadsheets, GOOGLE_AUTH_ENV)
 
@@ -145,6 +152,12 @@ def configure_connection_web(app: FastAPI) -> None:
         microsoft_identity,
         methods=["POST"],
         response_model=ConnectionAccountIdentity,
+    )
+    app.add_api_route(
+        "/api/connections/microsoft/lifecycle",
+        microsoft_lifecycle,
+        methods=["POST"],
+        response_model=CredentialLifecycle,
     )
     app.add_api_route(
         "/api/connections/microsoft/drives",
@@ -175,6 +188,12 @@ def configure_connection_web(app: FastAPI) -> None:
         google_identity,
         methods=["POST"],
         response_model=ConnectionAccountIdentity,
+    )
+    app.add_api_route(
+        "/api/connections/google/lifecycle",
+        google_lifecycle,
+        methods=["POST"],
+        response_model=CredentialLifecycle,
     )
     app.add_api_route(
         "/api/connections/google/spreadsheets",
