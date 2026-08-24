@@ -19,6 +19,7 @@ from .connection_discovery import (
     list_microsoft_tables,
     search_microsoft_workbooks,
 )
+from .connection_identity import ConnectionAccountIdentity, inspect_connection_identity
 
 MICROSOFT_AUTH_ENV = "ANALYSTWATCH_MICROSOFT_AUTHORIZATION"
 GOOGLE_AUTH_ENV = "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
@@ -85,6 +86,13 @@ def configure_connection_web(app: FastAPI) -> None:
     def microsoft_check() -> PublicConnectionCheck:
         return _public_check(check_connection(ConnectionProvider.MICROSOFT, MICROSOFT_AUTH_ENV))
 
+    def microsoft_identity() -> ConnectionAccountIdentity:
+        return _validated_call(
+            inspect_connection_identity,
+            ConnectionProvider.MICROSOFT,
+            MICROSOFT_AUTH_ENV,
+        )
+
     def microsoft_drives() -> list[MicrosoftDriveOption]:
         return _validated_call(list_microsoft_drives, MICROSOFT_AUTH_ENV)
 
@@ -109,6 +117,13 @@ def configure_connection_web(app: FastAPI) -> None:
     def google_check() -> PublicConnectionCheck:
         return _public_check(check_connection(ConnectionProvider.GOOGLE, GOOGLE_AUTH_ENV))
 
+    def google_identity() -> ConnectionAccountIdentity:
+        return _validated_call(
+            inspect_connection_identity,
+            ConnectionProvider.GOOGLE,
+            GOOGLE_AUTH_ENV,
+        )
+
     def google_spreadsheets() -> list[GoogleSpreadsheetOption]:
         return _validated_call(list_google_spreadsheets, GOOGLE_AUTH_ENV)
 
@@ -124,6 +139,12 @@ def configure_connection_web(app: FastAPI) -> None:
         microsoft_check,
         methods=["POST"],
         response_model=PublicConnectionCheck,
+    )
+    app.add_api_route(
+        "/api/connections/microsoft/identity",
+        microsoft_identity,
+        methods=["POST"],
+        response_model=ConnectionAccountIdentity,
     )
     app.add_api_route(
         "/api/connections/microsoft/drives",
@@ -148,6 +169,12 @@ def configure_connection_web(app: FastAPI) -> None:
         google_check,
         methods=["POST"],
         response_model=PublicConnectionCheck,
+    )
+    app.add_api_route(
+        "/api/connections/google/identity",
+        google_identity,
+        methods=["POST"],
+        response_model=ConnectionAccountIdentity,
     )
     app.add_api_route(
         "/api/connections/google/spreadsheets",
