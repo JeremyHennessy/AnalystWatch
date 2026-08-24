@@ -176,7 +176,10 @@ def _parse_scopes(provider: ConnectionProvider, value: object) -> tuple[str, ...
     if not scopes:
         return ()
     for scope in scopes:
-        if len(scope) > 512 or any(ord(character) < 33 or ord(character) == 127 for character in scope):
+        invalid = len(scope) > 512 or any(
+            ord(character) < 33 or ord(character) == 127 for character in scope
+        )
+        if invalid:
             raise OAuthTokenExchangeError(
                 f"{provider.value.title()} token exchange returned invalid scope evidence."
             )
