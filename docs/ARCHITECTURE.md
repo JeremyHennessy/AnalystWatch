@@ -1,248 +1,271 @@
-# AnalystWatch Product v0.25 Architecture
+# AnalystWatch Product v0.26 Architecture
 
 ## Decision
 
-Product v0.25 adds Source Packs as **thin, typed configuration generators over the existing `MonitoringConfig`**.
+Product v0.26 adds a **non-persistent provider-discovery layer around the existing Microsoft 365 Excel and Google Sheets connectors**.
 
-The architectural rule is: **a pack reduces setup effort; it does not create a second source model, persistence model, Health classifier, or onboarding boundary.**
+The architectural rule is: **connection UX may make an existing connector easier to configure, but it cannot create a second source model, hide the resulting connector location, persist bearer tokens, bypass preflight, or influence source Health.**
 
 ```text
-SourcePack catalog
+server-managed provider credential reference
         ↓
-semantic role mapping supplied by analyst
+connection check / resource discovery
         ↓
-materialize_source_pack(...)
+analyst selects provider resource
         ↓
-ordinary MonitoringConfig
+existing m365:// or gsheets:// location fields
         ↓
-ordinary SourceDefinition
+ordinary SourceDefinition + MonitoringConfig
         ↓
-existing preflight
+existing /api/preflight
         ↓
 existing guarded onboarding
         ↓
-existing monitoring / Health / incidents / delivery
+existing ingestion / findings / Health / incidents
 ```
 
-## Pack model
+## Provider model
 
-A `SourcePack` contains:
+`ConnectionProvider` is shared by discovery and local readiness logic:
 
-- stable pack ID and analyst-facing name/description;
-- typed semantic roles;
-- required/optional role status;
-- default monitoring/refresh cadence;
-- role references for freshness, keys, numeric fields and row comparison;
-- conservative typed Data Rule templates.
+- `microsoft`;
+- `google`.
 
-The initial catalog is:
+There is one provider model rather than separate readiness/discovery enums.
 
-- FP&A Forecast;
-- Sales Pipeline;
-- Claims Register;
-- Operations Orders;
-- Finance Close;
-- Customer Export.
+`ConnectionReadiness` is local configuration evidence only. It may report:
 
-Roles are business concepts, not customer-specific field names. For example, the Sales Pipeline pack asks the analyst to map `Opportunity ID`, `Last updated date`, `Pipeline stage`, and optional `Opportunity amount` to their actual source columns.
+- `invalid_location`;
+- `needs_credential_reference`;
+- `needs_credential_value`;
+- `ready_to_test`.
 
-## Mapping validation
+`ready_to_test` is intentionally narrow: AnalystWatch has enough local configuration to attempt a provider request. It does not prove token validity, tenant membership, resource access, or future provider availability.
 
-`materialize_source_pack(...)` fails closed when:
+Readiness serializes neither bearer-token values nor the referenced environment-variable name.
 
-- a required role is missing;
-- an unknown role is supplied;
-- a mapped field is blank or untrimmed;
-- multiple semantic roles are mapped to the same source field;
-- an unsupported pack ID is requested;
-- a schedule override violates the existing positive cadence constraints.
+## Credential boundary
 
-Optional roles are omitted rather than inferred.
+Existing connector sources continue to use environment-backed Authorization references in `MonitoringConfig.request_header_env`.
 
-No schema inspection or AI inference is used to guess role mappings.
+Product v0.26 adds no token persistence table, encrypted secret store, refresh-token flow, OAuth callback, or provider session state.
 
-## Materialization boundary
-
-Pack materialization returns `SourcePackMaterialization`, containing the pack identity, normalized role mapping, and the generated ordinary `MonitoringConfig`.
-
-The generated config uses only existing fields:
-
-- `monitor_interval_minutes`;
-- `expected_refresh_minutes`;
-- `latest_date_field`;
-- `unique_keys`;
-- `numeric_fields`;
-- `row_diff_fields`;
-- `data_rules`.
-
-Existing detector thresholds, request credentials, notification policy, retry behavior, history configuration and other unrelated settings remain the normal `MonitoringConfig` defaults.
-
-## Data Rule boundary
-
-The first Source Pack release generates only conservative rule templates:
-
-- `not_null` for explicit mapped fields that the workflow requires;
-- `row_count_range` with minimum one for non-empty workflow extracts.
-
-Source Packs do not generate:
-
-- `allowed_values` enumerations based on guessed business states;
-- numeric minimum/maximum thresholds;
-- SQL or arbitrary expressions;
-- AI-authored rules;
-- direct Health decisions.
-
-Generated rules are ordinary Product v0.23 `DataRule` objects and therefore enter the same deterministic finding pipeline and single `health_from_findings(...)` boundary.
-
-## Row-comparison safety
-
-Existing row-diff semantics interpret an empty `row_diff_fields` list as “all columns within safety limits.” That behavior is useful for manual configuration but is too broad as an accidental pack fallback.
-
-Product v0.25 therefore ensures that when a pack's optional comparison-value roles are all omitted, the materialized pack uses mapped unique-key fields as the bounded comparison field list rather than silently expanding to every source column.
-
-When optional comparison roles are mapped, only those explicit mapped fields are added.
-
-The onboarding form exposes `Row comparison fields` as an ordinary editable contract control. Applying a pack populates that visible control, and subsequent manual edits are serialized through the same `MonitoringConfig.row_diff_fields` field. This keeps the pack-generated row comparison contract transparent rather than carrying it as hidden browser state.
-
-## Non-persistent API boundary
-
-Two dedicated endpoints support catalog discovery and preview:
+Dynamic discovery endpoints use fixed runtime references only:
 
 ```text
-GET  /api/source-packs
-POST /api/source-packs/materialize
+Microsoft → ANALYSTWATCH_MICROSOFT_AUTHORIZATION
+Google    → ANALYSTWATCH_GOOGLE_AUTHORIZATION
 ```
 
-`GET /api/source-packs` returns the typed pack catalog.
+The caller cannot choose an arbitrary environment-variable name.
 
-`POST /api/source-packs/materialize` validates a pack ID, role mapping, and optional schedule overrides, then returns the generated `SourcePackMaterialization`.
+Public connection-check responses expose only bounded status:
 
-Neither endpoint creates a source, writes monitoring state, establishes a baseline, or starts monitoring. The materialization POST is a calculation/preview surface only.
+- provider;
+- configured boolean;
+- reachable boolean;
+- HTTP status when available;
+- bounded error text.
 
-The routes use direct `app.add_api_route(...)` registration to preserve the repository's established FastAPI route-regression contract.
+They do not expose the credential environment-variable name, token value, or raw provider error body.
 
-## Preflight and onboarding boundary
+An early provisional endpoint that accepted an arbitrary `SourceDefinition` for readiness calculation was removed before release because it could have been used as an environment-variable-existence oracle. Readiness remains an internal/local model while external discovery is fixed-reference only.
 
-Source Packs do not add a pack-specific preflight or onboarding endpoint.
+## Microsoft discovery
 
-After materialization, the caller builds the normal `SourceDefinition` and submits it to the existing `/api/preflight` path. That preflight remains authoritative for:
+Microsoft discovery uses Microsoft Graph v1.0 and the existing delegated-access connector model.
 
-- connector availability;
-- declared fields/keys;
-- freshness evidence;
-- generated Data Rules;
-- all other existing source acceptance checks.
+The dynamic setup flow can:
 
-A generated pack rule that fails causes ordinary preflight rejection exactly like a manually configured rule.
+1. test the standard server Microsoft credential;
+2. enumerate current-user drives;
+3. search a selected drive for matching files;
+4. retain only real `.xlsx` file items;
+5. enumerate workbook tables;
+6. copy the selected drive/item/table identifiers into the existing Microsoft connector controls.
 
-Only the existing guarded onboarding path persists an accepted source.
+No selected resource is persisted by discovery itself.
 
-The browser invalidates a previously successful preflight whenever the onboarding contract changes. Input/change events, Data Rule add/remove actions, or a new pack mapping clear the prior acceptance evidence and require preflight to run again before the Add Source action can be enabled. This prevents stale preflight evidence from authorizing a modified contract.
+### Microsoft pagination safety
 
-## Analyst-facing onboarding flow
+Graph collection helpers have a bounded page limit.
 
-The existing Add Source page contains an optional Source Pack section.
+Any `@odata.nextLink` must:
 
-The flow is intentionally explicit:
+- use HTTPS;
+- have host `graph.microsoft.com`;
+- remain under `/v1.0/`.
 
-1. choose a pack;
-2. map each semantic role to a real source column;
-3. request a non-persistent generated-contract preview;
-4. review the generated cadence/freshness/key/numeric/row-diff/Data Rule contract;
-5. explicitly apply the pack;
-6. optionally edit the resulting visible cadence, field, row-comparison and Data Rule controls;
-7. run normal preflight;
-8. onboard only if preflight passes.
+Unexpected hosts/paths fail closed and are never followed.
 
-Selecting a pack alone is insufficient. If a pack is selected but not previewed/applied, the browser refuses to run preflight with that pack selection.
+Provider response bodies are not copied into public errors.
 
-Applying a pack only copies the generated ordinary configuration into the current onboarding form. It does not persist anything.
+## Google discovery
 
-## Persistence
+Google discovery uses:
 
-Product v0.25 requires **no database migration**.
+- Drive API v3 for spreadsheet file discovery;
+- Sheets API v4 metadata for sheet/tab discovery.
 
-Pack definitions are code-level product presets. A pack ID or role mapping is not persisted as a parallel source record.
+The dynamic setup flow can:
 
-After successful onboarding, storage contains the normal `SourceDefinition` with its materialized `MonitoringConfig`, exactly as if the analyst had configured those fields manually.
+1. test the standard server Google credential;
+2. list non-trashed Google spreadsheet files;
+3. include shared-drive-visible items through the existing metadata query parameters;
+4. load sheet properties for a selected spreadsheet;
+5. retain selectable `GRID` sheets only;
+6. copy the selected spreadsheet ID into the existing Google connector control.
 
-SQLite, namespaced storage and PostgreSQL therefore require no pack-specific tables or migration logic.
+No spreadsheet or sheet selection is persisted until ordinary source onboarding succeeds.
 
-## Authorization
+### Google range safety
 
-Source Packs do not change the existing authorization policy. Catalog discovery is a normal read surface. Materialization and source creation remain subject to the existing web authorization rules, and actual persistence still requires the existing source onboarding mutation boundary.
+A Google Sheet tab is not itself a complete monitoring contract. The existing connector still requires an explicit A1 range.
 
-No pack can bypass workspace isolation or source-creation authorization.
+The Add Source browser may suggest an A1 range only when returned grid dimensions are known and bounded at no more than:
 
-## Preserved v0.24 reliability architecture
+- 5,000 rows;
+- 100 columns.
 
-Source Packs do not modify reliability scorecards or trust badges.
+For larger or unknown grids, the helper intentionally does not manufacture a truncated range. The analyst must enter an explicit A1 range before preflight.
 
-Current source Health remains authoritative; seven-day and 30-day scorecards remain explanatory derived evidence. Pack-generated rules may affect Health only through the same normal rule → Finding → `health_from_findings(...)` path used by manually authored rules.
+This preserves the existing deterministic ingestion boundary and avoids silently excluding provider data for UI convenience.
 
-## Preserved product architecture
+## API boundary
 
-Product v0.25 does not change:
+Product v0.26 adds Operator-only POST endpoints:
 
-- connector ingestion semantics;
-- detector thresholds;
-- Healthy / Warning / Critical classification;
-- Data Rule evaluator semantics;
-- baseline promotion/review;
-- Healthy-history reference behavior;
-- incident lifecycle;
-- notification policy;
-- delivery attempt state/idempotency/retry/reconciliation;
-- workspace persistence boundaries;
-- Viewer / Operator / Admin role model;
-- Power BI Guard trust logic;
-- dependency graph and blast radius;
-- Teams delivery state handling;
-- Delivery Ops reconciliation;
-- scorecard derivation;
-- static Pages privacy boundaries.
+```text
+/api/connections/microsoft/check
+/api/connections/microsoft/drives
+/api/connections/microsoft/workbooks
+/api/connections/microsoft/tables
+/api/connections/google/check
+/api/connections/google/spreadsheets
+/api/connections/google/sheets
+```
+
+These endpoints are discovery/calculation surfaces only.
+
+They do not:
+
+- create/update a source;
+- establish a baseline;
+- run source monitoring;
+- persist a provider resource selection;
+- persist a token;
+- write observation history;
+- change source Health.
+
+Signed-bearer authorization classifies the connection POST prefix as `Operator` rather than the default Admin-only mutation bucket. Viewer access is insufficient for external provider discovery.
+
+## Add Source UI boundary
+
+The approved v0.25 onboarding form remains authoritative.
+
+Product v0.26 adds `static/connection_onboard.js` as an optional enhancement loaded by the existing Add Source template. It injects browse/test controls inside the existing Microsoft and Google sections.
+
+The existing manual fields remain visible and editable:
+
+Microsoft:
+
+- Drive ID;
+- workbook item ID;
+- Excel table;
+- optional worksheet;
+- environment-backed Authorization reference.
+
+Google:
+
+- spreadsheet ID;
+- A1 range;
+- header row;
+- environment-backed Authorization reference.
+
+Source Packs, Data Rules, row-comparison fields, run policy, preflight evidence, and guarded onboarding are not replaced.
+
+Browser selections populate those ordinary controls and dispatch normal form-input events. Therefore the v0.25 stale-preflight rule remains authoritative: if the selected provider resource changes after a successful preflight, Add Source is disabled until preflight runs again.
+
+The browser JavaScript contains no fixed credential environment-variable names or bearer-token examples.
+
+## Existing connector boundary
+
+Product v0.26 does not modify `ingest_source(...)`, Microsoft Excel ingestion, or Google Sheets values ingestion.
+
+The final source still uses existing connector locations:
+
+```text
+m365://<drive-id>/<item-id>?table=<table-name>[&worksheet=<sheet>]
+
+gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]
+```
+
+Those locations continue through the existing parsers, ingestion functions, profiling, preflight, runtime monitoring, and Pages privacy rules.
+
+## Source Pack coexistence
+
+Source Packs and connection discovery solve different parts of onboarding:
+
+- connection discovery answers **where is the provider data?**;
+- Source Packs answer **which business fields must remain trustworthy?**
+
+They converge only in the existing Add Source form and then become an ordinary `SourceDefinition` plus `MonitoringConfig`.
+
+There is no combined pack/connection persistence model.
+
+## Health and monitoring boundary
+
+Connection discovery is not a Health detector.
+
+It cannot produce Healthy / Warning / Critical and cannot change scorecards, incidents, baselines, notifications, dependencies, delivery attempts, or reviews.
+
+After onboarding, the existing source ingestion and deterministic finding pipeline remain the only source-monitoring path.
+
+Product v0.26 therefore requires no monitoring-database migration and no rewrite of existing hosted source data.
+
+## Dynamic app vs static Pages
+
+Provider discovery is intentionally dynamic-app-only.
+
+The FastAPI app may contact Microsoft/Google using configured server credentials for an authorized Operator.
+
+Static GitHub Pages remains a read-only monitoring artifact and receives no provider-discovery controls or credential state. Existing Pages redaction/privacy boundaries remain unchanged.
+
+## Hosted data custody
+
+Product v0.25 merged at `fdab78d706b6db75e88cba3d142a15372ca5908d`.
+
+Post-merge `monitor-state` advanced to `db00ee1ea914c8bca5071f0af4fd656792182844`, confirming hosted monitoring-state persistence after the v0.25 release.
+
+Because v0.26 changes setup UX rather than monitoring data or ingestion semantics, no hosted database mutation is required as part of this release.
 
 ## Verification
 
-The final functional/API/UI checkpoint `a3f3703f6bdd29191329e497fef60234474888c0` passed:
+Exact green checkpoints:
 
-- Ruff;
-- compile/import checks;
-- PostgreSQL 16-backed suite;
-- **303 passed, 1 warning**.
+- discovery foundation `79722100a930f1928a77f20cb709d9095a6be04b`: **316 passed, 1 warning**;
+- consolidated readiness/discovery API `4d0b369ffa14976e3d4cdcfbb21229a179ca4895`: **327 passed, 1 warning**;
+- Add Source provider browser + security-corrected UI `6f18044d33f25be59b04d27408066daffe35c8d4`: **330 passed, 1 warning**.
 
-Earlier isolated checkpoints passed 294 tests for the pure materializer, 299 tests after the catalog/materialization API + normal-preflight integration, and 302 tests before the editable row-comparison / stale-preflight safety refinement.
+Each checkpoint passed Ruff, compile/import checks, and the PostgreSQL 16-backed suite.
 
-Coverage proves:
+The UI regression boundary verifies that manual Microsoft/Google fields, Source Packs, preflight, and Add monitored source remain present while the separate connection browser is loaded.
 
-- all six packs are present and typed;
-- required/optional role behavior;
-- fail-closed unknown/blank/duplicate mappings;
-- schedule overrides;
-- generated freshness/key/numeric/row-diff fields;
-- conservative generated Data Rules;
-- bounded row-diff fallback when optional roles are omitted;
-- catalog/materialization APIs do not persist sources;
-- materialized configs still pass through normal successful/failing preflight behavior;
-- onboarding exposes role mapping, preview and explicit apply;
-- applying a pack reuses the existing contract controls rather than a parallel config model;
-- row-comparison fields remain visible/editable after pack application;
-- any subsequent contract edit invalidates stale preflight evidence.
+No real Microsoft or Google tenant credential was supplied for repository validation, so real tenant discovery is not claimed.
 
-Release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def` passed the release gate with **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green, and package/FastAPI/module versions aligned at `0.25.0`. Verification-note documentation changes are gated again on their exact merge candidate head.
-
-Live-source smoke was not triggered by Product v0.25 and is not claimed because the release does not change source-ingestion workflow paths.
+Release-only metadata/documentation changes are re-gated on their exact head before merge.
 
 ## Next architecture step
 
-Product v0.25 closes the immediate feature-focused sequence.
+The next connection milestone should add a real OAuth credential lifecycle rather than more discovery endpoints:
 
-The next architecture priority is **connection lifecycle + hosted pilot validation**:
+- authorization-code initiation/callback;
+- securely persisted tokens/refresh metadata;
+- reconnect/revoke;
+- credential health without secret disclosure;
+- explicit tenant/account identity evidence;
+- migration away from operator-provisioned environment bearer tokens where appropriate.
 
-1. real Microsoft OAuth/connection selection for workbook/table discovery;
-2. real Google connection selection for spreadsheet/sheet/range discovery;
-3. reconnect, revoke and credential-health states;
-4. managed PostgreSQL authenticated hosted pilot;
-5. real provider-side end-to-end failure drills through monitoring, incident, blast radius, notification and reconciliation.
+Only after that should AnalystWatch run a real hosted Microsoft/Google/Power BI/notification pilot and full end-to-end failure drills.
 
-AI investigation can later summarize and prioritize deterministic evidence, but it remains downstream and must never redefine Health.
+AI investigation remains downstream of deterministic evidence and must not redefine Health.
