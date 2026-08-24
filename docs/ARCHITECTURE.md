@@ -1,360 +1,272 @@
-# AnalystWatch Product v0.28 Architecture
+# AnalystWatch Product v0.29 Architecture
 
 ## Decision
 
-Product v0.28 introduces a **dedicated encrypted provider-credential security boundary** before AnalystWatch is allowed to implement a Microsoft or Google OAuth callback.
+Product v0.29 implements the first real provider OAuth connection runtime on top of v0.28's encrypted credential foundation.
 
-The architectural rule is: **provider token ownership is separate from source configuration and monitoring evidence. Secret material must be authenticated, encrypted, workspace/account bound, persistable without plaintext, and recoverable through an explicit key-rotation contract before any provider callback can store it.**
+The architectural rule is: **a provider callback may persist a credential only after one-time state/PKCE consumption, fixed-endpoint code exchange, workspace/provider binding and provider account-identity verification. Stored credential use is separate from source Health and must never silently fall back to another account when a stored credential is present but unusable.**
 
 ```text
-deployment-held credential keyring
+authenticated Operator start
         ↓
-AES-256-GCM authenticated envelopes
+fixed provider config + deployment keyring
         ↓
-ProviderCredentialRecord
+random state + PKCE
         ↓
-Memory / SQLite / PostgreSQL CredentialStore
+atomic authorization transaction store
         ↓
-future OAuth callback / refresh / revoke
+303 provider redirect
         ↓
-existing Microsoft / Google connector authorization
+public callback route
         ↓
-existing source preflight / monitoring / Health
+atomic state consume + provider/workspace binding
+        ↓
+fixed token endpoint exchange
+        ↓
+provider account identity verification
+        ↓
+AES-256-GCM ProviderCredentialRecord
+        ↓
+SQLite/PostgreSQL credential store
+        ↓
+connection check / identity / lifecycle / resource browse
 ```
 
-A second independent path establishes safe authorization-start state:
+Source preflight/check ingestion remains on the existing `request_header_env` contract in v0.29. That cutover is a separate runtime milestone.
+
+## Atomic authorization transaction persistence
+
+The callback only possesses the returned OAuth `state`, so persisted authorization transactions are indexed by a unique SHA-256/base64url digest of that state. Raw state is never a persistence field.
+
+`OAuthAuthorizationStore` exposes only:
 
 ```text
-authenticated workspace/user initiates future connect
-        ↓
-random state + random PKCE verifier
-        ↓
-state digest stored, verifier AES-GCM encrypted
-        ↓
-short-lived bound authorization transaction
-        ↓
-future callback must consume once
-        ↓
-state / expiry / metadata / ciphertext authentication
-        ↓
-only then may code exchange occur
+initialize
+create
+get
+consume
 ```
 
-v0.28 implements the two security foundations above. It does **not** implement the network callback or provider code exchange.
+The transition model is intentionally create → consume once. There is no general update method.
 
-## Cryptographic envelope
+### Memory
 
-`EncryptedCredentialSecret` contains only:
+`MemoryOAuthAuthorizationStore` protects transaction/state indexes with an in-process lock. Atomic consumption validates and writes the consumed record while holding that lock.
 
-- version `1`;
-- algorithm `AES-256-GCM`;
-- bounded `key_id`;
-- base64url nonce;
-- base64url ciphertext.
+### SQLite
 
-The implementation uses `cryptography.hazmat.primitives.ciphers.aead.AESGCM` with:
+`SQLiteOAuthAuthorizationStore` stores transaction ID, state digest and serialized transaction JSON. Consumption begins `BEGIN IMMEDIATE`, looks up the state digest, validates/decrypts the PKCE verifier, then writes `consumed_at` before commit.
 
-- 256-bit keys;
-- a fresh random 96-bit nonce per encryption;
-- authenticated associated data;
-- fail-closed `InvalidTag` handling.
+### PostgreSQL
 
-Plaintext secret bytes and encryption keys are not serializable model fields.
+`PostgresOAuthAuthorizationStore` stores transaction ID, unique state digest and transaction JSONB in the AnalystWatch schema. Consumption selects the state row `FOR UPDATE` before validating and writing the consumed record.
 
-Malformed base64, invalid nonce length, unknown key IDs and authentication failure map to bounded `CredentialCryptoError` messages that do not include ciphertext or plaintext.
+Concurrency coverage requires one winner and one deterministic replay failure for two simultaneous consumers of the same state in all three backends.
 
-## Provider credential associated data
+A failed state/expiry/provider/workspace/PKCE validation does not mark the transaction consumed. A valid provider denial intentionally does consume it.
 
-Provider credential ciphertext is cryptographically bound to:
+## Fixed provider configuration
+
+OAuth endpoints and scope sets are code-controlled per provider. Callers cannot choose arbitrary authorization/token endpoints, redirect URIs, scope sets or client-secret locations.
+
+Deployment configuration supplies only the public application origin and provider client credentials:
 
 ```text
-workspace_id
+ANALYSTWATCH_PUBLIC_BASE_URL
+ANALYSTWATCH_MICROSOFT_OAUTH_CLIENT_ID
+ANALYSTWATCH_MICROSOFT_OAUTH_CLIENT_SECRET
+ANALYSTWATCH_GOOGLE_OAUTH_CLIENT_ID
+ANALYSTWATCH_GOOGLE_OAUTH_CLIENT_SECRET
+```
+
+The public base URL:
+
+- must be trimmed/bounded;
+- cannot contain user info, query, fragment or an application path;
+- requires HTTPS except loopback local-development HTTP;
+- is combined with fixed callback paths.
+
+Microsoft uses fixed `organizations` OAuth 2.0 v2 endpoints. Google uses fixed OAuth 2.0 web-server endpoints. Scope sets are bounded to the identity/file access needed by the existing AnalystWatch connection experience.
+
+## Authorization start
+
+The two start routes are POST mutations and remain Operator-level under the existing authorization layer.
+
+A start request loads provider configuration and the credential keyring lazily. Missing OAuth configuration therefore does not prevent AnalystWatch from booting or from operating existing environment-backed sources.
+
+Start refuses to reuse an existing credential ID. This prevents an ordinary connect operation from becoming an implicit reconnect/account-switch operation.
+
+Critically, the transaction is persisted before the redirect response is returned. If persistence fails, no provider redirect is issued.
+
+## Callback authentication boundary
+
+Provider callbacks are special HTTP-authentication endpoints:
+
+```text
+GET /api/oauth/microsoft/callback
+GET /api/oauth/google/callback
+```
+
+The provider-controlled browser redirect cannot carry an AnalystWatch signed-bearer header. These exact GET paths bypass the normal bearer middleware.
+
+That exemption is narrow: callback authorization is established through the stored one-time state transaction, which binds:
+
+- workspace;
+- initiating AnalystWatch user;
+- provider;
+- target credential ID;
+- transaction ID;
+- expiry;
+- encrypted PKCE verifier.
+
+The callback route's provider must match the provider in the consumed transaction and the transaction workspace must match the app runtime workspace.
+
+Provider denial uses the same bound atomic consume path and then returns a generic failure page. This prevents a denied authorization transaction from later being replayed with a code.
+
+Callback rendering never includes authorization code, state, provider error description, token material or account identity.
+
+## Code exchange
+
+The code-exchange helper posts only to the fixed token endpoint from `OAuthProviderRuntimeConfig` and does not follow arbitrary redirects.
+
+Inputs are bounded before network use. Token responses are validated for bounded access token, optional refresh token, token type, expiry and returned scopes.
+
+Raw provider response bodies are not surfaced through `OAuthTokenExchangeError`.
+
+The PKCE verifier exists in plaintext only for the in-memory exchange request after authenticated transaction consumption.
+
+## Account verification before write
+
+A successful token response is not sufficient for credential persistence.
+
+The returned access token is first used in memory to resolve provider account identity through the existing bounded Microsoft `/me` or Google Drive `about.user` evidence path.
+
+Only after stable provider subject identity is established does AnalystWatch call `seal_provider_credential(...)`, which binds ciphertext to:
+
+```text
+workspace
 provider
 credential_id
 subject_id
 secret_kind
-version
 ```
 
-`secret_kind` is constrained to:
+The resulting encrypted record is then stored using the v0.28 credential store.
+
+This means an OAuth code cannot create an AnalystWatch credential record whose provider account identity was never verified.
+
+## Credential store initialization
+
+Dynamic app setup now creates both dedicated security stores:
 
 ```text
-access_token
-refresh_token
+OAuthAuthorizationStore
+CredentialStore
 ```
 
-This prevents:
+For SQLite they use separate sidecar databases derived from the runtime monitoring database path.
 
-- copying encrypted tokens across workspaces;
-- copying encrypted tokens across Microsoft/Google providers;
-- moving a token to another credential ID;
-- changing the stable provider subject/account ID;
-- swapping encrypted access and refresh token fields.
+For PostgreSQL they share the managed AnalystWatch DSN but use dedicated tables in the AnalystWatch schema.
 
-All of those mutations alter associated data and therefore fail AES-GCM authentication.
+Neither store is part of source observation history.
 
-## Credential keyring
+## Stored OAuth credential preference for connection operations
 
-`CredentialKeyring` receives deployment-supplied key bytes and one `active_key_id`.
+The existing connection endpoints remain stable. v0.29 adds an internal access-token path that uses the same bounded provider request/response models without copying token plaintext into environment variables.
 
-Rules:
-
-- at least one key is required;
-- every key must be exactly 32 bytes;
-- key IDs are bounded, non-empty and trimmed;
-- the active key must exist in the keyring;
-- new encryption always uses the active key;
-- decryption may use any retained key ID;
-- re-encryption decrypts an old envelope and encrypts a new envelope using the active key.
-
-This gives AnalystWatch an explicit rolling-key contract: retain old keys only for the intended migration/recovery window, re-encrypt records, then retire the old key after verification.
-
-v0.28 does not claim external KMS/HSM integration. The application-level keyring is designed so a deployment can later source key bytes from a stronger secret/KMS layer without changing credential record format.
-
-## Deployment key loading
-
-`load_credential_keyring(...)` reads only:
+Default OAuth credential identities are:
 
 ```text
-ANALYSTWATCH_CREDENTIAL_KEYS_JSON
-ANALYSTWATCH_CREDENTIAL_ACTIVE_KEY_ID
+Microsoft → microsoft-primary
+Google    → google-primary
 ```
 
-The JSON value is a bounded object mapping key IDs to base64url-encoded 32-byte key material.
+For check, account identity, lifecycle and resource browsing:
 
-Runtime configuration fails closed for:
+1. look up the default credential in the bound workspace;
+2. if no record exists, retain the legacy fixed environment-backed path;
+3. if a record exists, validate provider/revocation/expiry;
+4. load the deployment keyring;
+5. decrypt the access token in memory;
+6. use the access token for the existing bounded provider operation.
 
-- missing active key ID;
-- untrimmed active key ID;
-- missing/blank keyring JSON;
-- malformed JSON;
-- non-object/empty JSON;
-- too many keys;
-- non-string key IDs/values;
-- malformed base64url;
-- non-256-bit decoded keys;
-- active key absent from the decoded keyring.
+If an existing stored record is unusable, the operation fails closed. It does not fall back to an environment token because that could silently operate as a different provider account.
 
-Configuration errors never echo supplied key material.
+The connection API response models never expose the internal `stored_oauth` marker or the access token.
 
-## ProviderCredentialRecord
+## Lifecycle semantics retained
 
-The encrypted credential domain record contains:
-
-- `credential_id`;
-- `workspace_id`;
-- provider;
-- stable provider `subject_id`;
-- optional display name/email;
-- normalized unique scopes;
-- encrypted access token;
-- optional encrypted refresh token;
-- optional access-token expiry;
-- created/updated/revoked timestamps.
-
-All timestamps are timezone-aware. Identity/scopes are bounded and trimmed.
-
-The record is deliberately independent from `MonitoringConfig`. A source should eventually reference a credential identity; it must never embed plaintext provider token material.
-
-## Replacement and revocation invariants
-
-All credential-store implementations share the same replacement validation:
-
-1. Provider/account (`provider`, `subject_id`) cannot change under ordinary upsert.
-2. `created_at` is immutable.
-3. An update older than the stored `updated_at` is rejected.
-4. A revoked credential cannot be silently reactivated by writing `revoked_at=None`.
-5. Revocation timestamps must be timezone-aware and cannot precede the latest credential update.
-6. Unsealing any secret from a revoked record fails closed.
-
-Provider/account switching therefore requires a future explicit account-switch workflow rather than an accidental refresh/reconnect overwrite.
-
-## CredentialStore protocol
-
-The protocol exposes:
+Credential lifecycle remains deterministic operational evidence:
 
 ```text
-initialize
-upsert
-get(workspace, credential)
-list(workspace)
-revoke(workspace, credential, revoked_at)
+needs_credential
+rejected
+unavailable
+identity_unverified
+verified
 ```
 
-Implementations in v0.28:
+The derivation is now shared between environment-backed and in-memory OAuth access-token paths. Reachability and identity remain separate evidence so identity-scope failure does not falsely redefine connector reachability.
 
-- `MemoryCredentialStore`;
-- `SQLiteCredentialStore`;
-- `PostgresCredentialStore`.
+Lifecycle state remains independent from source Healthy / Warning / Critical.
 
-All reads are workspace scoped.
+## Source ingestion boundary
 
-## SQLite persistence
+v0.29 intentionally does not change `MonitoringConfig.request_header_env` or `ingest_source(...)` credential resolution.
 
-SQLite credential persistence is intentionally separate from monitoring state semantics.
+The existing lower-level Microsoft/Google readers already accept concrete headers, so the next cutover can be implemented without a new connector. However, silently choosing a default stored credential inside ingestion would create ambiguous account ownership.
 
-Table:
+The next milestone should therefore add an **explicit optional stored credential ID** to the source contract and resolve it through the workspace-bound encrypted store. Existing environment-header sources must continue to work unchanged.
 
-```text
-provider_credentials
-  workspace_id
-  credential_id
-  record_json
-  PRIMARY KEY(workspace_id, credential_id)
-```
+Preflight and scheduled checks must share the same resolver so a source cannot pass onboarding with one credential path and later monitor through another.
 
-`record_json` is the serialized `ProviderCredentialRecord`; token fields inside it are encrypted envelopes.
+## Refresh/reconnect/revoke boundary
 
-Existing-record update/revoke flows start `BEGIN IMMEDIATE`, read the current row, apply the shared replacement/revocation invariant, then update the encrypted record.
+v0.29 stores refresh tokens when supplied but does not use them for network refresh.
 
-Tests close and reopen the database to prove persistence and inspect raw `record_json` to verify known test access/refresh plaintext values are absent.
+Until refresh exists:
 
-## PostgreSQL persistence
+- expired stored access tokens fail closed;
+- existing environment credentials are not used as a hidden substitute;
+- ordinary start cannot overwrite an existing credential ID;
+- account switching is not implicit.
 
-PostgreSQL creates `provider_credentials` inside the existing AnalystWatch PostgreSQL schema and stores `record_json` as JSONB.
+A future refresh operation must lock/read the existing credential, refresh against the fixed provider endpoint, re-verify identity when appropriate and atomically replace encrypted token/expiry metadata without changing `created_at` or provider subject.
 
-For upsert:
+Reconnect/account-switch/revoke must remain explicit actions.
 
-- the implementation first attempts create-only insertion;
-- if a row already exists, it reads that row with `FOR UPDATE`;
-- the shared replacement invariant is applied against the locked row;
-- only then is JSONB replaced.
+## Monitoring and static-output boundary
 
-Revocation likewise locks the existing row before deriving/writing the revoked record.
+Provider OAuth state is operational security state. It cannot emit or change source Health.
 
-This prevents concurrent updates from bypassing the account/provider/stale-update rules.
+v0.29 does not alter:
 
-Tests run against PostgreSQL 16 in CI, reopen the store, exercise update/revoke/workspace isolation, and inspect raw JSONB to prove test token plaintext is absent.
-
-## OAuth authorization transaction
-
-`OAuthAuthorizationTransaction` is a provider-neutral precursor to an actual authorization-code callback.
-
-Bound metadata:
-
-- transaction ID;
-- workspace;
-- initiating user ID;
-- provider;
-- target credential ID;
-- state SHA-256 digest;
-- encrypted PKCE verifier;
-- created timestamp;
-- expiry timestamp;
-- optional consumed timestamp.
-
-The transaction is deliberately not a provider credential and does not contain an authorization code or provider token.
-
-## Authorization start
-
-`begin_authorization_transaction(...)`:
-
-1. validates workspace/user/provider/credential and timezone-aware time;
-2. enforces a bounded TTL (default 10 minutes, maximum 15);
-3. generates a random transaction ID;
-4. generates a random 32-byte state value;
-5. stores only a SHA-256 base64url digest of state;
-6. generates a random 32-byte PKCE verifier;
-7. derives the S256 PKCE code challenge;
-8. encrypts the PKCE verifier with the credential keyring.
-
-PKCE verifier associated data binds:
-
-```text
-workspace_id
-user_id
-provider
-credential_id
-transaction_id
-purpose = oauth_pkce_verifier
-version
-```
-
-The plaintext state and plaintext verifier are returned only in the start result needed by the future initiating request. Neither is a persisted model field.
-
-## Authorization consume
-
-`consume_authorization_transaction(...)` performs a strict order:
-
-1. require timezone-aware current time;
-2. revalidate the entire transaction model from raw attributes;
-3. reject consumed transactions;
-4. reject expiry;
-5. reject invalid state shape;
-6. SHA-256 the presented state and compare with `hmac.compare_digest`;
-7. reconstruct bound PKCE associated data;
-8. authenticate/decrypt the verifier;
-9. return a consumed transaction plus non-repr plaintext verifier.
-
-Revalidation is important because defensive tests deliberately use Pydantic `model_copy(update=...)`, which can bypass normal field validation. Valid-but-modified metadata is normalized and reaches AES-GCM authentication, where it fails because associated data changed. Structurally invalid copied metadata becomes one bounded `Authorization transaction metadata is invalid` error.
-
-State, verifier and attacker-controlled invalid metadata are not echoed in error text.
-
-## Replay and persistence boundary
-
-The pure transaction primitive proves one-time consumption semantics on a transaction object, but v0.28 does not yet provide a persistent authorization-transaction repository or an atomic database claim operation.
-
-Therefore the future HTTP callback milestone must add persistence/atomic consumption before a real redirect/callback is exposed. A callback must never rely on only a browser-held transaction object.
-
-This is an explicit release boundary, not an omitted claim.
-
-## Existing v0.27 credential lifecycle
-
-v0.27 fixed-environment credential diagnostics remain unchanged:
-
-- provider reachability;
-- provider account identity;
-- deterministic `needs_credential` / `rejected` / `unavailable` / `identity_unverified` / `verified` lifecycle;
-- `configure` / `reconnect` / `retry` / `review_scopes` / `none` guidance;
-- Operator-only Microsoft/Google connection endpoints;
-- Add Source test/status/identity and resource browsing.
-
-v0.28 does not yet route those connection operations through `CredentialStore`.
-
-## Monitoring and Health boundary
-
-Credential encryption/persistence/authorization transaction state cannot emit or alter source Healthy / Warning / Critical classification.
-
-v0.28 does not change:
-
-- source ingestion;
-- detectors or Data Rules;
+- detector/Data Rule semantics;
 - baselines/reviews;
 - incidents;
-- scorecards;
+- reliability scorecards;
 - notifications/delivery/reconciliation;
-- dependencies/blast radius;
+- dependency/blast-radius logic;
 - monitoring observation persistence.
 
-Provider credentials are operational security state, not monitoring evidence.
-
-## Static Pages boundary
-
-GitHub Pages remains read-only monitoring output.
-
-Static output receives no:
-
-- provider token ciphertext;
-- provider credential metadata;
-- provider account identity from credential records;
-- credential key IDs;
-- OAuth transaction state digest;
-- PKCE ciphertext/verifier;
-- connect/reconnect/revoke controls.
+Static GitHub Pages receives no OAuth state, transaction, credential record, ciphertext, key ID, account identity or dynamic callback controls.
 
 ## Verification
 
-Verified v0.28 checkpoints:
+Verified feature checkpoints:
 
-- AES-GCM/key-rotation foundation `eeda29a039a5a9e7bf4047154aba50a759dc91f5`: CI #691, **358 passed / 1 warning**;
-- account/secret-bound encrypted credential model + MemoryStore `61ed8d8dd3c4ec08c38722ff8dc54f8e438a7aa4`: CI #701, **367 passed / 1 warning**;
-- SQLite/PostgreSQL encrypted persistence `fc8acb4bec299c5083aee466528bd8502645128d`: CI #707, **372 passed / 1 warning**;
-- deployment key loading + hardened state/PKCE transaction foundation `1ee8b3cec44a5b845024fdff396b6c8ee094fe2e`: CI #725, **383 passed / 1 warning**.
+- `5a61a8a850c852b7f8151b92da5d05d888432aec` / CI #747 — **393 passed / 1 warning**;
+- `37aa50634e064a8540b5dd85bae64eaafdb0789c` / CI #753 — **408 passed / 1 warning**;
+- `0f39cc0b39d5a4c49ab663e523527aea02d6994f` / CI #799 — **433 passed / 1 warning**;
+- `0932ea92fa5b5e763eb23e8d5b1f75cf48d8e07d` / CI #803 — **439 passed / 1 warning**;
+- frozen feature checkpoint `6dcbe1b56a4d4375f56056d941226b959716aec6` / CI #805 — **445 passed / 1 warning**.
 
-All exact green checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite.
+All checkpoints passed Ruff, compile/import and the PostgreSQL 16-backed suite.
+
+No real Microsoft/Google OAuth client/tenant authorization was supplied, so external token/account side effects are not claimed.
 
 ## Release boundary
 
-Product v0.28 is complete when package/FastAPI/module versions are aligned to `0.28.0`, README/milestones/architecture are aligned, and the exact release head passes the full repository gate.
+Product v0.29 is ready for release closeout when package/FastAPI/module versions are aligned to `0.29.0`, release documentation is aligned to this architecture and the exact release head passes the full repository gate.
 
-The next milestone owns the first real provider OAuth flow. It must add persistent/atomic authorization transaction consumption, provider configuration, authorization redirects, callback/code exchange, account verification, encrypted credential write, refresh/reconnect/revoke and integration with existing connector authorization.
+A visible Add Source Connect control, source ingestion credential binding, refresh, reconnect/account-switch and provider revoke remain explicit follow-on work rather than unverified v0.29 claims.
