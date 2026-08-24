@@ -10,7 +10,6 @@ import pytest
 from analystwatch.credential_crypto import CredentialKeyring
 from analystwatch.oauth_authorization import (
     OAuthAuthorizationError,
-    OAuthAuthorizationTransaction,
     authorization_state_digest,
     begin_authorization_transaction,
 )
