@@ -84,4 +84,5 @@ def test_oauth_identity_token_and_provider_rejection_are_never_echoed() -> None:
     for invalid in ["", " bad-token ", "line\nbreak"]:
         with pytest.raises(ConnectionDiscoveryError, match="not usable") as invalid_exc:
             inspect_connection_identity_with_access_token("google", invalid)
-        assert invalid not in str(invalid_exc.value)
+        if invalid:
+            assert invalid not in str(invalid_exc.value)
