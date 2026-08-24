@@ -257,7 +257,7 @@ Verified checkpoints:
 
 Product v0.26 merged to `main` at `5f7e4501dcc536d51507e90d54333ba210dc6e92`. Post-merge `monitor-state` advanced to `b271ef3dbf906709c45443ed03b2d752c79584b8`, verifying hosted monitoring-state persistence. No real Microsoft/Google tenant credential was supplied, so real tenant discovery was not claimed.
 
-## Product v0.27 — provider identity + credential lifecycle — current release candidate
+## Product v0.27 — provider identity + credential lifecycle — complete
 
 Implemented from exact v0.26 merge baseline `5f7e4501dcc536d51507e90d54333ba210dc6e92`:
 
@@ -275,29 +275,63 @@ Implemented from exact v0.26 merge baseline `5f7e4501dcc536d51507e90d54333ba210d
 - Add Source retains distinct Test connection, Credential status and Verify connected account actions;
 - lifecycle/provider text rendered through text content rather than HTML;
 - existing v0.26 resource browsing/manual fields and v0.25 Source Packs/preflight remain intact;
-- no OAuth callback, access-token persistence, refresh-token persistence or persistence migration;
+- no OAuth callback, access-token persistence or refresh-token persistence;
 - no source Health/detector/incident/scorecard changes;
 - no static Pages identity/lifecycle output.
 
-Verified feature checkpoints:
+Verified checkpoints:
 
 - identity foundation `0fbda27b9e82a62db1da66c16c2f8324ec10be37`: CI #653, **335 passed, 1 warning**;
 - identity API/UI `1ed0edc6f0c5dc330c9d674cf02c7485e3ca9928`: CI #661, **340 passed, 1 warning**;
 - pure credential lifecycle `7f66752937e1c11e07c1d9704c766753fd1e086f`: CI #665, **345 passed, 1 warning**;
-- lifecycle API/UI `582fc1d276e13684e893ece4d7d33ce6202b0c2c`: CI #673, **350 passed, 1 warning**.
+- lifecycle API/UI `582fc1d276e13684e893ece4d7d33ce6202b0c2c`: CI #673, **350 passed, 1 warning**;
+- final release head `35dc6b5691b0bd816405d9c1dcceb7ebbb8a6a09`: CI #685, **350 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package `0.27.0` verified.
 
-All exact feature checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite. Release-only version/docs changes are re-gated on their exact head before merge. No real Microsoft/Google tenant credential was supplied, so live provider identity/lifecycle evidence is not claimed.
+Product v0.27 merged to `main` at `d127c926e5777a8901c8cfdcd9805085130d408e`. Post-merge `monitor-state` advanced to `41efdb60932d09df768eaa7d4354afd2d83aa0d1`, verifying hosted monitoring-state persistence. No real Microsoft/Google tenant credential was supplied, so live provider identity/lifecycle evidence was not claimed.
 
-## Roadmap after v0.27
+## Product v0.28 — encrypted credential security foundation — current release candidate
 
-Prioritize real credential ownership and hosted pilot validation over connector accumulation:
+Implemented from exact v0.27 merge baseline `d127c926e5777a8901c8cfdcd9805085130d408e`:
 
-1. encrypted credential-store interface plus deployment key/KMS contract;
-2. Microsoft/Google authorization-code callback with state validation and PKCE where appropriate;
-3. refresh/expiry handling with atomic token replacement;
-4. reconnect/revoke and explicit account-switch handling;
-5. authenticated managed-PostgreSQL pilot deployment;
-6. real Microsoft/Google/Power BI/email/Teams end-to-end failure drills;
-7. five-minute first-value onboarding and customer/pilot validation.
+- vetted `cryptography` dependency and AES-256-GCM authenticated encryption;
+- random 96-bit nonce for each secret encryption;
+- versioned encrypted envelope with key ID, nonce and ciphertext only;
+- deployment-held multi-key keyring with one active encryption key and rotation/re-encryption support;
+- provider credential ciphertext bound to workspace, provider, credential ID, provider subject/account ID and access-vs-refresh secret role;
+- typed `ProviderCredentialRecord` with bounded identity/scopes/expiry/revocation metadata and encrypted token envelopes;
+- shared credential-store replacement/revocation invariants blocking silent provider/account switches, stale updates and revoked-record reactivation;
+- workspace-isolated Memory credential store;
+- SQLite credential persistence with `BEGIN IMMEDIATE` update/revoke protection and encrypted record JSON only;
+- PostgreSQL credential persistence with row locking for existing-record update/revoke and encrypted JSONB only;
+- raw SQLite/PostgreSQL persistence tests proving known plaintext access/refresh token values are absent;
+- fail-closed deployment key loading from explicit credential keyring environment configuration;
+- provider-neutral OAuth authorization start primitive with random state, state SHA-256 digest retention, random PKCE verifier and S256 challenge;
+- AES-GCM-encrypted PKCE verifier bound to workspace, initiating user, provider, credential ID and transaction ID;
+- authorization consumption rejects replay, expiry, state mismatch, invalid transaction metadata and authenticated-metadata tampering;
+- full transaction revalidation at the consumption trust boundary, including copied models that bypass normal Pydantic validation;
+- no provider callback/code exchange, refresh network call, provider revocation network call, connector consumption of stored credentials, persistent authorization transaction repository or production KMS/HSM claim;
+- no source Health/detector/incident/scorecard changes and no static Pages credential/OAuth output.
+
+Verified feature checkpoints:
+
+- AES-GCM/key-rotation foundation `eeda29a039a5a9e7bf4047154aba50a759dc91f5`: CI #691, **358 passed, 1 warning**;
+- account/secret-bound credential record + MemoryStore `61ed8d8dd3c4ec08c38722ff8dc54f8e438a7aa4`: CI #701, **367 passed, 1 warning**;
+- SQLite/PostgreSQL encrypted persistence `fc8acb4bec299c5083aee466528bd8502645128d`: CI #707, **372 passed, 1 warning**;
+- deployment key loading + hardened state/PKCE transaction foundation `1ee8b3cec44a5b845024fdff396b6c8ee094fe2e`: CI #725, **383 passed, 1 warning**.
+
+All exact green checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite. No real Microsoft/Google OAuth application credentials were supplied, so a real authorization-code flow or token side effect is not claimed. Release-only docs/version changes are re-gated on their exact head before merge.
+
+## Roadmap after v0.28
+
+Prioritize the first real provider OAuth flow and hosted pilot validation over connector accumulation:
+
+1. persistent Memory/SQLite/PostgreSQL authorization-transaction store with atomic one-time consume/claim;
+2. bounded Microsoft/Google OAuth configuration with exact allowlisted redirect URIs and scopes;
+3. authenticated connect-start routes that persist authorization transactions;
+4. provider callback + authorization-code exchange using the consumed PKCE verifier;
+5. verify provider account identity before encrypted credential write;
+6. atomic refresh/expiry handling plus explicit reconnect/account-switch/revoke workflows;
+7. route existing Microsoft/Google discovery/ingestion through stored credentials without weakening source preflight;
+8. authenticated managed-PostgreSQL pilot deployment and real end-to-end Microsoft/Google/Power BI/email/Teams failure drills.
 
 AI investigation remains downstream of deterministic evidence and must not redefine Health classification.
