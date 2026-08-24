@@ -59,7 +59,13 @@ class ProviderCredentialRecord(BaseModel):
             return ()
         scopes: set[str] = set()
         for scope in value:
-            if not isinstance(scope, str) or not scope or scope != scope.strip() or len(scope) > 512:
+            invalid = (
+                not isinstance(scope, str)
+                or not scope
+                or scope != scope.strip()
+                or len(scope) > 512
+            )
+            if invalid:
                 raise ValueError("Credential scopes must be non-empty, trimmed strings")
             scopes.add(scope)
         return tuple(sorted(scopes))
@@ -112,7 +118,8 @@ class MemoryCredentialStore:
         if existing is not None:
             if existing.provider != record.provider or existing.subject_id != record.subject_id:
                 raise ValueError(
-                    "Credential account/provider replacement requires an explicit account-switch flow"
+                    "Credential account/provider replacement requires an explicit "
+                    "account-switch flow"
                 )
             if existing.created_at != record.created_at:
                 raise ValueError("Credential created_at is immutable")
@@ -225,7 +232,10 @@ def unseal_access_token(record: ProviderCredentialRecord, keyring: CredentialKey
     return _unseal(record, keyring, "access_token", record.access_token)
 
 
-def unseal_refresh_token(record: ProviderCredentialRecord, keyring: CredentialKeyring) -> str | None:
+def unseal_refresh_token(
+    record: ProviderCredentialRecord,
+    keyring: CredentialKeyring,
+) -> str | None:
     if record.refresh_token is None:
         return None
     return _unseal(record, keyring, "refresh_token", record.refresh_token)
