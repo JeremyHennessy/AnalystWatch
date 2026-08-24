@@ -32,8 +32,10 @@ _OPERATOR_MUTATIONS = (
     re.compile(r"^/api/delivery-attempts/[^/]+/reconcile$"),
     re.compile(r"^/api/power-bi/guards/[^/]+/check$"),
     re.compile(r"^/api/connections(?:/.*)?$"),
+    re.compile(r"^/api/oauth/(microsoft|google)/start$"),
     re.compile(r"^/api/check-due$"),
 )
+_OAUTH_CALLBACK = re.compile(r"^/api/oauth/(microsoft|google)/callback$")
 
 
 def normalize_auth_mode(value: str) -> AuthMode:
@@ -120,6 +122,11 @@ def configure_web_authorization(
     async def authorize_request(request, call_next):
         path = request.url.path
         if path == "/healthz" or path.startswith("/static/"):
+            return await call_next(request)
+        # Provider redirects cannot carry the AnalystWatch bearer header. OAuth callbacks
+        # authenticate through one-time state/PKCE and bind the stored transaction to this
+        # runtime workspace plus the provider encoded by the route.
+        if request.method == "GET" and _OAUTH_CALLBACK.fullmatch(path):
             return await call_next(request)
         try:
             principal = authenticator.authenticate(request.headers.get("Authorization"))

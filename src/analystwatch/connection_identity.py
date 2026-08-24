@@ -14,6 +14,8 @@ from .connection_discovery import (
     _request_json,
 )
 
+MAX_OAUTH_ACCESS_TOKEN_CHARS = 32_768
+
 
 class ConnectionAccountIdentity(BaseModel):
     provider: ConnectionProvider
@@ -54,16 +56,58 @@ def inspect_connection_identity(
     timeout_seconds: float = DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
     client: httpx.Client | None = None,
 ) -> ConnectionAccountIdentity:
-    """Resolve bounded account identity for the configured delegated provider credential.
+    """Resolve account identity for the existing environment-backed credential."""
+    provider = ConnectionProvider(provider)
+    headers = _authorization_headers(provider, environment_variable)
+    return _inspect_connection_identity(
+        provider,
+        headers,
+        timeout_seconds=timeout_seconds,
+        client=client,
+    )
 
-    This performs a provider request but never returns the credential reference or value. Identity
-    verification is intentionally separate from the existing reachability check so a missing
-    identity-specific provider scope cannot silently redefine connector reachability.
+
+def inspect_connection_identity_with_access_token(
+    provider: ConnectionProvider | str,
+    access_token: str,
+    *,
+    timeout_seconds: float = DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
+    client: httpx.Client | None = None,
+) -> ConnectionAccountIdentity:
+    """Resolve provider account identity from one in-memory OAuth access token.
+
+    The token is never persisted or copied into an environment variable by this helper.
     """
     provider = ConnectionProvider(provider)
+    if (
+        not isinstance(access_token, str)
+        or not access_token
+        or access_token != access_token.strip()
+        or len(access_token) > MAX_OAUTH_ACCESS_TOKEN_CHARS
+        or any(ord(character) < 32 or ord(character) == 127 for character in access_token)
+    ):
+        raise ConnectionDiscoveryError(
+            provider,
+            "invalid_credential",
+            "OAuth access token was not usable for account identity verification.",
+        )
+    return _inspect_connection_identity(
+        provider,
+        {"Authorization": f"Bearer {access_token}"},
+        timeout_seconds=timeout_seconds,
+        client=client,
+    )
+
+
+def _inspect_connection_identity(
+    provider: ConnectionProvider,
+    headers: dict[str, str],
+    *,
+    timeout_seconds: float,
+    client: httpx.Client | None,
+) -> ConnectionAccountIdentity:
     active_client, owns_client = _active_client(client, timeout_seconds)
     try:
-        headers = _authorization_headers(provider, environment_variable)
         if provider == ConnectionProvider.MICROSOFT:
             payload, _ = _request_json(
                 provider,
