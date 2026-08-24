@@ -25,13 +25,19 @@ def load_credential_keyring(
     active_key_id = environment.get(CREDENTIAL_ACTIVE_KEY_ENV)
     raw_keys = environment.get(CREDENTIAL_KEYS_ENV)
     if active_key_id is None or not active_key_id.strip():
-        raise CredentialKeyConfigurationError("Active credential encryption key ID is not configured")
+        raise CredentialKeyConfigurationError(
+            "Active credential encryption key ID is not configured"
+        )
     if active_key_id != active_key_id.strip():
-        raise CredentialKeyConfigurationError("Active credential encryption key ID must be trimmed")
+        raise CredentialKeyConfigurationError(
+            "Active credential encryption key ID must be trimmed"
+        )
     if raw_keys is None or not raw_keys.strip():
         raise CredentialKeyConfigurationError("Credential encryption keyring is not configured")
     if len(raw_keys) > MAX_KEYRING_JSON_CHARS:
-        raise CredentialKeyConfigurationError("Credential encryption keyring configuration is too large")
+        raise CredentialKeyConfigurationError(
+            "Credential encryption keyring configuration is too large"
+        )
     try:
         payload = json.loads(raw_keys)
     except json.JSONDecodeError as exc:
