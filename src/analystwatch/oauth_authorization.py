@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -22,6 +23,7 @@ from .workspace import validate_workspace_id
 DEFAULT_AUTHORIZATION_TTL_MINUTES = 10
 MAX_AUTHORIZATION_TTL_MINUTES = 15
 PKCE_METHOD: Literal["S256"] = "S256"
+OPAQUE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 class OAuthAuthorizationError(ValueError):
@@ -45,6 +47,13 @@ class OAuthAuthorizationTransaction(BaseModel):
     def validate_identifiers(cls, value: str) -> str:
         if value != value.strip():
             raise ValueError("Authorization transaction identifiers must be trimmed")
+        return value
+
+    @field_validator("state_sha256_b64")
+    @classmethod
+    def validate_state_digest(cls, value: str) -> str:
+        if OPAQUE_TOKEN_PATTERN.fullmatch(value) is None:
+            raise ValueError("Authorization state digest must be canonical base64url")
         return value
 
     @field_validator("workspace_id")
@@ -73,6 +82,13 @@ class OAuthAuthorizationStart(BaseModel):
     state: str = Field(min_length=43, max_length=43)
     code_challenge: str = Field(min_length=43, max_length=43)
     code_challenge_method: Literal["S256"] = PKCE_METHOD
+
+    @field_validator("state", "code_challenge")
+    @classmethod
+    def validate_opaque_token(cls, value: str) -> str:
+        if OPAQUE_TOKEN_PATTERN.fullmatch(value) is None:
+            raise ValueError("OAuth state/challenge must be canonical base64url")
+        return value
 
 
 @dataclass(frozen=True)
@@ -105,7 +121,7 @@ def begin_authorization_transaction(
     transaction_id = _random_token(24)
     state = _random_token(32)
     verifier = _random_token(32)
-    state_digest = _sha256_b64(state.encode("ascii"))
+    state_digest = authorization_state_digest(state)
     verifier_aad = _authorization_associated_data(
         workspace_id=workspace_id,
         user_id=user_id,
@@ -135,6 +151,12 @@ def begin_authorization_transaction(
     )
 
 
+def authorization_state_digest(state: str) -> str:
+    if not isinstance(state, str) or OPAQUE_TOKEN_PATTERN.fullmatch(state) is None:
+        raise OAuthAuthorizationError("Authorization state is invalid")
+    return _sha256_b64(state.encode("ascii"))
+
+
 def consume_authorization_transaction(
     transaction: OAuthAuthorizationTransaction,
     keyring: CredentialKeyring,
@@ -143,14 +165,12 @@ def consume_authorization_transaction(
     now: datetime,
 ) -> OAuthAuthorizationConsumption:
     _validate_now(now)
-    transaction = _revalidate_transaction(transaction)
+    transaction = revalidate_authorization_transaction(transaction)
     if transaction.consumed_at is not None:
         raise OAuthAuthorizationError("Authorization transaction was already consumed")
     if now >= transaction.expires_at:
         raise OAuthAuthorizationError("Authorization transaction has expired")
-    if not state or len(state) > 256:
-        raise OAuthAuthorizationError("Authorization state is invalid")
-    state_digest = _sha256_b64(state.encode("utf-8"))
+    state_digest = authorization_state_digest(state)
     if not hmac.compare_digest(state_digest, transaction.state_sha256_b64):
         raise OAuthAuthorizationError("Authorization state did not match")
     aad = _authorization_associated_data(
@@ -176,7 +196,7 @@ def consume_authorization_transaction(
     return OAuthAuthorizationConsumption(transaction=consumed, pkce_verifier=verifier)
 
 
-def _revalidate_transaction(
+def revalidate_authorization_transaction(
     transaction: OAuthAuthorizationTransaction,
 ) -> OAuthAuthorizationTransaction:
     payload = {
