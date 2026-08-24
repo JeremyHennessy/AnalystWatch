@@ -163,7 +163,10 @@ def test_oauth_runtime_configuration_is_lazy_and_failure_does_not_persist_or_red
     assert _rows(app) == []
 
 
-def test_invalid_credential_id_fails_without_redirect_or_transaction(tmp_path: Path, monkeypatch) -> None:
+def test_invalid_credential_id_fails_without_redirect_or_transaction(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     _configure_oauth(monkeypatch)
     app = create_app(tmp_path / "invalid-id.db")
     client = TestClient(app)
