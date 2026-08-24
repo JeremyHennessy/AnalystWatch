@@ -227,7 +227,7 @@ Explicit non-goals:
 - no preflight bypass;
 - no new Health or incident state machine.
 
-## Product v0.26 — self-service Microsoft/Google connection UX — current release candidate
+## Product v0.26 — self-service Microsoft/Google connection UX — complete
 
 Implemented from exact v0.25 merge baseline `fdab78d706b6db75e88cba3d142a15372ca5908d`:
 
@@ -249,26 +249,55 @@ Implemented from exact v0.25 merge baseline `fdab78d706b6db75e88cba3d142a15372ca
 - provider discovery remains dynamic-app-only while GitHub Pages remains read-only monitoring output;
 - no connector ingestion, detector, Health, persistence-schema or monitoring-data changes.
 
-Verified feature checkpoints:
+Verified checkpoints:
 
 - discovery foundation `79722100a930f1928a77f20cb709d9095a6be04b`: CI #604, **316 passed, 1 warning**;
-- readiness/discovery API `4d0b369ffa14976e3d4cdcfbb21229a179ca4895`: CI #618, **327 passed, 1 warning**;
-- Add Source connection browser + security-corrected UI `6f18044d33f25be59b04d27408066daffe35c8d4`: CI #634, **330 passed, 1 warning**.
+- Add Source connection browser + security-corrected UI `6f18044d33f25be59b04d27408066daffe35c8d4`: CI #634, **330 passed, 1 warning**;
+- final v0.26 release head `c983318e3b09c85cad58a6875fea1c5b704af9aa`: CI #648, **330 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package `0.26.0` verified.
 
-All exact feature checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite.
+Product v0.26 merged to `main` at `5f7e4501dcc536d51507e90d54333ba210dc6e92`. Post-merge `monitor-state` advanced to `b271ef3dbf906709c45443ed03b2d752c79584b8`, verifying hosted monitoring-state persistence. No real Microsoft/Google tenant credential was supplied, so real tenant discovery was not claimed.
 
-No real Microsoft/Google tenant credential was supplied, so real tenant discovery is not claimed. Release-only metadata/docs are re-gated on their exact head before merge.
+## Product v0.27 — provider identity + credential lifecycle — current release candidate
 
-## Roadmap after v0.26
+Implemented from exact v0.26 merge baseline `5f7e4501dcc536d51507e90d54333ba210dc6e92`:
 
-Prioritize real credential lifecycle and hosted pilot validation over connector accumulation:
+- bounded Microsoft account identity through Graph `/me`;
+- bounded Google account identity through Drive `about.user`;
+- stable provider subject IDs plus optional display/email evidence;
+- identity values bounded and malformed identity fails closed;
+- raw provider rejection bodies, credential environment-variable names and token values excluded from identity results;
+- account identity remains separate from connector reachability;
+- deterministic credential lifecycle states: `needs_credential`, `rejected`, `unavailable`, `identity_unverified`, `verified`;
+- deterministic next actions: `configure`, `reconnect`, `retry`, `review_scopes`, `none`;
+- connector reachability 401/403 maps to reconnect while temporary failures map to retry;
+- identity-only 401/403 after successful connector reachability maps to review-scopes without falsely declaring the connector unreachable;
+- fixed-credential Operator-only Microsoft/Google identity and lifecycle APIs;
+- Add Source retains distinct Test connection, Credential status and Verify connected account actions;
+- lifecycle/provider text rendered through text content rather than HTML;
+- existing v0.26 resource browsing/manual fields and v0.25 Source Packs/preflight remain intact;
+- no OAuth callback, access-token persistence, refresh-token persistence or persistence migration;
+- no source Health/detector/incident/scorecard changes;
+- no static Pages identity/lifecycle output.
 
-1. OAuth authorization-code connect/callback flow;
-2. secure token and refresh-token storage with tenant/account identity evidence;
-3. credential health, reconnect and revoke;
-4. authenticated managed-PostgreSQL pilot deployment;
-5. real Microsoft/Google/Power BI/email/Teams end-to-end failure drills;
-6. five-minute first-value onboarding with safe test/simulation tools;
-7. customer/pilot validation before broad connector accumulation or billing complexity.
+Verified feature checkpoints:
+
+- identity foundation `0fbda27b9e82a62db1da66c16c2f8324ec10be37`: CI #653, **335 passed, 1 warning**;
+- identity API/UI `1ed0edc6f0c5dc330c9d674cf02c7485e3ca9928`: CI #661, **340 passed, 1 warning**;
+- pure credential lifecycle `7f66752937e1c11e07c1d9704c766753fd1e086f`: CI #665, **345 passed, 1 warning**;
+- lifecycle API/UI `582fc1d276e13684e893ece4d7d33ce6202b0c2c`: CI #673, **350 passed, 1 warning**.
+
+All exact feature checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite. Release-only version/docs changes are re-gated on their exact head before merge. No real Microsoft/Google tenant credential was supplied, so live provider identity/lifecycle evidence is not claimed.
+
+## Roadmap after v0.27
+
+Prioritize real credential ownership and hosted pilot validation over connector accumulation:
+
+1. encrypted credential-store interface plus deployment key/KMS contract;
+2. Microsoft/Google authorization-code callback with state validation and PKCE where appropriate;
+3. refresh/expiry handling with atomic token replacement;
+4. reconnect/revoke and explicit account-switch handling;
+5. authenticated managed-PostgreSQL pilot deployment;
+6. real Microsoft/Google/Power BI/email/Teams end-to-end failure drills;
+7. five-minute first-value onboarding and customer/pilot validation.
 
 AI investigation remains downstream of deterministic evidence and must not redefine Health classification.

@@ -1,198 +1,192 @@
-# AnalystWatch Product v0.26 Architecture
+# AnalystWatch Product v0.27 Architecture
 
 ## Decision
 
-Product v0.26 adds a **non-persistent provider-discovery layer around the existing Microsoft 365 Excel and Google Sheets connectors**.
+Product v0.27 adds a **non-persistent credential identity and lifecycle layer** on top of the v0.26 Microsoft/Google connection-discovery foundation.
 
-The architectural rule is: **connection UX may make an existing connector easier to configure, but it cannot create a second source model, hide the resulting connector location, persist bearer tokens, bypass preflight, or influence source Health.**
+The architectural rule is: **credential diagnostics may explain whether a configured provider credential is usable and which account it represents, but they cannot redefine connector reachability, source Health, or persist secret material.**
 
 ```text
-server-managed provider credential reference
+fixed server credential reference
         ↓
-connection check / resource discovery
+provider reachability check ───────────────┐
+        ↓                                 │
+account identity check                    │
+        ↓                                 │
+deterministic credential lifecycle        │
+        ↓                                 │
+configure / reconnect / retry /           │
+review scopes / no action                 │
+                                          │
+resource browse/select ────────────────────┘
         ↓
-analyst selects provider resource
-        ↓
-existing m365:// or gsheets:// location fields
+existing m365:// or gsheets:// fields
         ↓
 ordinary SourceDefinition + MonitoringConfig
         ↓
-existing /api/preflight
+existing preflight / guarded onboarding
         ↓
-existing guarded onboarding
-        ↓
-existing ingestion / findings / Health / incidents
+existing monitoring / Health / incidents
 ```
 
-## Provider model
+## Provider account identity
 
-`ConnectionProvider` is shared by discovery and local readiness logic:
+`ConnectionAccountIdentity` is bounded evidence about the account represented by the currently configured delegated credential:
 
-- `microsoft`;
-- `google`.
+- `provider`;
+- stable provider `subject_id`;
+- optional display name;
+- optional email address.
 
-There is one provider model rather than separate readiness/discovery enums.
+Strings are bounded to 512 characters. Blank/untrimmed/oversized required provider identity fields fail closed.
 
-`ConnectionReadiness` is local configuration evidence only. It may report:
+### Microsoft identity
 
-- `invalid_location`;
-- `needs_credential_reference`;
-- `needs_credential_value`;
-- `ready_to_test`.
+Microsoft uses Graph v1.0 `/me` with a narrow field selection:
 
-`ready_to_test` is intentionally narrow: AnalystWatch has enough local configuration to attempt a provider request. It does not prove token validity, tenant membership, resource access, or future provider availability.
+```text
+id, displayName, mail, userPrincipalName
+```
 
-Readiness serializes neither bearer-token values nor the referenced environment-variable name.
+`mail` is preferred for analyst-facing email evidence; `userPrincipalName` is a fallback. The Graph `id` is retained as the stable subject ID.
 
-## Credential boundary
+### Google identity
 
-Existing connector sources continue to use environment-backed Authorization references in `MonitoringConfig.request_header_env`.
+Google uses Drive API v3 `about` with:
 
-Product v0.26 adds no token persistence table, encrypted secret store, refresh-token flow, OAuth callback, or provider session state.
+```text
+user(displayName,emailAddress,permissionId)
+```
 
-Dynamic discovery endpoints use fixed runtime references only:
+`permissionId` is retained as the stable subject ID.
+
+### Identity claim boundary
+
+A successful identity request proves only that the configured credential returned bounded account identity at that moment. It does not prove:
+
+- future credential validity;
+- refresh-token ownership;
+- persistent authorization;
+- access to every provider resource;
+- source data correctness.
+
+Identity responses never contain credential environment-variable names or token values. Raw provider rejection bodies are never surfaced.
+
+## Reachability remains independent
+
+The v0.26 connection check remains authoritative for the narrow question: **can the configured provider credential reach the connector's existing discovery surface?**
+
+Microsoft reachability continues to use `/me/drives`; Google reachability continues to use Drive spreadsheet discovery.
+
+Identity is intentionally a separate provider request. This prevents a missing identity-specific permission from turning a usable file credential into a false connector failure.
+
+Example:
+
+```text
+/me/drives → 200
+/me        → 403
+```
+
+The credential is still `reachable=True` for connector purposes. Identity is `unverified`; the lifecycle layer recommends reviewing scopes rather than declaring the connector unavailable.
+
+## Deterministic credential lifecycle
+
+`CredentialLifecycle` contains:
+
+- provider;
+- lifecycle state;
+- explicit next action;
+- configured/reachable/identity-verified booleans;
+- bounded HTTP status when available;
+- optional bounded account identity;
+- deterministic guidance text.
+
+Lifecycle states:
+
+```text
+needs_credential
+rejected
+unavailable
+identity_unverified
+verified
+```
+
+Next actions:
+
+```text
+configure
+reconnect
+retry
+review_scopes
+none
+```
+
+### Derivation
+
+1. Missing runtime credential → `needs_credential` / `configure`.
+2. Connector reachability rejected with 401/403 → `rejected` / `reconnect`.
+3. Other connector reachability failure → `unavailable` / `retry`.
+4. Connector reachable but identity request rejected with 401/403 → `identity_unverified` / `review_scopes`.
+5. Connector reachable but other identity failure → `identity_unverified` / `retry`.
+6. Connector reachable and identity verified → `verified` / `none`.
+
+The lifecycle model is derived on demand and is not persisted.
+
+## API boundary
+
+v0.27 retains the v0.26 discovery routes and adds Operator-only fixed-credential routes:
+
+```text
+POST /api/connections/microsoft/identity
+POST /api/connections/microsoft/lifecycle
+POST /api/connections/google/identity
+POST /api/connections/google/lifecycle
+```
+
+All connection POST routes remain under the established Operator authorization prefix.
+
+Provider operations use only:
 
 ```text
 Microsoft → ANALYSTWATCH_MICROSOFT_AUTHORIZATION
 Google    → ANALYSTWATCH_GOOGLE_AUTHORIZATION
 ```
 
-The caller cannot choose an arbitrary environment-variable name.
+The caller cannot select an arbitrary process environment-variable name.
 
-Public connection-check responses expose only bounded status:
-
-- provider;
-- configured boolean;
-- reachable boolean;
-- HTTP status when available;
-- bounded error text.
-
-They do not expose the credential environment-variable name, token value, or raw provider error body.
-
-An early provisional endpoint that accepted an arbitrary `SourceDefinition` for readiness calculation was removed before release because it could have been used as an environment-variable-existence oracle. Readiness remains an internal/local model while external discovery is fixed-reference only.
-
-## Microsoft discovery
-
-Microsoft discovery uses Microsoft Graph v1.0 and the existing delegated-access connector model.
-
-The dynamic setup flow can:
-
-1. test the standard server Microsoft credential;
-2. enumerate current-user drives;
-3. search a selected drive for matching files;
-4. retain only real `.xlsx` file items;
-5. enumerate workbook tables;
-6. copy the selected drive/item/table identifiers into the existing Microsoft connector controls.
-
-No selected resource is persisted by discovery itself.
-
-### Microsoft pagination safety
-
-Graph collection helpers have a bounded page limit.
-
-Any `@odata.nextLink` must:
-
-- use HTTPS;
-- have host `graph.microsoft.com`;
-- remain under `/v1.0/`.
-
-Unexpected hosts/paths fail closed and are never followed.
-
-Provider response bodies are not copied into public errors.
-
-## Google discovery
-
-Google discovery uses:
-
-- Drive API v3 for spreadsheet file discovery;
-- Sheets API v4 metadata for sheet/tab discovery.
-
-The dynamic setup flow can:
-
-1. test the standard server Google credential;
-2. list non-trashed Google spreadsheet files;
-3. include shared-drive-visible items through the existing metadata query parameters;
-4. load sheet properties for a selected spreadsheet;
-5. retain selectable `GRID` sheets only;
-6. copy the selected spreadsheet ID into the existing Google connector control.
-
-No spreadsheet or sheet selection is persisted until ordinary source onboarding succeeds.
-
-### Google range safety
-
-A Google Sheet tab is not itself a complete monitoring contract. The existing connector still requires an explicit A1 range.
-
-The Add Source browser may suggest an A1 range only when returned grid dimensions are known and bounded at no more than:
-
-- 5,000 rows;
-- 100 columns.
-
-For larger or unknown grids, the helper intentionally does not manufacture a truncated range. The analyst must enter an explicit A1 range before preflight.
-
-This preserves the existing deterministic ingestion boundary and avoids silently excluding provider data for UI convenience.
-
-## API boundary
-
-Product v0.26 adds Operator-only POST endpoints:
-
-```text
-/api/connections/microsoft/check
-/api/connections/microsoft/drives
-/api/connections/microsoft/workbooks
-/api/connections/microsoft/tables
-/api/connections/google/check
-/api/connections/google/spreadsheets
-/api/connections/google/sheets
-```
-
-These endpoints are discovery/calculation surfaces only.
-
-They do not:
+These endpoints do not:
 
 - create/update a source;
 - establish a baseline;
-- run source monitoring;
-- persist a provider resource selection;
-- persist a token;
-- write observation history;
-- change source Health.
-
-Signed-bearer authorization classifies the connection POST prefix as `Operator` rather than the default Admin-only mutation bucket. Viewer access is insufficient for external provider discovery.
+- persist provider state;
+- store or rotate a token;
+- change source Health;
+- write observation history.
 
 ## Add Source UI boundary
 
-The approved v0.25 onboarding form remains authoritative.
+The approved v0.25/v0.26 onboarding flow remains authoritative.
 
-Product v0.26 adds `static/connection_onboard.js` as an optional enhancement loaded by the existing Add Source template. It injects browse/test controls inside the existing Microsoft and Google sections.
+Inside each provider section, the connection browser now exposes three distinct diagnostic actions:
 
-The existing manual fields remain visible and editable:
+1. **Test connection** — connector reachability.
+2. **Credential status** — derived lifecycle state and next-step guidance.
+3. **Verify connected account** — direct identity evidence.
 
-Microsoft:
+Resource browsing remains unchanged:
 
-- Drive ID;
-- workbook item ID;
-- Excel table;
-- optional worksheet;
-- environment-backed Authorization reference.
+- Microsoft drive → `.xlsx` workbook → Excel table;
+- Google spreadsheet → GRID sheet/tab → bounded or explicit A1 range.
 
-Google:
+Manual connector fields remain visible/editable. Source Packs, Data Rules, row-comparison fields, preflight and guarded onboarding are unchanged.
 
-- spreadsheet ID;
-- A1 range;
-- header row;
-- environment-backed Authorization reference.
+All external text is rendered using text content rather than HTML insertion. Credential environment-variable names and bearer-token examples are absent from the browser JavaScript.
 
-Source Packs, Data Rules, row-comparison fields, run policy, preflight evidence, and guarded onboarding are not replaced.
+## Existing connector and Health boundary
 
-Browser selections populate those ordinary controls and dispatch normal form-input events. Therefore the v0.25 stale-preflight rule remains authoritative: if the selected provider resource changes after a successful preflight, Add Source is disabled until preflight runs again.
+Product v0.27 does not modify Microsoft Excel or Google Sheets ingestion.
 
-The browser JavaScript contains no fixed credential environment-variable names or bearer-token examples.
-
-## Existing connector boundary
-
-Product v0.26 does not modify `ingest_source(...)`, Microsoft Excel ingestion, or Google Sheets values ingestion.
-
-The final source still uses existing connector locations:
+The resulting source still uses the existing location contracts:
 
 ```text
 m365://<drive-id>/<item-id>?table=<table-name>[&worksheet=<sheet>]
@@ -200,72 +194,115 @@ m365://<drive-id>/<item-id>?table=<table-name>[&worksheet=<sheet>]
 gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]
 ```
 
-Those locations continue through the existing parsers, ingestion functions, profiling, preflight, runtime monitoring, and Pages privacy rules.
+Credential lifecycle cannot emit Healthy / Warning / Critical and cannot influence:
 
-## Source Pack coexistence
+- findings or Data Rules;
+- baselines/reviews;
+- incidents;
+- reliability scorecards;
+- notification policy;
+- delivery attempts/reconciliation;
+- dependency/blast-radius state.
 
-Source Packs and connection discovery solve different parts of onboarding:
+There is no monitoring persistence migration in v0.27.
 
-- connection discovery answers **where is the provider data?**;
-- Source Packs answer **which business fields must remain trustworthy?**
+## OAuth / secret persistence boundary
 
-They converge only in the existing Add Source form and then become an ordinary `SourceDefinition` plus `MonitoringConfig`.
+v0.27 intentionally does **not** add an authorization-code callback or refresh-token database.
 
-There is no combined pack/connection persistence model.
+A production OAuth implementation must be treated as a new security/persistence boundary, not a UI convenience. The minimum architecture for the next phase is:
 
-## Health and monitoring boundary
+### Authorization transaction
 
-Connection discovery is not a Health detector.
+- provider-specific authorization-code flow;
+- cryptographically random state/CSRF token bound to the initiating authenticated workspace/user;
+- PKCE where supported/appropriate;
+- exact allowlisted redirect URI;
+- short-lived transaction record with one-time consumption;
+- callback rejects missing, mismatched, replayed or expired state.
 
-It cannot produce Healthy / Warning / Critical and cannot change scorecards, incidents, baselines, notifications, dependencies, delivery attempts, or reviews.
+### Credential storage
 
-After onboarding, the existing source ingestion and deterministic finding pipeline remain the only source-monitoring path.
+Introduce a credential-store abstraction separate from `MonitoringConfig` and source records. Stored metadata should be sufficient to bind credentials to:
 
-Product v0.26 therefore requires no monitoring-database migration and no rewrite of existing hosted source data.
+- workspace;
+- provider;
+- stable provider subject/account identity;
+- granted scopes where provider evidence is available;
+- access-token expiry;
+- refresh capability/status;
+- created/updated/revoked timestamps.
+
+Access/refresh tokens must be encrypted at rest. The encryption/KMS key must be deployment-held and not stored beside ciphertext in the same persistence record.
+
+Token material must never enter:
+
+- source definitions;
+- observation/finding evidence;
+- audit notes;
+- logs;
+- static Pages;
+- API response bodies.
+
+### Refresh and replacement
+
+Refresh must be atomic from AnalystWatch's perspective:
+
+- read current encrypted credential;
+- request refresh;
+- validate returned provider/account identity where appropriate;
+- atomically replace token/expiry metadata;
+- retain no plaintext token in persistence or logs;
+- classify provider rejection separately from temporary transport failure.
+
+### Reconnect / account switch
+
+Reconnect is not equivalent to retry.
+
+A reconnect flow must explicitly surface when the new provider subject differs from the previously bound account. Account switching should require an intentional operator/admin decision before existing source definitions silently begin using a different identity.
+
+### Revoke
+
+Revocation should:
+
+- invoke the provider revocation endpoint when supported and configured;
+- mark/remove the local credential atomically;
+- leave source monitoring configuration intact but clearly credential-unavailable;
+- avoid deleting monitoring history.
+
+### Recovery and migration
+
+Any persistent credential store requires:
+
+- SQLite/PostgreSQL contract or an intentionally external secret-store implementation;
+- schema/version migration tests;
+- encryption/decryption failure behavior;
+- key-rotation/recovery strategy;
+- backup/restore rules that do not accidentally make ciphertext unusable or expose keys.
+
+Until this contract is implemented and verified, environment-backed delegated Authorization remains the supported provider credential mechanism.
 
 ## Dynamic app vs static Pages
 
-Provider discovery is intentionally dynamic-app-only.
+Connection reachability, identity, lifecycle and resource discovery are dynamic-app-only.
 
-The FastAPI app may contact Microsoft/Google using configured server credentials for an authorized Operator.
-
-Static GitHub Pages remains a read-only monitoring artifact and receives no provider-discovery controls or credential state. Existing Pages redaction/privacy boundaries remain unchanged.
-
-## Hosted data custody
-
-Product v0.25 merged at `fdab78d706b6db75e88cba3d142a15372ca5908d`.
-
-Post-merge `monitor-state` advanced to `db00ee1ea914c8bca5071f0af4fd656792182844`, confirming hosted monitoring-state persistence after the v0.25 release.
-
-Because v0.26 changes setup UX rather than monitoring data or ingestion semantics, no hosted database mutation is required as part of this release.
+Static GitHub Pages remains a read-only monitoring artifact. It receives no provider credentials, account identity, lifecycle state or connection controls.
 
 ## Verification
 
-Exact green checkpoints:
+Verified v0.27 feature checkpoints:
 
-- discovery foundation `79722100a930f1928a77f20cb709d9095a6be04b`: **316 passed, 1 warning**;
-- consolidated readiness/discovery API `4d0b369ffa14976e3d4cdcfbb21229a179ca4895`: **327 passed, 1 warning**;
-- Add Source provider browser + security-corrected UI `6f18044d33f25be59b04d27408066daffe35c8d4`: **330 passed, 1 warning**.
+- identity foundation `0fbda27b9e82a62db1da66c16c2f8324ec10be37`: CI #653, **335 passed / 1 warning**;
+- identity API/UI `1ed0edc6f0c5dc330c9d674cf02c7485e3ca9928`: CI #661, **340 passed / 1 warning**;
+- pure lifecycle model `7f66752937e1c11e07c1d9704c766753fd1e086f`: CI #665, **345 passed / 1 warning**;
+- lifecycle API/UI `582fc1d276e13684e893ece4d7d33ce6202b0c2c`: CI #673, **350 passed / 1 warning**.
 
-Each checkpoint passed Ruff, compile/import checks, and the PostgreSQL 16-backed suite.
+Every exact feature checkpoint passed Ruff, compile/import checks and the PostgreSQL 16-backed suite.
 
-The UI regression boundary verifies that manual Microsoft/Google fields, Source Packs, preflight, and Add monitored source remain present while the separate connection browser is loaded.
+No real Microsoft/Google tenant credential was supplied, so live provider identity/lifecycle evidence is not claimed.
 
-No real Microsoft or Google tenant credential was supplied for repository validation, so real tenant discovery is not claimed.
+## Release boundary
 
-Release-only metadata/documentation changes are re-gated on their exact head before merge.
+Product v0.27 is complete when package/FastAPI/module versions are aligned to `0.27.0`, release docs are aligned to this architecture, and the exact release head passes the full repository gate.
 
-## Next architecture step
-
-The next connection milestone should add a real OAuth credential lifecycle rather than more discovery endpoints:
-
-- authorization-code initiation/callback;
-- securely persisted tokens/refresh metadata;
-- reconnect/revoke;
-- credential health without secret disclosure;
-- explicit tenant/account identity evidence;
-- migration away from operator-provisioned environment bearer tokens where appropriate.
-
-Only after that should AnalystWatch run a real hosted Microsoft/Google/Power BI/notification pilot and full end-to-end failure drills.
-
-AI investigation remains downstream of deterministic evidence and must not redefine Health.
+OAuth token persistence, refresh, revoke and provider callback handling remain the next dedicated security milestone rather than being partially simulated inside v0.27.
