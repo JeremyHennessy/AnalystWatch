@@ -19,8 +19,6 @@ from .connection_discovery import (
     list_microsoft_tables,
     search_microsoft_workbooks,
 )
-from .connections import ConnectionReadiness, connection_readiness
-from .models import SourceDefinition
 
 MICROSOFT_AUTH_ENV = "ANALYSTWATCH_MICROSOFT_AUTHORIZATION"
 GOOGLE_AUTH_ENV = "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
@@ -84,12 +82,6 @@ def _validated_call(callable_, *args):
 
 
 def configure_connection_web(app: FastAPI) -> None:
-    def readiness(source: SourceDefinition) -> ConnectionReadiness:
-        try:
-            return connection_readiness(source)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
     def microsoft_check() -> PublicConnectionCheck:
         return _public_check(check_connection(ConnectionProvider.MICROSOFT, MICROSOFT_AUTH_ENV))
 
@@ -127,12 +119,6 @@ def configure_connection_web(app: FastAPI) -> None:
             request.spreadsheet_id,
         )
 
-    app.add_api_route(
-        "/api/connections/readiness",
-        readiness,
-        methods=["POST"],
-        response_model=ConnectionReadiness,
-    )
     app.add_api_route(
         "/api/connections/microsoft/check",
         microsoft_check,
