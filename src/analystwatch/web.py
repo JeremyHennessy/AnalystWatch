@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .auth_storage import MembershipStore
+from .connection_web import configure_connection_web
 from .dependencies import AssetKind
 from .dependency_web import configure_dependency_web
 from .models import (
@@ -430,6 +431,7 @@ def create_app(
         templates=templates,
         monitoring_service=service,
     )
+    configure_connection_web(app)
     configure_source_pack_web(app)
     configure_web_authorization(
         app,
