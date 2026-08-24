@@ -42,7 +42,7 @@ def exchange_authorization_code(
     client: httpx.Client | None = None,
 ) -> OAuthTokenSet:
     _validate_now(now)
-    code = _required_secret(code, "authorization code", MAX_AUTHORIZATION_CODE_CHARS)
+    code = validate_authorization_code(code)
     code_verifier = _required_secret(code_verifier, "PKCE verifier", 256)
     request_data = {
         "client_id": config.client_id,
@@ -86,6 +86,10 @@ def exchange_authorization_code(
     finally:
         if owns_client:
             active_client.close()
+
+
+def validate_authorization_code(value: str) -> str:
+    return _required_secret(value, "authorization code", MAX_AUTHORIZATION_CODE_CHARS)
 
 
 def _parse_token_payload(
