@@ -143,6 +143,7 @@ def consume_authorization_transaction(
     now: datetime,
 ) -> OAuthAuthorizationConsumption:
     _validate_now(now)
+    transaction = _revalidate_transaction(transaction)
     if transaction.consumed_at is not None:
         raise OAuthAuthorizationError("Authorization transaction was already consumed")
     if now >= transaction.expires_at:
@@ -173,6 +174,15 @@ def consume_authorization_transaction(
         ) from exc
     consumed = transaction.model_copy(update={"consumed_at": now}, deep=True)
     return OAuthAuthorizationConsumption(transaction=consumed, pkce_verifier=verifier)
+
+
+def _revalidate_transaction(
+    transaction: OAuthAuthorizationTransaction,
+) -> OAuthAuthorizationTransaction:
+    try:
+        return OAuthAuthorizationTransaction.model_validate(transaction.model_dump(mode="python"))
+    except ValueError as exc:
+        raise OAuthAuthorizationError("Authorization transaction metadata is invalid") from exc
 
 
 def _authorization_associated_data(
