@@ -177,7 +177,7 @@ Feature/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe` passed *
 
 Live-source smoke was not triggered by the v0.24 change set and was not claimed. Post-merge `monitor-state` persistence advanced on the v0.24 release.
 
-## Product v0.25 — role-mapped Source Packs — current release
+## Product v0.25 — role-mapped Source Packs — complete
 
 Implemented from exact v0.24 merge baseline `ac542a73db8657c455b5ea990ce5e1df3f93b1fb`:
 
@@ -211,9 +211,10 @@ Isolated checkpoints:
 - catalog/materialization API + normal-preflight integration: **299 passed, 1 warning**;
 - initial functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d`: **302 passed, 1 warning**;
 - final editable-contract/preflight-safety checkpoint `a3f3703f6bdd29191329e497fef60234474888c0`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green;
-- release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package version `0.25.0` verified.
+- release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package version `0.25.0` verified;
+- final merge candidate `9d8f75fe7a6bf89acd07e2cf40459a4b7a127d2e`: CI #595 SUCCESS, **303 passed, 1 warning**.
 
-Verification-note documentation changes are re-gated on their exact merge candidate head. Live-source smoke was not triggered by Product v0.25 and is not claimed because source-ingestion workflow paths were unchanged.
+Product v0.25 merged to `main` at `fdab78d706b6db75e88cba3d142a15372ca5908d`. Live-source smoke was not triggered and is not claimed. Post-merge `monitor-state` advanced to `db00ee1ea914c8bca5071f0af4fd656792182844`, verifying hosted monitoring-state persistence.
 
 Explicit non-goals:
 
@@ -226,16 +227,48 @@ Explicit non-goals:
 - no preflight bypass;
 - no new Health or incident state machine.
 
-## Roadmap after v0.25
+## Product v0.26 — self-service Microsoft/Google connection UX — current release candidate
 
-The immediate feature-focused sequence ends with Product v0.25. Prioritize product usability and real-world validation next:
+Implemented from exact v0.25 merge baseline `fdab78d706b6db75e88cba3d142a15372ca5908d`:
 
-1. self-service Microsoft connection UX for account authorization and workbook/table selection;
-2. self-service Google connection UX for account authorization and spreadsheet/sheet/range selection;
-3. credential lifecycle: health, reconnect and revoke;
-4. authenticated hosted pilot on managed PostgreSQL;
+- one shared Microsoft/Google provider model and local connector-readiness states;
+- readiness never serializes bearer-token values or credential environment-variable names;
+- fixed server credential references for external discovery;
+- Microsoft credential check, drive discovery, `.xlsx` workbook search and table discovery;
+- Google credential check, spreadsheet discovery and GRID sheet/tab metadata discovery;
+- bounded pagination and strict Microsoft Graph `graph.microsoft.com/v1.0` next-link validation;
+- provider response bodies excluded from public errors;
+- Operator-only connection-discovery POST routes;
+- an unsafe provisional arbitrary-environment readiness API was removed before release;
+- packaged Add Source connection browser loaded as an optional enhancement;
+- existing manual Microsoft/Google connector controls preserved;
+- Source Packs, Data Rules, visible row-comparison fields, stale-preflight invalidation, normal preflight and guarded onboarding preserved;
+- browser selections populate ordinary connector controls and dispatch normal input events;
+- Google A1 range suggestion is limited to known grids no larger than 5,000 rows × 100 columns; larger/unknown grids require explicit analyst range entry;
+- browser JavaScript contains no server credential names or token examples;
+- provider discovery remains dynamic-app-only while GitHub Pages remains read-only monitoring output;
+- no connector ingestion, detector, Health, persistence-schema or monitoring-data changes.
+
+Verified feature checkpoints:
+
+- discovery foundation `79722100a930f1928a77f20cb709d9095a6be04b`: CI #604, **316 passed, 1 warning**;
+- readiness/discovery API `4d0b369ffa14976e3d4cdcfbb21229a179ca4895`: CI #618, **327 passed, 1 warning**;
+- Add Source connection browser + security-corrected UI `6f18044d33f25be59b04d27408066daffe35c8d4`: CI #634, **330 passed, 1 warning**.
+
+All exact feature checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite.
+
+No real Microsoft/Google tenant credential was supplied, so real tenant discovery is not claimed. Release-only metadata/docs are re-gated on their exact head before merge.
+
+## Roadmap after v0.26
+
+Prioritize real credential lifecycle and hosted pilot validation over connector accumulation:
+
+1. OAuth authorization-code connect/callback flow;
+2. secure token and refresh-token storage with tenant/account identity evidence;
+3. credential health, reconnect and revoke;
+4. authenticated managed-PostgreSQL pilot deployment;
 5. real Microsoft/Google/Power BI/email/Teams end-to-end failure drills;
-6. five-minute first-value onboarding with test alerts and safe failure simulation;
+6. five-minute first-value onboarding with safe test/simulation tools;
 7. customer/pilot validation before broad connector accumulation or billing complexity.
 
 AI investigation remains downstream of deterministic evidence and must not redefine Health classification.

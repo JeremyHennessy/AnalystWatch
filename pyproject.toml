@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "analystwatch"
-version = "0.25.0"
+version = "0.26.0"
 description = "Lightweight reliability monitoring for analyst-owned data sources"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,7 +32,7 @@ analystwatch = "analystwatch.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-analystwatch = ["templates/*.html", "static/*.css"]
+analystwatch = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
