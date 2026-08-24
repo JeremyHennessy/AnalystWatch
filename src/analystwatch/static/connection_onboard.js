@@ -81,6 +81,18 @@
     return primary;
   }
 
+  function lifecycleMessage(lifecycle) {
+    const state = String(lifecycle.state || 'unknown').replaceAll('_', ' ');
+    const identity = lifecycle.identity ? ` Connected account: ${identityLabel(lifecycle.identity)}.` : '';
+    return `Credential status: ${state}. ${lifecycle.guidance || ''}${identity}`.trim();
+  }
+
+  function lifecycleKind(lifecycle) {
+    if (lifecycle.state === 'verified') return 'ok';
+    if (lifecycle.state === 'unavailable' || lifecycle.state === 'identity_unverified') return 'warning';
+    return 'error';
+  }
+
   function excelColumnLabel(columnCount) {
     let value = columnCount;
     let label = '';
@@ -110,10 +122,11 @@
     browser.innerHTML = `
       <div class="form-section span-two">
         <strong>Browse connected Microsoft files</strong>
-        <span>Optional. Test the standard server connection, verify the connected account, choose a drive/workbook/table, then review the ordinary connector fields below. Manual IDs remain available.</span>
+        <span>Optional. Test the standard server connection, inspect credential status, verify the connected account, choose a drive/workbook/table, then review the ordinary connector fields below. Manual IDs remain available.</span>
       </div>
       <div class="form-actions span-two">
         <button id="microsoft-connection-test" class="secondary" type="button">Test Microsoft connection</button>
+        <button id="microsoft-lifecycle-test" class="secondary" type="button">Credential status</button>
         <button id="microsoft-identity-test" class="secondary" type="button">Verify connected account</button>
         <button id="microsoft-browse-drives" class="secondary" type="button">Browse drives</button>
       </div>
@@ -127,6 +140,7 @@
     grid.prepend(browser);
 
     const testButton = byId('microsoft-connection-test');
+    const lifecycleButton = byId('microsoft-lifecycle-test');
     const identityButton = byId('microsoft-identity-test');
     const drivesButton = byId('microsoft-browse-drives');
     const status = byId('microsoft-connection-status');
@@ -147,6 +161,18 @@
         renderStatus(status, String(error), 'error');
       } finally {
         setBusy(testButton, false, 'Testing…');
+      }
+    });
+
+    lifecycleButton.addEventListener('click', async () => {
+      setBusy(lifecycleButton, true, 'Checking…');
+      try {
+        const lifecycle = await postJson(`${MICROSOFT_PREFIX}/lifecycle`);
+        renderStatus(status, lifecycleMessage(lifecycle), lifecycleKind(lifecycle));
+      } catch (error) {
+        renderStatus(status, String(error), 'error');
+      } finally {
+        setBusy(lifecycleButton, false, 'Checking…');
       }
     });
 
@@ -253,10 +279,11 @@
     browser.innerHTML = `
       <div class="form-section span-two">
         <strong>Browse connected Google Sheets</strong>
-        <span>Optional. Test the standard server connection, verify the connected account, choose a spreadsheet and sheet, then review the explicit A1 range below. Manual IDs/ranges remain available.</span>
+        <span>Optional. Test the standard server connection, inspect credential status, verify the connected account, choose a spreadsheet and sheet, then review the explicit A1 range below. Manual IDs/ranges remain available.</span>
       </div>
       <div class="form-actions span-two">
         <button id="google-connection-test" class="secondary" type="button">Test Google connection</button>
+        <button id="google-lifecycle-test" class="secondary" type="button">Credential status</button>
         <button id="google-identity-test" class="secondary" type="button">Verify connected account</button>
         <button id="google-browse-spreadsheets" class="secondary" type="button">Browse spreadsheets</button>
       </div>
@@ -267,6 +294,7 @@
     grid.prepend(browser);
 
     const testButton = byId('google-connection-test');
+    const lifecycleButton = byId('google-lifecycle-test');
     const identityButton = byId('google-identity-test');
     const browseButton = byId('google-browse-spreadsheets');
     const status = byId('google-connection-status');
@@ -284,6 +312,18 @@
         renderStatus(status, String(error), 'error');
       } finally {
         setBusy(testButton, false, 'Testing…');
+      }
+    });
+
+    lifecycleButton.addEventListener('click', async () => {
+      setBusy(lifecycleButton, true, 'Checking…');
+      try {
+        const lifecycle = await postJson(`${GOOGLE_PREFIX}/lifecycle`);
+        renderStatus(status, lifecycleMessage(lifecycle), lifecycleKind(lifecycle));
+      } catch (error) {
+        renderStatus(status, String(error), 'error');
+      } finally {
+        setBusy(lifecycleButton, false, 'Checking…');
       }
     });
 
