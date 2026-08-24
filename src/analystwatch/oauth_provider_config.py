@@ -148,7 +148,9 @@ def _validate_public_base_url(value: str | None) -> str:
     if parts.query or parts.fragment:
         raise OAuthProviderConfigurationError("Public base URL must not contain query or fragment")
     if parts.path not in {"", "/"}:
-        raise OAuthProviderConfigurationError("Public base URL must not contain an application path")
+        raise OAuthProviderConfigurationError(
+            "Public base URL must not contain an application path"
+        )
     if not parts.hostname:
         raise OAuthProviderConfigurationError("Public base URL must contain a hostname")
     hostname = parts.hostname.lower()
