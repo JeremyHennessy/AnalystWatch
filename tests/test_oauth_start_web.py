@@ -238,9 +238,12 @@ def test_signed_bearer_start_is_operator_level_and_binds_authenticated_user(
     assert all(record.workspace_id == "team-a" for record in records)
 
 
-def test_provider_callbacks_are_not_exposed_yet(tmp_path: Path, monkeypatch) -> None:
+def test_provider_callbacks_are_exposed_but_fail_closed_for_unknown_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     _configure_oauth(monkeypatch)
-    app = create_app(tmp_path / "no-callback.db")
+    app = create_app(tmp_path / "callback-boundary.db")
     client = TestClient(app)
 
     for provider in ["microsoft", "google"]:
@@ -248,4 +251,5 @@ def test_provider_callbacks_are_not_exposed_yet(tmp_path: Path, monkeypatch) -> 
             f"/api/oauth/{provider}/callback",
             params={"code": "not-used", "state": "A" * 43},
         )
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "not-used" not in response.text
