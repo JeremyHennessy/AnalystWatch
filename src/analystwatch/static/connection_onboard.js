@@ -75,6 +75,12 @@
     return option ? option._analystwatchItem || null : null;
   }
 
+  function identityLabel(identity) {
+    const primary = identity.display_name || identity.email || identity.subject_id;
+    if (identity.email && identity.email !== primary) return `${primary} · ${identity.email}`;
+    return primary;
+  }
+
   function excelColumnLabel(columnCount) {
     let value = columnCount;
     let label = '';
@@ -104,10 +110,11 @@
     browser.innerHTML = `
       <div class="form-section span-two">
         <strong>Browse connected Microsoft files</strong>
-        <span>Optional. Test the standard server connection, choose a drive/workbook/table, then review the ordinary connector fields below. Manual IDs remain available.</span>
+        <span>Optional. Test the standard server connection, verify the connected account, choose a drive/workbook/table, then review the ordinary connector fields below. Manual IDs remain available.</span>
       </div>
       <div class="form-actions span-two">
         <button id="microsoft-connection-test" class="secondary" type="button">Test Microsoft connection</button>
+        <button id="microsoft-identity-test" class="secondary" type="button">Verify connected account</button>
         <button id="microsoft-browse-drives" class="secondary" type="button">Browse drives</button>
       </div>
       <div id="microsoft-connection-status" class="rule-empty span-two">Browse/test uses the server's standard Microsoft credential; the saved source still uses the credential reference below.</div>
@@ -120,6 +127,7 @@
     grid.prepend(browser);
 
     const testButton = byId('microsoft-connection-test');
+    const identityButton = byId('microsoft-identity-test');
     const drivesButton = byId('microsoft-browse-drives');
     const status = byId('microsoft-connection-status');
     const driveSelect = byId('microsoft-drive-select');
@@ -139,6 +147,18 @@
         renderStatus(status, String(error), 'error');
       } finally {
         setBusy(testButton, false, 'Testing…');
+      }
+    });
+
+    identityButton.addEventListener('click', async () => {
+      setBusy(identityButton, true, 'Verifying…');
+      try {
+        const identity = await postJson(`${MICROSOFT_PREFIX}/identity`);
+        renderStatus(status, `Connected Microsoft account: ${identityLabel(identity)}.`, 'ok');
+      } catch (error) {
+        renderStatus(status, String(error), 'error');
+      } finally {
+        setBusy(identityButton, false, 'Verifying…');
       }
     });
 
@@ -233,10 +253,11 @@
     browser.innerHTML = `
       <div class="form-section span-two">
         <strong>Browse connected Google Sheets</strong>
-        <span>Optional. Test the standard server connection, choose a spreadsheet and sheet, then review the explicit A1 range below. Manual IDs/ranges remain available.</span>
+        <span>Optional. Test the standard server connection, verify the connected account, choose a spreadsheet and sheet, then review the explicit A1 range below. Manual IDs/ranges remain available.</span>
       </div>
       <div class="form-actions span-two">
         <button id="google-connection-test" class="secondary" type="button">Test Google connection</button>
+        <button id="google-identity-test" class="secondary" type="button">Verify connected account</button>
         <button id="google-browse-spreadsheets" class="secondary" type="button">Browse spreadsheets</button>
       </div>
       <div id="google-connection-status" class="rule-empty span-two">Browse/test uses the server's standard Google credential; the saved source still uses the credential reference below.</div>
@@ -246,6 +267,7 @@
     grid.prepend(browser);
 
     const testButton = byId('google-connection-test');
+    const identityButton = byId('google-identity-test');
     const browseButton = byId('google-browse-spreadsheets');
     const status = byId('google-connection-status');
     const spreadsheetSelect = byId('google-spreadsheet-select');
@@ -262,6 +284,18 @@
         renderStatus(status, String(error), 'error');
       } finally {
         setBusy(testButton, false, 'Testing…');
+      }
+    });
+
+    identityButton.addEventListener('click', async () => {
+      setBusy(identityButton, true, 'Verifying…');
+      try {
+        const identity = await postJson(`${GOOGLE_PREFIX}/identity`);
+        renderStatus(status, `Connected Google account: ${identityLabel(identity)}.`, 'ok');
+      } catch (error) {
+        renderStatus(status, String(error), 'error');
+      } finally {
+        setBusy(identityButton, false, 'Verifying…');
       }
     });
 
