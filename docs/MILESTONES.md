@@ -58,184 +58,127 @@ Added safe `legacy` / `namespaced` runtime selection, pre-initialization schema 
 
 ## Core v0.14 — PostgreSQL production persistence proof — complete
 
-Added workspace-aware PostgreSQL persistence behind `MonitoringStore`, PostgreSQL row-lock claim/reconciliation safety, runtime DSN selection, namespaced → PostgreSQL import, PostgreSQL verification and real PostgreSQL 16 CI conformance. Clean gate: 143 tests; hosted default-legacy state verified after merge. This was a persistence contract proof, not a managed PostgreSQL deployment.
+Added workspace-aware PostgreSQL persistence behind `MonitoringStore`, PostgreSQL row-lock claim/reconciliation safety, runtime DSN selection, namespaced → PostgreSQL import, PostgreSQL verification and real PostgreSQL 16 CI conformance. Clean gate: 143 tests. This was a persistence contract proof, not a managed PostgreSQL production cutover.
 
 ## Core v0.15 — Authenticated workspace authorization — complete
 
-Added provider-neutral authenticated principals, signed-bearer mode, persistent SQLite/PostgreSQL workspace memberships, Viewer/Operator/Admin authorization, fail-closed FastAPI enforcement and cross-workspace/security-negative tests. Clean gate: 156 tests; hosted local-auth compatibility verified after merge.
+Added provider-neutral authenticated principals, signed-bearer mode, persistent SQLite/PostgreSQL workspace memberships, Viewer/Operator/Admin authorization, fail-closed FastAPI enforcement and cross-workspace/security-negative tests. Clean gate: 156 tests.
 
-## Core v0.16 — Managed runtime + first live email delivery — complete
+## Core v0.16 — Managed runtime + first live email delivery architecture — complete
 
-Added environment-backed managed-runtime validation, PostgreSQL startup/membership bootstrap, dedicated managed PostgreSQL recovery validation and a Resend live-email adapter behind the existing delivery-attempt state machine. Clean gate: 164 tests plus live-source smoke; hosted legacy/local compatibility verified after merge.
+Added environment-backed managed-runtime validation, PostgreSQL startup/membership bootstrap, dedicated managed PostgreSQL recovery validation and a Resend live-email adapter behind the existing delivery-attempt state machine. Clean gate: 164 tests plus live-source smoke.
 
 Still not implied by v0.16: production app cutover to managed PostgreSQL or a verified real Resend side effect.
 
 ## Product v0.16.1 — UI & Product Foundation — complete
 
-Reworked the existing user-visible shell without changing monitoring behavior: workspace reliability overview, health KPIs, needs-attention triage, clearer sources, incident-first detail, visual history, progressive disclosure and responsive/static Pages parity. The UI change was limited to templates, shared CSS and UI regression coverage. Hosted monitoring state advanced after merge.
+Reworked the user-visible shell without changing monitoring behavior: workspace reliability overview, health KPIs, needs-attention triage, clearer sources, incident-first detail, visual history, progressive disclosure and responsive/static Pages parity.
+
+## Product v0.16.2 — realistic demo portfolio — complete
+
+Expanded the demo from a narrow technical proof into a realistic analyst-facing portfolio without changing deterministic monitoring semantics.
+
+## Product v0.16.3 — real XLSX claims demo — complete
+
+Added a realistic XLSX claims workflow demo and strengthened the product narrative around analyst-owned operational/reporting sources.
 
 ## Product v0.17 — Microsoft 365 Excel connector — complete
 
-Added table-first SharePoint / OneDrive Excel ingestion through delegated Microsoft Graph access, DriveItem modified-time/ETag evidence, paginated table rows, normal preflight/onboarding reuse and public identifier redaction. Clean gate: **172 tests**, Ruff/compile and PostgreSQL 16 CI green, live-source smoke green. No real Microsoft tenant credential or application-permission workbook access was claimed.
+Added table-first SharePoint / OneDrive Excel ingestion through delegated Microsoft Graph access, DriveItem modified-time/ETag evidence, paginated table rows, normal preflight/onboarding reuse and public identifier redaction. Verified at 172 tests with Ruff/compile/PostgreSQL 16 green and live-source smoke green. No real Microsoft tenant credential was claimed.
 
 ## Product v0.18 — Row-level / key-level change analysis — complete
 
-Added bounded configured-key row snapshots, previous-successful and active-baseline comparisons, Added/Removed/Changed/Unchanged counts, per-column change counts, bounded examples, privacy-aware retention and public aggregate-only rendering. Clean gate: **183 tests**, Ruff/compile and PostgreSQL 16 CI green; live-source smoke green.
-
-Raw row snapshots and key/value samples remain bounded and are not published in static Pages/state output.
+Added bounded configured-key row snapshots, previous-successful and active-baseline comparisons, Added/Removed/Changed/Unchanged counts, per-column change counts, bounded examples, privacy-aware retention and public aggregate-only rendering. Verified at 183 tests with Ruff/compile/PostgreSQL 16 green and live-source smoke green.
 
 ## Product v0.19 — Power BI Guard — complete
 
-Implemented workspace-scoped Power BI Guard definitions, environment-backed bearer-token references, semantic-model/refresh evidence, best-effort report/workspace/datasource evidence, existing-source Health correlation, deterministic false-confidence handling, analyst-facing Guard pages, SQLite/PostgreSQL persistence and Viewer/Operator/Admin route boundaries.
-
-Frozen checkpoint: **196 tests**, Ruff/compile green, PostgreSQL 16 CI green.
-
-No Power BI refresh triggering, full Fabric lineage catalogue, source Health redefinition or live Microsoft-tenant claim was introduced.
+Implemented workspace-scoped Power BI Guard definitions, environment-backed bearer-token references, semantic-model/refresh evidence, best-effort report/workspace/datasource evidence, existing-source Health correlation, deterministic false-confidence handling, analyst-facing Guard pages, SQLite/PostgreSQL persistence and Viewer/Operator/Admin route boundaries. Frozen checkpoint: 196 tests. No real tenant claim.
 
 ## Product v0.20 — Microsoft Teams + dependency graph / blast radius — complete
 
-Implemented Microsoft Teams Workflows / Power Automate delivery behind existing delivery safety, workspace-scoped dependency assets/edges, deterministic cycle-safe blast radius and Power BI source → semantic-model → report discovery. Verified checkpoint: **212 tests**, Ruff/compile/PostgreSQL 16 green. Merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`.
-
-No retired Office 365 Connector implementation, enterprise SQL-column lineage, separate Teams state machine, source Health changes or unverified Microsoft side-effect claims were introduced.
+Implemented Microsoft Teams Workflows delivery behind existing delivery safety, workspace-scoped dependency assets/edges, deterministic cycle-safe blast radius and Power BI source → semantic-model → report discovery. Verified at 212 tests. Merged to `main` at `5ec4744826dafa737931bde89733ee277bbf08ef`.
 
 ## Product v0.21 — reconciliation monitor / ambiguous delivery operations — complete
 
-Added the read-only Delivery Ops reconciliation queue over existing `Prepared` delivery attempts, bounded/privacy-safe output, explicit evidence-note reconciliation and authenticated reviewer attribution. Final exact-head CI passed **226 tests, 1 warning**. Merged to `main` at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`.
-
-No automatic ambiguity inference, automatic retry, provider-specific reconciliation polling, detector/Health change, UI redesign or new delivery-state schema was introduced.
+Added Delivery Ops over existing `Prepared` delivery attempts, bounded/privacy-safe output, explicit evidence-note reconciliation and authenticated reviewer attribution. Final exact-head CI passed 226 tests / 1 warning. Merged at `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`.
 
 ## Product v0.22 — Google Sheets connector — complete
 
-Implemented from exact v0.21 merge baseline `244757286ad8cb3a7302fc2e0e9f51cfb847f4c5`:
-
-- new `google_sheets` source type;
-- `gsheets://<spreadsheet-id>?range=<A1-range>[&header_row=1]` source location contract;
-- Google Sheets API v4 `spreadsheets.values.get` read path;
-- row-major retrieval with deterministic numeric/date rendering;
-- environment-backed Authorization header reference through the existing `request_header_env` contract;
-- deterministic configured header-row parsing and conservative ragged-row normalization;
-- existing numeric-field, unique-key, latest-date and freshness preflight contracts reused unchanged;
-- no fabricated Google Sheets modification timestamp;
-- expected refresh requires content-date evidence or preflight reports `freshness_unverifiable`;
-- static Pages redact spreadsheet ID, internal `gsheets://` location and token environment-variable name;
-- existing Add Source UI exposes Spreadsheet ID, A1 range, header row and token environment reference;
-- no new detector thresholds, source Health semantics or persistence schema.
-
-Final verified feature head passed **236 tests, 1 warning** with Ruff/compile/PostgreSQL 16 green and live-source smoke green. Product v0.22 merged to `main` at `21c45c56f6f84328a88644b9df8e1c9ef474c383`.
-
-No real Google Workspace credential was supplied, so live Google Sheets tenant access was not claimed.
+Added `google_sheets`, `gsheets://...` locations, Google Sheets API v4 values ingestion, environment-backed Authorization references, deterministic header/ragged-row handling, existing preflight contracts and static Pages redaction. Final feature head passed 236 tests / 1 warning with live-source smoke green. Merged at `21c45c56f6f84328a88644b9df8e1c9ef474c383`. No real Google Workspace credential was supplied.
 
 ## Product v0.23 — deterministic Data Rules — complete
 
-Implemented from exact v0.22 merge baseline `21c45c56f6f84328a88644b9df8e1c9ef474c383`:
-
-- typed deterministic rule kinds: `not_null`, `allowed_values`, `numeric_range`, `row_count_range`;
-- explicit rule ID, analyst-facing name, Warning/Critical failure severity and optional business guidance;
-- fail-closed rule-model validation and duplicate-rule-ID rejection;
-- deterministic DataFrame evaluator that returns ordinary `Finding` evidence;
-- no failing row values copied into Data Rule findings;
-- bounded aggregate violation counts/percentages for field-based failures;
-- preflight evaluates configured rules and refuses to accept a source already violating its declared contract;
-- runtime `check_source(...)` appends Data Rule findings before the existing single `health_from_findings(...)` derivation;
-- existing incident, notification, delivery, review and baseline behavior remains downstream of ordinary Health rather than a parallel rule state machine;
-- typed Data Rule builder added to the existing Add Source UI;
-- authenticated/local source detail retains the private declared rule contract while failing row values remain absent;
-- public Pages genericize Data Rule findings and remove public profile/config/row-diff evidence for fields referenced by Data Rules;
-- ordinary detector findings that would reveal a private Data Rule field are genericized in public output;
-- unrelated public profile evidence remains visible;
-- package/FastAPI/module version metadata aligned at `0.23.0`.
-
-Functional/UI/privacy checkpoint `ba779642aeaa971ceda38fa1799ea4f2387904a2` passed **253 tests, 1 warning** with Ruff/compile/PostgreSQL 16 and live-source smoke #100 green. Release head `12573b6f83984e1ada0f0ee878d69b294c7b6ebc` passed the final gate and live-source smoke #101. Product v0.23 merged to `main` at `e95b2d44fccbf23a2e694dab00299e54c08e2ba2`.
-
-Explicit non-goals remained: no SQL/arbitrary expression language, no AI-defined rules/Health, no detector-threshold rewrite, no new observation/incident/persistence state machine, and no unrelated UI redesign.
+Added typed `not_null`, `allowed_values`, `numeric_range`, and `row_count_range` rules; fail-closed validation; privacy-bounded findings; preflight enforcement; normal Finding → Health integration; Data Rule UI; and public Pages privacy protection. Functional/privacy checkpoint passed 253 tests / 1 warning and live-source smoke; release merged at `e95b2d44fccbf23a2e694dab00299e54c08e2ba2`.
 
 ## Product v0.24 — reliability scorecards + trust badge — complete
 
-Implemented from exact v0.23 merge baseline `e95b2d44fccbf23a2e694dab00299e54c08e2ba2`:
+Added deterministic `Not monitored` / `Trusted` / `Attention` / `Critical` badges mirroring current Health, explainable 7-day/30-day windows, incident/recovery/MTTR evidence, stale/rule occurrence counts, adaptive bounded history and count-only downstream context. Feature checkpoint passed 275 tests / 1 warning. Merged at `ac542a73db8657c455b5ea990ce5e1df3f93b1fb`.
 
-- deterministic `TrustBadge`: `Not monitored`, `Trusted`, `Attention`, `Critical`;
-- badge maps only the latest current Health and never becomes a second classifier;
-- explainable 7-day and 30-day reliability windows;
-- check count, successful-check ratio, Healthy-check ratio, Warning/Critical counts;
-- incident opening/recovery counts derived from the existing transition function;
-- stale and Data Rule failure occurrences counted once per observation;
-- MTTR only when a real incident opening timestamp is known;
-- timezone-aware inclusive windows and future-observation exclusion;
-- adaptive history loading based on configured monitoring cadence;
-- history expansion until pre-window Healthy context is available or a 50,000-observation safety cap is reached;
-- explicit `history_complete` claim-safety state;
-- no fabricated incident opening or MTTR when history is truncated;
-- dedicated scorecard API with count-only downstream-impact context;
-- downstream asset names/IDs/URLs excluded from the scorecard endpoint;
-- downstream impact cannot change Health or the trust badge;
-- compact scorecard panel added to the existing source detail without redesigning the established detail layout;
-- same deterministic aggregate scorecard rendered in static Pages and serialized in public `state.json`;
-- v0.23 private Data Rule contracts remain redacted while aggregate rule-failure occurrence counts remain available;
-- no database migration, new connector, detector-threshold change or numeric black-box score.
-
-Feature/UI/static checkpoint `4fc6e6126391da630a635b2ea9c04cfc7890d6fe` passed **275 tests, 1 warning** with Ruff/compile/PostgreSQL 16 green. Release head `381137d1a3d337585fbe749bbdca04f2820fa267` passed the final CI gate and Product v0.24 merged to `main` at `ac542a73db8657c455b5ea990ce5e1df3f93b1fb`.
-
-Live-source smoke was not triggered by the v0.24 change set and was not claimed. Post-merge `monitor-state` persistence advanced on the v0.24 release.
-
-## Product v0.25 — role-mapped Source Packs — current release
+## Product v0.25 — role-mapped Source Packs — complete
 
 Implemented from exact v0.24 merge baseline `ac542a73db8657c455b5ea990ce5e1df3f93b1fb`:
 
-- six typed workflow packs: FP&A Forecast, Sales Pipeline, Claims Register, Operations Orders, Finance Close and Customer Export;
-- semantic roles instead of canned customer-specific field names;
-- explicit analyst mapping from roles to real source columns;
-- fail-closed required-role, unknown-role, blank/untrimmed and duplicate-field validation;
-- optional roles omitted rather than guessed;
-- pack schedule defaults with explicit positive-value overrides;
-- materialization into the existing `MonitoringConfig` only;
-- generated existing freshness field, unique-key, numeric-field and bounded row-diff settings;
-- conservative generated `not_null` and non-empty `row_count_range` Data Rules only;
-- no hidden allowed-value sets, numeric bounds, detector thresholds, SQL or AI rules;
-- bounded row-diff fallback prevents omitted optional pack roles from silently expanding comparison to every source column;
-- non-persistent `GET /api/source-packs` catalog;
-- non-persistent `POST /api/source-packs/materialize` contract preview;
-- materialization does not create, persist, baseline or monitor a source;
-- materialized configs still pass through the existing authoritative `/api/preflight` boundary;
-- generated Data Rule failures reject preflight exactly like manually configured rules;
-- existing Add Source page now supports choose → role map → preview → explicit apply → normal preflight;
-- selecting a pack without applying it cannot silently alter a source;
-- applying a pack copies ordinary config into existing onboarding controls and does not persist pack metadata;
-- row-comparison fields are visible/editable after pack application rather than retained as hidden browser state;
-- any contract edit after a successful preflight invalidates stale acceptance evidence and requires preflight again;
-- no persistence migration or second source/config state model;
-- package/FastAPI/module version metadata aligned at `0.25.0` during release closeout.
+- six workflow packs: FP&A Forecast, Sales Pipeline, Claims Register, Operations Orders, Finance Close and Customer Export;
+- semantic roles rather than canned customer field names;
+- fail-closed required/unknown/blank/duplicate role mapping validation;
+- existing `MonitoringConfig` materialization only;
+- conservative generated `not_null` and non-empty `row_count_range` rules;
+- bounded row-diff fallback;
+- non-persistent catalog/materialization APIs;
+- normal preflight remains authoritative;
+- explicit choose → role map → preview → apply → preflight onboarding UX;
+- visible/editable row-comparison fields;
+- stale-preflight invalidation after any contract edit;
+- package/FastAPI/module versions aligned at `0.25.0`.
 
-Isolated checkpoints:
+Final exact merge candidate `9d8f75fe7a6bf89acd07e2cf40459a4b7a127d2e` passed CI #595 with Ruff/compile/PostgreSQL 16 green and **303 passed / 1 warning**. Product v0.25 merged to `main` at `fdab78d706b6db75e88cba3d142a15372ca5908d`.
 
-- pure pack materializer: **294 passed, 1 warning**;
-- catalog/materialization API + normal-preflight integration: **299 passed, 1 warning**;
-- initial functional/API/UI checkpoint `ca91d63e4c857a4faa154c17e29c36aafd78653d`: **302 passed, 1 warning**;
-- final editable-contract/preflight-safety checkpoint `a3f3703f6bdd29191329e497fef60234474888c0`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green;
-- release checkpoint `f3df908b3fae452d7bd4355d325bd5a82c2e2def`: **303 passed, 1 warning**, Ruff/compile/PostgreSQL 16 green and package version `0.25.0` verified.
+Live-source smoke was not triggered and is not claimed. Post-merge hosted `monitor-state` advanced to `db00ee1ea914c8bca5071f0af4fd656792182844`, verifying monitoring-state persistence after the release.
 
-Verification-note documentation changes are re-gated on their exact merge candidate head. Live-source smoke was not triggered by Product v0.25 and is not claimed because source-ingestion workflow paths were unchanged.
+## Product v0.26 — self-service Microsoft/Google connection UX — current release candidate
 
-Explicit non-goals:
+Implemented from exact v0.25 merge baseline `fdab78d706b6db75e88cba3d142a15372ca5908d`:
 
-- no connector expansion;
-- no schema guessing or AI role mapping;
-- no hidden business-state enum assumptions;
-- no numeric business-limit assumptions;
-- no detector-threshold changes;
-- no pack-specific persistence model;
-- no preflight bypass;
-- no new Health or incident state machine.
+- one shared Microsoft/Google provider model;
+- local connector-readiness states without secret/environment-name serialization;
+- fixed server credential references for external discovery;
+- Microsoft credential check, drive discovery, `.xlsx` search and workbook-table discovery;
+- Google credential check, spreadsheet discovery and GRID sheet/tab metadata discovery;
+- bounded pagination and strict Microsoft Graph next-link validation;
+- provider response bodies not copied into public errors;
+- Operator-only connection discovery POST routes;
+- no public arbitrary-environment readiness probe;
+- packaged Add Source connection browser loaded as an optional enhancement;
+- existing manual Microsoft/Google fields preserved;
+- existing Source Packs, Data Rules, row-diff fields, preflight and guarded onboarding preserved;
+- browser selections populate existing connector fields rather than a second persistence model;
+- Google A1 range suggestion only for known grids <= 5,000 rows × 100 columns; larger/unknown grids require explicit analyst range selection;
+- browser JavaScript contains no server credential names or bearer-token examples;
+- provider discovery remains dynamic-app-only; static Pages remains read-only monitoring output;
+- no ingestion, detector, source Health, persistence schema or monitoring-data changes.
 
-## Roadmap after v0.25
+Verified checkpoints:
 
-The immediate feature-focused sequence ends with Product v0.25. Prioritize product usability and real-world validation next:
+- discovery foundation `79722100a930f1928a77f20cb709d9095a6be04b`: CI #604, **316 passed / 1 warning**;
+- consolidated readiness/discovery API `4d0b369ffa14976e3d4cdcfbb21229a179ca4895`: CI #618, **327 passed / 1 warning**;
+- Add Source connection browser + security-corrected UI `6f18044d33f25be59b04d27408066daffe35c8d4`: CI #634, **330 passed / 1 warning**.
 
-1. self-service Microsoft connection UX for account authorization and workbook/table selection;
-2. self-service Google connection UX for account authorization and spreadsheet/sheet/range selection;
-3. credential lifecycle: health, reconnect and revoke;
-4. authenticated hosted pilot on managed PostgreSQL;
-5. real Microsoft/Google/Power BI/email/Teams end-to-end failure drills;
-6. five-minute first-value onboarding with test alerts and safe failure simulation;
+All three exact checkpoints passed Ruff, compile/import checks and the PostgreSQL 16-backed suite.
+
+Real Microsoft/Google tenant discovery is not claimed because no real provider credential was supplied for repository validation.
+
+Release-only version/documentation changes are re-gated on their exact head before merge.
+
+## Roadmap after v0.26
+
+Prioritize real credential lifecycle and pilot validation rather than connector accumulation:
+
+1. OAuth authorization-code connect/callback flow;
+2. secure token/refresh-token storage and tenant/account identity evidence;
+3. credential health, reconnect and revoke;
+4. authenticated hosted managed-PostgreSQL pilot;
+5. real Microsoft/Google/Power BI/email/Teams failure drills;
+6. five-minute first-value onboarding with safe test/simulation controls;
 7. customer/pilot validation before broad connector accumulation or billing complexity.
 
 AI investigation remains downstream of deterministic evidence and must not redefine Health classification.
