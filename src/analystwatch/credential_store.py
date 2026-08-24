@@ -10,6 +10,7 @@ from .connection_discovery import ConnectionProvider
 from .credential_crypto import (
     CredentialCryptoError,
     CredentialKeyring,
+    CredentialSecretKind,
     EncryptedCredentialSecret,
     credential_associated_data,
 )
@@ -105,6 +106,44 @@ class CredentialStore(Protocol):
     ) -> ProviderCredentialRecord: ...
 
 
+def validate_credential_replacement(
+    existing: ProviderCredentialRecord,
+    replacement: ProviderCredentialRecord,
+) -> None:
+    if (existing.workspace_id, existing.credential_id) != (
+        replacement.workspace_id,
+        replacement.credential_id,
+    ):
+        raise ValueError("Credential replacement identity does not match the stored record")
+    if existing.provider != replacement.provider or existing.subject_id != replacement.subject_id:
+        raise ValueError(
+            "Credential account/provider replacement requires an explicit account-switch flow"
+        )
+    if existing.created_at != replacement.created_at:
+        raise ValueError("Credential created_at is immutable")
+    if replacement.updated_at < existing.updated_at:
+        raise ValueError("Credential update is older than the stored record")
+    if existing.revoked_at is not None and replacement.revoked_at is None:
+        raise ValueError("A revoked credential cannot be silently reactivated")
+
+
+def revoke_credential_record(
+    existing: ProviderCredentialRecord,
+    *,
+    revoked_at: datetime,
+) -> ProviderCredentialRecord:
+    if revoked_at.tzinfo is None or revoked_at.utcoffset() is None:
+        raise ValueError("revoked_at must be timezone-aware")
+    if existing.revoked_at is not None:
+        return existing.model_copy(deep=True)
+    if revoked_at < existing.updated_at:
+        raise ValueError("revoked_at must not precede the latest credential update")
+    return existing.model_copy(
+        update={"revoked_at": revoked_at, "updated_at": revoked_at},
+        deep=True,
+    )
+
+
 class MemoryCredentialStore:
     def __init__(self) -> None:
         self._records: dict[tuple[str, str], ProviderCredentialRecord] = {}
@@ -116,17 +155,7 @@ class MemoryCredentialStore:
         key = (record.workspace_id, record.credential_id)
         existing = self._records.get(key)
         if existing is not None:
-            if existing.provider != record.provider or existing.subject_id != record.subject_id:
-                raise ValueError(
-                    "Credential account/provider replacement requires an explicit "
-                    "account-switch flow"
-                )
-            if existing.created_at != record.created_at:
-                raise ValueError("Credential created_at is immutable")
-            if record.updated_at < existing.updated_at:
-                raise ValueError("Credential update is older than the stored record")
-            if existing.revoked_at is not None and record.revoked_at is None:
-                raise ValueError("A revoked credential cannot be silently reactivated")
+            validate_credential_replacement(existing, record)
         stored = record.model_copy(deep=True)
         self._records[key] = stored
         return stored.model_copy(deep=True)
@@ -154,20 +183,11 @@ class MemoryCredentialStore:
     ) -> ProviderCredentialRecord:
         workspace_id = _validated_lookup_workspace(workspace_id)
         credential_id = _validated_credential_id(credential_id)
-        if revoked_at.tzinfo is None or revoked_at.utcoffset() is None:
-            raise ValueError("revoked_at must be timezone-aware")
         key = (workspace_id, credential_id)
         record = self._records.get(key)
         if record is None:
             raise KeyError(credential_id)
-        if record.revoked_at is not None:
-            return record.model_copy(deep=True)
-        if revoked_at < record.updated_at:
-            raise ValueError("revoked_at must not precede the latest credential update")
-        revoked = record.model_copy(
-            update={"revoked_at": revoked_at, "updated_at": revoked_at},
-            deep=True,
-        )
+        revoked = revoke_credential_record(record, revoked_at=revoked_at)
         self._records[key] = revoked
         return revoked.model_copy(deep=True)
 
@@ -244,7 +264,7 @@ def unseal_refresh_token(
 def _unseal(
     record: ProviderCredentialRecord,
     keyring: CredentialKeyring,
-    secret_kind: str,
+    secret_kind: CredentialSecretKind,
     envelope: EncryptedCredentialSecret,
 ) -> str:
     if record.revoked_at is not None:
@@ -254,7 +274,7 @@ def _unseal(
         record.provider,
         record.credential_id,
         record.subject_id,
-        secret_kind,  # type: ignore[arg-type]
+        secret_kind,
     )
     plaintext = keyring.decrypt(envelope, associated_data=associated_data)
     try:
