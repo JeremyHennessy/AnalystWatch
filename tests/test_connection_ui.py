@@ -56,7 +56,9 @@ def test_connection_browser_exposes_provider_browse_flow_and_bounded_google_rang
     assert "Enter an explicit A1 range before preflight" in script
 
 
-def test_connection_browser_never_embeds_server_credential_names_or_token_examples(tmp_path) -> None:
+def test_connection_browser_never_embeds_server_credential_names_or_token_examples(
+    tmp_path,
+) -> None:
     client = TestClient(create_app(tmp_path / "connection-private-ui.db"))
 
     script = client.get("/static/connection_onboard.js").text
