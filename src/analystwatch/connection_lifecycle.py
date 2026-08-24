@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
 
 import httpx
@@ -7,11 +8,17 @@ from pydantic import BaseModel
 
 from .connection_discovery import (
     DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
+    ConnectionCheck,
     ConnectionDiscoveryError,
     ConnectionProvider,
     check_connection,
 )
-from .connection_identity import ConnectionAccountIdentity, inspect_connection_identity
+from .connection_identity import (
+    ConnectionAccountIdentity,
+    inspect_connection_identity,
+    inspect_connection_identity_with_access_token,
+)
+from .connection_oauth import check_connection_with_access_token
 
 
 class CredentialLifecycleState(str, Enum):
@@ -49,7 +56,7 @@ def credential_lifecycle(
     timeout_seconds: float = DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
     client: httpx.Client | None = None,
 ) -> CredentialLifecycle:
-    """Derive non-persistent credential lifecycle evidence from provider requests."""
+    """Derive non-persistent lifecycle evidence for an environment-backed credential."""
     provider = ConnectionProvider(provider)
     check = check_connection(
         provider,
@@ -57,6 +64,50 @@ def credential_lifecycle(
         timeout_seconds=timeout_seconds,
         client=client,
     )
+    return _derive_credential_lifecycle(
+        provider,
+        check,
+        lambda: inspect_connection_identity(
+            provider,
+            environment_variable,
+            timeout_seconds=timeout_seconds,
+            client=client,
+        ),
+    )
+
+
+def credential_lifecycle_with_access_token(
+    provider: ConnectionProvider | str,
+    access_token: str,
+    *,
+    timeout_seconds: float = DEFAULT_DISCOVERY_TIMEOUT_SECONDS,
+    client: httpx.Client | None = None,
+) -> CredentialLifecycle:
+    """Derive lifecycle evidence for one decrypted in-memory OAuth access token."""
+    provider = ConnectionProvider(provider)
+    check = check_connection_with_access_token(
+        provider,
+        access_token,
+        timeout_seconds=timeout_seconds,
+        client=client,
+    )
+    return _derive_credential_lifecycle(
+        provider,
+        check,
+        lambda: inspect_connection_identity_with_access_token(
+            provider,
+            access_token,
+            timeout_seconds=timeout_seconds,
+            client=client,
+        ),
+    )
+
+
+def _derive_credential_lifecycle(
+    provider: ConnectionProvider,
+    check: ConnectionCheck,
+    identity_loader: Callable[[], ConnectionAccountIdentity],
+) -> CredentialLifecycle:
     if not check.configured:
         return CredentialLifecycle(
             provider=provider,
@@ -97,12 +148,7 @@ def credential_lifecycle(
         )
 
     try:
-        identity = inspect_connection_identity(
-            provider,
-            environment_variable,
-            timeout_seconds=timeout_seconds,
-            client=client,
-        )
+        identity = identity_loader()
     except ConnectionDiscoveryError as exc:
         if exc.code == "provider_rejected" and exc.http_status in {401, 403}:
             guidance = (
