@@ -93,9 +93,11 @@ def begin_authorization_transaction(
 ) -> OAuthAuthorizationStart:
     _validate_now(now)
     if ttl_minutes < 1 or ttl_minutes > MAX_AUTHORIZATION_TTL_MINUTES:
-        raise ValueError(
-            f"Authorization transaction TTL must be between 1 and {MAX_AUTHORIZATION_TTL_MINUTES} minutes"
+        message = (
+            "Authorization transaction TTL must be between 1 and "
+            f"{MAX_AUTHORIZATION_TTL_MINUTES} minutes"
         )
+        raise ValueError(message)
     workspace_id = validate_workspace_id(workspace_id)
     provider = ConnectionProvider(provider)
     user_id = _trimmed_identifier(user_id, "user_id", 256)
