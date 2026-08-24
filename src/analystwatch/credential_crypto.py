@@ -15,6 +15,7 @@ from .workspace import validate_workspace_id
 
 AES_256_KEY_BYTES = 32
 AES_GCM_NONCE_BYTES = 12
+CredentialSecretKind = Literal["access_token", "refresh_token"]
 
 
 class CredentialCryptoError(ValueError):
@@ -119,14 +120,22 @@ def credential_associated_data(
     workspace_id: str,
     provider: ConnectionProvider | str,
     credential_id: str,
+    subject_id: str,
+    secret_kind: CredentialSecretKind,
 ) -> bytes:
     workspace_id = validate_workspace_id(workspace_id)
     provider = ConnectionProvider(provider)
     if not credential_id or credential_id != credential_id.strip() or len(credential_id) > 256:
         raise ValueError("credential_id must be non-empty, trimmed, and at most 256 characters")
+    if not subject_id or subject_id != subject_id.strip() or len(subject_id) > 512:
+        raise ValueError("subject_id must be non-empty, trimmed, and at most 512 characters")
+    if secret_kind not in {"access_token", "refresh_token"}:
+        raise ValueError("secret_kind must be access_token or refresh_token")
     payload = {
         "credential_id": credential_id,
         "provider": provider.value,
+        "secret_kind": secret_kind,
+        "subject_id": subject_id,
         "version": 1,
         "workspace_id": workspace_id,
     }
