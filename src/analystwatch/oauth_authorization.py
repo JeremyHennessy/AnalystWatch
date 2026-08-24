@@ -179,8 +179,20 @@ def consume_authorization_transaction(
 def _revalidate_transaction(
     transaction: OAuthAuthorizationTransaction,
 ) -> OAuthAuthorizationTransaction:
+    payload = {
+        "transaction_id": transaction.transaction_id,
+        "workspace_id": transaction.workspace_id,
+        "user_id": transaction.user_id,
+        "provider": transaction.provider,
+        "credential_id": transaction.credential_id,
+        "state_sha256_b64": transaction.state_sha256_b64,
+        "pkce_verifier": transaction.pkce_verifier,
+        "created_at": transaction.created_at,
+        "expires_at": transaction.expires_at,
+        "consumed_at": transaction.consumed_at,
+    }
     try:
-        return OAuthAuthorizationTransaction.model_validate(transaction.model_dump(mode="python"))
+        return OAuthAuthorizationTransaction.model_validate(payload)
     except ValueError as exc:
         raise OAuthAuthorizationError("Authorization transaction metadata is invalid") from exc
 
