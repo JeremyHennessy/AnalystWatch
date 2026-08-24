@@ -6,7 +6,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from analystwatch.credential_crypto import CredentialKeyring
-from analystwatch.oauth_authorization import OAuthAuthorizationError, begin_authorization_transaction
+from analystwatch.oauth_authorization import (
+    OAuthAuthorizationError,
+    begin_authorization_transaction,
+)
 from analystwatch.oauth_authorization_store import (
     MemoryOAuthAuthorizationStore,
     PostgresOAuthAuthorizationStore,
