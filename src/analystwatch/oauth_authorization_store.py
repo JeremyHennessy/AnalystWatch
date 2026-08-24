@@ -10,6 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .connection_discovery import ConnectionProvider
 from .credential_crypto import CredentialKeyring
 from .oauth_authorization import (
     OAuthAuthorizationConsumption,
@@ -20,6 +21,7 @@ from .oauth_authorization import (
     revalidate_authorization_transaction,
 )
 from .postgres_storage import POSTGRES_SCHEMA
+from .workspace import validate_workspace_id
 
 
 @runtime_checkable
@@ -39,6 +41,8 @@ class OAuthAuthorizationStore(Protocol):
         keyring: CredentialKeyring,
         *,
         now: datetime,
+        expected_workspace_id: str | None = None,
+        expected_provider: ConnectionProvider | str | None = None,
     ) -> OAuthAuthorizationConsumption: ...
 
 
@@ -78,6 +82,8 @@ class MemoryOAuthAuthorizationStore(OAuthAuthorizationStore):
         keyring: CredentialKeyring,
         *,
         now: datetime,
+        expected_workspace_id: str | None = None,
+        expected_provider: ConnectionProvider | str | None = None,
     ) -> OAuthAuthorizationConsumption:
         state_digest = authorization_state_digest(state)
         with self._lock:
@@ -85,6 +91,11 @@ class MemoryOAuthAuthorizationStore(OAuthAuthorizationStore):
             if transaction_id is None:
                 raise OAuthAuthorizationError("Authorization transaction was not found")
             transaction = self._records[transaction_id]
+            _validate_expected_binding(
+                transaction,
+                expected_workspace_id=expected_workspace_id,
+                expected_provider=expected_provider,
+            )
             consumed = consume_authorization_transaction(
                 transaction,
                 keyring,
@@ -162,6 +173,8 @@ class SQLiteOAuthAuthorizationStore(OAuthAuthorizationStore):
         keyring: CredentialKeyring,
         *,
         now: datetime,
+        expected_workspace_id: str | None = None,
+        expected_provider: ConnectionProvider | str | None = None,
     ) -> OAuthAuthorizationConsumption:
         state_digest = authorization_state_digest(state)
         with self.connect() as db:
@@ -177,6 +190,11 @@ class SQLiteOAuthAuthorizationStore(OAuthAuthorizationStore):
             if row is None:
                 raise OAuthAuthorizationError("Authorization transaction was not found")
             transaction = OAuthAuthorizationTransaction.model_validate_json(row["record_json"])
+            _validate_expected_binding(
+                transaction,
+                expected_workspace_id=expected_workspace_id,
+                expected_provider=expected_provider,
+            )
             consumed = consume_authorization_transaction(
                 transaction,
                 keyring,
@@ -264,6 +282,8 @@ class PostgresOAuthAuthorizationStore(OAuthAuthorizationStore):
         keyring: CredentialKeyring,
         *,
         now: datetime,
+        expected_workspace_id: str | None = None,
+        expected_provider: ConnectionProvider | str | None = None,
     ) -> OAuthAuthorizationConsumption:
         state_digest = authorization_state_digest(state)
         with self.connect() as db:
@@ -279,6 +299,11 @@ class PostgresOAuthAuthorizationStore(OAuthAuthorizationStore):
             if row is None:
                 raise OAuthAuthorizationError("Authorization transaction was not found")
             transaction = OAuthAuthorizationTransaction.model_validate(row["record_json"])
+            _validate_expected_binding(
+                transaction,
+                expected_workspace_id=expected_workspace_id,
+                expected_provider=expected_provider,
+            )
             consumed = consume_authorization_transaction(
                 transaction,
                 keyring,
@@ -306,6 +331,22 @@ def _transaction_for_create(
     if transaction.consumed_at is not None:
         raise OAuthAuthorizationError("Authorization transaction must be unconsumed when created")
     return transaction
+
+
+def _validate_expected_binding(
+    transaction: OAuthAuthorizationTransaction,
+    *,
+    expected_workspace_id: str | None,
+    expected_provider: ConnectionProvider | str | None,
+) -> None:
+    if expected_workspace_id is not None:
+        workspace_id = validate_workspace_id(expected_workspace_id)
+        if transaction.workspace_id != workspace_id:
+            raise OAuthAuthorizationError("Authorization transaction does not match callback workspace")
+    if expected_provider is not None:
+        provider = ConnectionProvider(expected_provider)
+        if transaction.provider != provider:
+            raise OAuthAuthorizationError("Authorization transaction does not match callback provider")
 
 
 def _validate_transaction_id(transaction_id: str) -> str:
