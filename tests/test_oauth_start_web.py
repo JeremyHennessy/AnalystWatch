@@ -91,7 +91,7 @@ def test_local_start_redirect_persists_before_redirect_and_binds_local_user(
     records = _rows(app)
     assert len(records) == 1
     record = records[0]
-    assert record.workspace_id == "default-local"
+    assert record.workspace_id == "local"
     assert record.user_id == "local-operator"
     assert record.provider.value == "microsoft"
     assert record.credential_id == "microsoft-primary"
