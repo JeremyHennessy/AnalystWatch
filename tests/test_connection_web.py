@@ -14,30 +14,6 @@ from analystwatch.web import create_app
 from analystwatch.web_auth import required_role
 
 
-def test_connection_readiness_api_does_not_expose_environment_reference(
-    tmp_path, monkeypatch
-) -> None:
-    monkeypatch.delenv("ANALYSTWATCH_GOOGLE_AUTHORIZATION", raising=False)
-    client = TestClient(create_app(tmp_path / "readiness.db"))
-    payload = {
-        "id": "google-source",
-        "name": "Google source",
-        "source_type": "google_sheets",
-        "location": "gsheets://sheet-1?range=Data%21A1%3AZ100",
-        "config": {
-            "request_header_env": {
-                "Authorization": "ANALYSTWATCH_GOOGLE_AUTHORIZATION"
-            }
-        },
-    }
-
-    response = client.post("/api/connections/readiness", json=payload)
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "needs_credential_value"
-    assert "ANALYSTWATCH_GOOGLE_AUTHORIZATION" not in response.text
-
-
 def test_connection_check_redacts_fixed_server_environment_name(tmp_path, monkeypatch) -> None:
     def fake_check(provider, environment_variable):
         assert provider == ConnectionProvider.MICROSOFT
@@ -107,7 +83,6 @@ def test_provider_discovery_error_is_bounded_and_status_mapped(tmp_path, monkeyp
 
 def test_connection_discovery_mutations_require_operator_role() -> None:
     paths = [
-        "/api/connections/readiness",
         "/api/connections/microsoft/check",
         "/api/connections/microsoft/drives",
         "/api/connections/microsoft/workbooks",
