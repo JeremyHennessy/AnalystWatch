@@ -342,11 +342,11 @@ def _validate_expected_binding(
     if expected_workspace_id is not None:
         workspace_id = validate_workspace_id(expected_workspace_id)
         if transaction.workspace_id != workspace_id:
-            raise OAuthAuthorizationError("Authorization transaction does not match callback workspace")
+            raise OAuthAuthorizationError("Authorization callback workspace mismatch")
     if expected_provider is not None:
         provider = ConnectionProvider(expected_provider)
         if transaction.provider != provider:
-            raise OAuthAuthorizationError("Authorization transaction does not match callback provider")
+            raise OAuthAuthorizationError("Authorization callback provider mismatch")
 
 
 def _validate_transaction_id(transaction_id: str) -> str:
