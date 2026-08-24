@@ -40,7 +40,10 @@ def complete_oauth_authorization(
     workspace_id = validate_workspace_id(workspace_id)
     if config.public.provider != provider:
         raise OAuthCallbackError("OAuth callback provider configuration did not match the route.")
-    code = validate_authorization_code(code)
+    try:
+        code = validate_authorization_code(code)
+    except OAuthTokenExchangeError as exc:
+        raise OAuthCallbackError(str(exc)) from exc
     try:
         consumed = authorization_store.consume(
             state,
