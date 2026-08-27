@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from analystwatch.config import load_sources
 from analystwatch.models import SourceType
 
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "fda.sources.example.json"
+CONFIG_PATH = "config/fda.sources.example.json"
 
 
 def test_fda_examples_are_disabled_bounded_public_api_sources() -> None:
