@@ -38,13 +38,24 @@ from .profile import profile_dataframe
 from .row_diff import build_row_diff_evidence, build_row_snapshot
 from .row_diff_storage import prune_row_diff_payloads
 from .scheduler import run_decision
+from .source_credentials import SourceCredentialResolver, StoredSourceCredentialResolver
 from .storage import Storage
 
 
 class MonitorService:
-    def __init__(self, storage: Storage, execution_owner: str | None = None):
+    def __init__(
+        self,
+        storage: Storage,
+        execution_owner: str | None = None,
+        source_credential_resolver: SourceCredentialResolver | None = None,
+    ):
         self.storage = storage
         self.storage.initialize()
+        self.source_credential_resolver = (
+            source_credential_resolver
+            if source_credential_resolver is not None
+            else StoredSourceCredentialResolver.from_monitoring_store(storage)
+        )
         default_owner = os.environ.get("ANALYSTWATCH_EXECUTION_OWNER")
         if default_owner is None:
             default_owner = f"{socket.gethostname()}:{os.getpid()}"
@@ -74,7 +85,12 @@ class MonitorService:
         client: httpx.Client | None = None,
         now: datetime | None = None,
     ) -> SourcePreflight:
-        return preflight_source(source, client=client, now=now)
+        return preflight_source(
+            source,
+            client=client,
+            now=now,
+            credential_resolver=self.source_credential_resolver,
+        )
 
     def onboard_source(
         self,
@@ -494,7 +510,11 @@ class MonitorService:
             item.profile for item in reference_observations if item.profile is not None
         ]
 
-        result = ingest_source(source, client=client)
+        result = ingest_source(
+            source,
+            client=client,
+            credential_resolver=self.source_credential_resolver,
+        )
         findings: list[Finding] = []
         profile = None
         row_snapshot = None

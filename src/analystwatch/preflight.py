@@ -12,6 +12,7 @@ from .detectors import detect_freshness
 from .ingest import ingest_source
 from .models import DatasetProfile, HealthStatus, SourceDefinition
 from .profile import profile_dataframe
+from .source_credentials import SourceCredentialResolver
 
 
 class ContractIssue(BaseModel):
@@ -47,9 +48,14 @@ def preflight_source(
     *,
     client: httpx.Client | None = None,
     now: datetime | None = None,
+    credential_resolver: SourceCredentialResolver | None = None,
 ) -> SourcePreflight:
     """Inspect one source without persisting it or creating a baseline."""
-    result = ingest_source(source, client=client)
+    result = ingest_source(
+        source,
+        client=client,
+        credential_resolver=credential_resolver,
+    )
     if not result.available or result.dataframe is None:
         return SourcePreflight(
             source=source,
