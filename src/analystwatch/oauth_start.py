@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 
 from .connection_discovery import ConnectionProvider
 from .credential_crypto import CredentialKeyring
-from .oauth_authorization import begin_authorization_transaction
+from .oauth_authorization import OAuthAuthorizationOperation, begin_authorization_transaction
 from .oauth_authorization_store import OAuthAuthorizationStore
 from .oauth_provider_config import OAuthProviderRuntimeConfig
 
@@ -19,6 +19,7 @@ def begin_persisted_oauth_authorization(
     user_id: str,
     credential_id: str,
     now: datetime,
+    operation: OAuthAuthorizationOperation = "connect",
 ) -> str:
     started = begin_authorization_transaction(
         keyring,
@@ -27,6 +28,7 @@ def begin_persisted_oauth_authorization(
         provider=config.public.provider,
         credential_id=credential_id,
         now=now,
+        operation=operation,
     )
     authorization_url = build_provider_authorization_url(config, started)
     store.create(started.transaction)
@@ -51,4 +53,6 @@ def build_provider_authorization_url(config: OAuthProviderRuntimeConfig, started
         parameters["include_granted_scopes"] = "true"
     else:  # pragma: no cover - config model constrains this today
         raise ValueError("Unsupported OAuth provider")
+    if started.transaction.operation == "reconnect":
+        parameters["prompt"] = "consent"
     return f"{public.authorization_endpoint}?{urlencode(parameters)}"

@@ -10,7 +10,7 @@ from .connection_discovery import ConnectionProvider
 from .credential_persistence import PostgresCredentialStore, SQLiteCredentialStore
 from .credential_runtime import CredentialKeyConfigurationError, load_credential_keyring
 from .credential_store import CredentialStore
-from .oauth_authorization import OAuthAuthorizationError
+from .oauth_authorization import OAuthAuthorizationError, OAuthAuthorizationOperation
 from .oauth_authorization_store import (
     OAuthAuthorizationStore,
     PostgresOAuthAuthorizationStore,
@@ -44,6 +44,7 @@ def configure_oauth_start_web(app: FastAPI) -> OAuthAuthorizationStore:
             request,
             ConnectionProvider.MICROSOFT,
             credential_id,
+            operation="connect",
         )
 
     def start_google(request: Request, credential_id: str) -> RedirectResponse:
@@ -52,6 +53,25 @@ def configure_oauth_start_web(app: FastAPI) -> OAuthAuthorizationStore:
             request,
             ConnectionProvider.GOOGLE,
             credential_id,
+            operation="connect",
+        )
+
+    def reconnect_microsoft(request: Request, credential_id: str) -> RedirectResponse:
+        return _start_redirect(
+            app,
+            request,
+            ConnectionProvider.MICROSOFT,
+            credential_id,
+            operation="reconnect",
+        )
+
+    def reconnect_google(request: Request, credential_id: str) -> RedirectResponse:
+        return _start_redirect(
+            app,
+            request,
+            ConnectionProvider.GOOGLE,
+            credential_id,
+            operation="reconnect",
         )
 
     def callback_microsoft(
@@ -95,6 +115,20 @@ def configure_oauth_start_web(app: FastAPI) -> OAuthAuthorizationStore:
         status_code=303,
     )
     app.add_api_route(
+        "/api/oauth/microsoft/reconnect/start",
+        reconnect_microsoft,
+        methods=["POST"],
+        response_class=RedirectResponse,
+        status_code=303,
+    )
+    app.add_api_route(
+        "/api/oauth/google/reconnect/start",
+        reconnect_google,
+        methods=["POST"],
+        response_class=RedirectResponse,
+        status_code=303,
+    )
+    app.add_api_route(
         "/api/oauth/microsoft/callback",
         callback_microsoft,
         methods=["GET"],
@@ -114,13 +148,30 @@ def _start_redirect(
     request: Request,
     provider: ConnectionProvider,
     credential_id: str,
+    *,
+    operation: OAuthAuthorizationOperation,
 ) -> RedirectResponse:
     user_id = _request_user_id(request)
     try:
-        if app.state.oauth_credential_store.get(app.state.workspace_id, credential_id) is not None:
-            raise OAuthAuthorizationError(
-                "Credential ID is already connected; use the explicit reconnect flow."
-            )
+        existing = app.state.oauth_credential_store.get(app.state.workspace_id, credential_id)
+        if operation == "connect":
+            if existing is not None:
+                raise OAuthAuthorizationError(
+                    "Credential ID is already connected; use the explicit reconnect flow."
+                )
+        else:
+            if existing is None:
+                raise OAuthAuthorizationError(
+                    "Reconnect requires an existing stored OAuth credential."
+                )
+            if existing.provider != provider:
+                raise OAuthAuthorizationError(
+                    "Stored OAuth credential provider does not match the reconnect provider."
+                )
+            if existing.revoked_at is not None:
+                raise OAuthAuthorizationError(
+                    "Revoked OAuth credential cannot be silently reactivated by reconnect."
+                )
         config = load_oauth_provider_config(provider)
         keyring = load_credential_keyring()
         authorization_url = begin_persisted_oauth_authorization(
@@ -131,6 +182,7 @@ def _start_redirect(
             user_id=user_id,
             credential_id=credential_id,
             now=datetime.now(timezone.utc),
+            operation=operation,
         )
     except (OAuthProviderConfigurationError, CredentialKeyConfigurationError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -248,6 +300,6 @@ def _default_credential_store(app: FastAPI) -> CredentialStore:
 
     path = getattr(raw_storage, "path", None)
     if not isinstance(path, Path):
-        raise ValueError("SQLite credential store requires runtime database path")
+        raise ValueError("SQLite OAuth store requires runtime database path")
     credential_path = path.with_suffix(path.suffix + ".credentials.db")
     return SQLiteCredentialStore(credential_path)
