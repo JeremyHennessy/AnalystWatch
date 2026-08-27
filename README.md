@@ -2,181 +2,155 @@
 
 **The trust layer for analyst-owned reporting.**
 
-AnalystWatch monitors analyst-owned data inputs for silent reliability failures, explains the deterministic evidence behind trust changes, shows downstream reporting exposure, and keeps ambiguous delivery outcomes visible until an operator resolves them.
+AnalystWatch monitors analyst-owned data inputs for silent reliability failures, explains deterministic evidence behind trust changes, shows downstream reporting exposure, and keeps ambiguous operational outcomes visible until reviewed.
 
 The product question is: **can I trust the data feeding this analysis or report today, what changed, what has been happening recently, and what is affected if I cannot?**
 
-## Product v0.31 status
+## Product v0.32 status
 
-Product v0.31 adds **atomic OAuth refresh-token rotation** to the encrypted Microsoft/Google credential path introduced in v0.28-v0.30.
+Product v0.32 adds **explicit same-account OAuth reconnect** for stored Microsoft 365 and Google credentials.
 
-A monitored Microsoft 365 Excel or Google Sheets source that explicitly binds a stored OAuth credential can now recover from an expired access token without silently switching accounts or falling back to environment authorization.
+Reconnect is deliberately narrower than account switching. A credential may be renewed only when the provider callback resolves the **same provider subject/account ID already bound to that credential**. A different account is rejected and the existing credential remains unchanged.
 
-The release preserves the existing monitoring engine. It does **not** change detector thresholds, Data Rules, Health classification, baselines, incidents, notification semantics, scorecards, dependencies, FDA examples or monitoring persistence.
+The release preserves the monitoring engine. It does not change detector thresholds, Data Rules, Health classification, baselines, incidents, notifications, reliability scorecards, dependencies, FDA examples, source configuration or monitoring persistence.
 
-## Stored source credential path
+## Reconnect contract
 
-Microsoft Excel and Google Sheets sources may bind an explicit workspace-scoped credential:
-
-```text
-credential_id=<stored OAuth credential>
-```
-
-The same resolver is used for:
-
-- source preflight;
-- onboarding preflight;
-- source update preflight;
-- manual checks;
-- `check-all`;
-- scheduled `check-due` execution.
-
-A configured stored credential never silently falls back to an environment-backed account.
-
-Existing Microsoft/Google sources without `credential_id` retain the established `request_header_env` path. Generic REST API sources remain unchanged.
-
-## Expired-token refresh
-
-When a bound stored access token is expired, or has no verified expiry, the resolver attempts refresh only when the fixed provider OAuth runtime is configured and the encrypted credential contains a refresh token.
-
-The refresh contract is:
+Microsoft and Google now expose explicit reconnect start endpoints:
 
 ```text
-bound source
-→ workspace credential
-→ expired / unknown access-token expiry
-→ atomic credential lock
-→ fixed Microsoft / Google token endpoint
-→ refreshed access token
-→ provider account identity re-check
-→ same subject required
-→ encrypted token replacement
-→ existing source reader
+POST /api/oauth/microsoft/reconnect/start
+POST /api/oauth/google/reconnect/start
 ```
 
-If any trust check fails, monitoring fails closed through the normal source-availability evidence path.
+Reconnect requires:
 
-## Rotation rules
+- an existing stored credential;
+- the reconnect provider to match the stored provider;
+- the credential to be active rather than locally revoked;
+- one-time OAuth state + PKCE validation;
+- successful provider code exchange;
+- provider identity verification;
+- the returned provider subject ID to exactly match the stored subject ID.
 
-AnalystWatch preserves provider-specific refresh behavior without weakening account ownership:
+Only after those checks pass may AnalystWatch replace encrypted access/refresh-token material. The credential keeps the same workspace, provider, credential ID, subject ID and original `created_at`.
 
-- **Microsoft:** when the refresh response returns a replacement refresh token, the new token replaces the old encrypted refresh token.
-- **Google:** when the refresh response omits a replacement refresh token, AnalystWatch preserves the existing encrypted refresh token.
-- returned scope evidence, when present, must remain within the fixed configured provider scope set;
-- the refreshed access token must resolve to the same provider subject/account ID already bound to the credential;
-- a different provider account is rejected and requires an explicit future reconnect/account-switch workflow;
-- revoked credentials are never refreshed;
-- missing refresh-token state requires reconnect rather than guessing another credential path.
+If a reconnect token response omits a replacement refresh token, the existing encrypted refresh token is preserved.
 
-The existing Google authorization-start flow already requests offline access, and the Microsoft scope set already includes `offline_access`.
+## Account switching is not reconnect
 
-## Concurrency safety
+Reconnect will not silently change Microsoft or Google accounts.
 
-Refresh-token rotation is serialized around the individual credential update so two workers cannot independently refresh the same credential and overwrite a newly rotated refresh token with stale state.
+```text
+existing subject == callback subject
+    → reconnect may replace encrypted tokens
 
-Verified locking paths:
+existing subject != callback subject
+    → reject
+    → preserve existing credential
+    → explicit account-switch workflow required
+```
 
-- process lock for `MemoryCredentialStore`;
-- SQLite `BEGIN IMMEDIATE` for the credential sidecar;
-- PostgreSQL row-level `SELECT ... FOR UPDATE` for `PostgresCredentialStore`.
+This protects monitored sources that reference a stable `credential_id` from unexpectedly reading a different account after a reconnect attempt.
 
-The provider token request and refreshed account-identity check intentionally occur while that credential update is claimed.
+Revoked credentials are also not silently reactivated by reconnect.
 
-Regression coverage proves two concurrent SQLite refresh attempts make **one** token-endpoint call, and two concurrent PostgreSQL refresh attempts also make **one** token-endpoint call.
+## Authenticated operation intent
 
-## Encryption and identity preservation
+OAuth authorization transactions now distinguish:
 
-Token plaintext is decrypted only in memory and encrypted again before persistence.
+```text
+connect
+reconnect
+```
 
-Refresh preserves the credential identity boundary:
+New transactions use authorization associated-data version 2. The operation is included in the AES-GCM associated data protecting the PKCE verifier. Changing a v2 transaction from connect to reconnect or vice versa therefore invalidates verifier authentication.
 
-- workspace ID;
-- provider;
-- credential ID;
-- provider subject/account ID;
-- original `created_at`.
+Already-persisted v1 transactions remain compatible for their short existing TTL, but v1 can represent **connect only**. It cannot be reinterpreted as reconnect.
 
-The update advances `updated_at` and replaces access-token/expiry metadata only after the refreshed provider identity has been verified.
+Reconnect authorization explicitly requests provider consent. Existing Google offline-access and Microsoft `offline_access` behavior remains unchanged.
 
-Known access/refresh token values are not serialized into source definitions, preflight results or observations.
+## Authorization boundary
 
-## Failure behavior
+In signed-bearer mode:
 
-Examples of bounded refresh failures include:
+- existing OAuth connect remains an Operator mutation;
+- reconnect start is intentionally **Admin-only**;
+- provider callbacks remain bearer-exempt but are protected by one-time state, PKCE, workspace/provider binding and authenticated operation intent.
 
-- provider runtime credentials are not configured;
-- stored refresh token is missing;
-- credential is revoked;
-- provider token endpoint rejects the refresh;
-- provider returns unusable token evidence;
-- refreshed scope evidence exceeds the configured scope set;
-- refreshed access token resolves to another provider account;
-- encrypted refresh/access token cannot be decrypted safely.
+Reconnect is treated as an administrative credential mutation because one credential can be referenced by multiple monitored sources.
 
-Provider response bodies and token material are not copied into AnalystWatch error messages.
+## Product v0.31 refresh retained
+
+The v0.31 automatic refresh path remains unchanged:
+
+- expired stored credentials can refresh through fixed Microsoft/Google token endpoints;
+- refreshed tokens must resolve the same provider subject;
+- Microsoft refresh-token rotation is persisted;
+- Google can preserve its existing refresh token when the provider omits a replacement;
+- concurrent SQLite/PostgreSQL refreshes serialize so only one worker rotates a given refresh token.
+
+v0.32 adds the explicit operator-driven same-account recovery path around that existing identity boundary; it does not replace automatic refresh.
 
 ## Verification
 
-Frozen functional checkpoint:
+Frozen v0.32 functional checkpoint:
 
 ```text
-957a4fbaa94bf77be4eb757ed39906a9bc430ea2
+26b2007b78df3eb15f5049c94d07b97292298183
 ```
 
 Verified on that functional head:
 
 - Ruff: success;
 - compile/import: success;
-- PostgreSQL 16-backed suite: **460 passed, 1 warning**;
-- Microsoft access/refresh-token rotation;
-- Google refresh-token preservation when no replacement is returned;
-- provider-account mismatch leaves the existing credential unchanged;
-- rejected provider responses do not leak response-body secrets;
-- missing refresh token performs no provider call;
-- concurrent SQLite refresh is serialized to one token request;
-- concurrent PostgreSQL refresh is serialized to one token request;
-- source resolver refreshes an expired Google credential once and reuses the refreshed record.
+- PostgreSQL 16-backed suite: **467 passed, 1 warning**;
+- AAD-v2 reconnect/connect operation tampering fails verifier authentication;
+- legacy AAD-v1 connect transactions remain consumable;
+- same-account reconnect succeeds with Memory, SQLite and PostgreSQL credential stores;
+- different-account reconnect leaves the old credential unchanged;
+- missing/provider-mismatched/revoked reconnect fails before provider exchange;
+- signed-bearer Operator receives 403 for reconnect start;
+- signed-bearer Admin can initiate reconnect for an existing matching-provider credential.
+
+One initial functional run failed six tests because the reconnect callback called the established token-exchange function with the wrong keyword (`pkce_verifier` instead of the verified `code_verifier` contract). That was corrected as a one-keyword API-seam fix. The clean functional run above passed all 467 tests.
 
 The single warning remains the existing Starlette TestClient/httpx deprecation warning.
 
-Repository CI uses bounded HTTP mocks for Microsoft/Google refresh and identity calls. No real Microsoft/Google OAuth application credentials or tenant authorization were supplied, so no real provider refresh side effect is claimed.
+Microsoft/Google provider calls in repository tests are bounded mocks. No real provider reconnect side effect is claimed.
 
 Release-only version/documentation changes are re-gated on their exact head before merge.
 
 ## FDA / openFDA examples
 
-AnalystWatch also includes conservative, **disabled** openFDA examples for:
+The repository also includes conservative, **disabled** examples for openFDA FAERS drug adverse events and MAUDE device adverse events in `config/fda.sources.example.json`.
 
-- FAERS drug adverse-event reports;
-- MAUDE device adverse-event reports.
-
-They live in `config/fda.sources.example.json` and are not enabled in hosted monitoring.
-
-The examples demonstrate ordinary API availability, response/profile changes and latest-report-date evidence. They deliberately do not invent a freshness SLA, unique key, numeric contract, event incidence estimate or causal medical conclusion.
+They are examples only and are not enabled in hosted monitoring. They demonstrate API availability/profile/date evidence and deliberately do not infer causation, incidence, a freshness SLA, unique key or medical-safety conclusion.
 
 See [`docs/FDA_EXAMPLES.md`](docs/FDA_EXAMPLES.md).
 
-## Explicit v0.31 limits
+## Explicit v0.32 limits
 
-Product v0.31 does not yet implement:
+Product v0.32 does not implement:
 
-- proactive near-expiry refresh;
-- explicit reconnect/account-switch workflow;
+- account switching;
+- reactivation of a revoked credential;
 - provider-side revoke;
-- visible Add Source **Connect Microsoft / Connect Google** binding to a source;
+- proactive near-expiry refresh;
+- visible Add Source **Connect Microsoft / Connect Google** binding;
 - generic REST API stored-OAuth binding;
 - production KMS/HSM infrastructure;
-- a real Microsoft/Google refresh side effect in repository CI.
+- a real Microsoft/Google reconnect side effect in repository CI.
 
 ## What comes next
 
-Continue credential lifecycle in isolated milestones rather than combining several account mutations at once:
+Continue credential lifecycle in isolated milestones:
 
-1. explicit reconnect/account-switch semantics with operator-visible identity confirmation;
-2. provider revoke where supported, preserving local revocation evidence even when remote revoke is ambiguous;
-3. the small Add Source connection-control bridge once account-switch/revoke behavior is frozen;
-4. managed-PostgreSQL pilot validation using real Microsoft/Google credentials and end-to-end failure drills;
-5. only then expand connector breadth based on customer demand.
+1. **explicit account switching** with old-account/new-account identity confirmation and audit evidence;
+2. **provider revoke** as a separate failure-aware operation;
+3. the Add Source connection/binding UI only after account-switch and revoke semantics are independently green;
+4. managed-PostgreSQL pilot validation with real Microsoft/Google credentials and end-to-end failure drills;
+5. then additional connector breadth based on customer demand.
 
 AI investigation remains downstream of deterministic evidence and must never redefine Health classification.
 
