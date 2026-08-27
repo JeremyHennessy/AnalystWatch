@@ -56,7 +56,7 @@ def complete_oauth_authorization(
         tokens = exchange_authorization_code(
             config,
             code=code,
-            pkce_verifier=consumed.pkce_verifier,
+            code_verifier=consumed.pkce_verifier,
             now=now,
             client=client,
         )
