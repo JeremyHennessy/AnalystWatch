@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
+
+import httpx
 
 from .connection_discovery import ConnectionProvider
 from .credential_crypto import CredentialCryptoError
 from .credential_persistence import PostgresCredentialStore, SQLiteCredentialStore
+from .credential_refresh import OAuthCredentialRefreshError, refresh_provider_credential_if_expired
 from .credential_runtime import CredentialKeyConfigurationError, load_credential_keyring
 from .credential_store import CredentialStore, unseal_access_token
 from .models import SourceDefinition, SourceType
+from .oauth_provider_config import OAuthProviderConfigurationError, load_oauth_provider_config
 from .store import MonitoringStore
 from .workspace import validate_workspace_id
 
@@ -32,9 +36,18 @@ _SOURCE_PROVIDERS = {
 class StoredSourceCredentialResolver:
     """Resolve a workspace-bound encrypted OAuth credential for source ingestion."""
 
-    def __init__(self, store: CredentialStore, *, workspace_id: str) -> None:
+    def __init__(
+        self,
+        store: CredentialStore,
+        *,
+        workspace_id: str,
+        refresh_client: httpx.Client | None = None,
+        now_factory: Callable[[], datetime] | None = None,
+    ) -> None:
         self.store = store
         self.workspace_id = validate_workspace_id(workspace_id)
+        self.refresh_client = refresh_client
+        self.now_factory = now_factory or (lambda: datetime.now(timezone.utc))
         self._initialized = False
 
     @classmethod
@@ -88,23 +101,48 @@ class StoredSourceCredentialResolver:
                 "Stored OAuth credential is revoked; reconnect before monitoring this source."
             )
 
-        now = datetime.now(timezone.utc)
-        if record.access_token_expires_at is None:
+        now = self.now_factory()
+        if now.tzinfo is None or now.utcoffset() is None:
             raise SourceCredentialResolutionError(
-                "Stored OAuth credential has no verified access-token expiry; "
-                "reconnect is required."
-            )
-        if record.access_token_expires_at <= now:
-            raise SourceCredentialResolutionError(
-                "Stored OAuth access token has expired; reconnect is required until "
-                "refresh support is enabled."
+                "Stored OAuth credential resolution time must be timezone-aware."
             )
 
         try:
             keyring = load_credential_keyring()
-            access_token = unseal_access_token(record, keyring)
         except CredentialKeyConfigurationError as exc:
             raise SourceCredentialResolutionError(str(exc)) from exc
+
+        expired_or_unknown = (
+            record.access_token_expires_at is None or record.access_token_expires_at <= now
+        )
+        if expired_or_unknown:
+            try:
+                config = load_oauth_provider_config(provider)
+            except OAuthProviderConfigurationError as exc:
+                raise SourceCredentialResolutionError(
+                    "Stored OAuth access token is expired or has no verified expiry, and automatic "
+                    "refresh is unavailable; reconnect is required."
+                ) from exc
+            try:
+                record = refresh_provider_credential_if_expired(
+                    self.store,
+                    keyring,
+                    config,
+                    workspace_id=self.workspace_id,
+                    credential_id=credential_id,
+                    now=now,
+                    client=self.refresh_client,
+                )
+            except OAuthCredentialRefreshError as exc:
+                raise SourceCredentialResolutionError(str(exc)) from exc
+
+        if record.access_token_expires_at is None or record.access_token_expires_at <= now:
+            raise SourceCredentialResolutionError(
+                "Stored OAuth access token is not usable after refresh; reconnect is required."
+            )
+
+        try:
+            access_token = unseal_access_token(record, keyring)
         except CredentialCryptoError as exc:
             raise SourceCredentialResolutionError(
                 "Stored OAuth credential could not be decrypted safely."
