@@ -15,6 +15,7 @@ import pandas as pd
 from .google_sheets import read_google_sheets_range
 from .microsoft_excel import read_microsoft_excel_table
 from .models import SourceDefinition, SourceType
+from .source_credentials import SourceCredentialResolver
 
 
 @dataclass
@@ -71,18 +72,37 @@ def _request_headers(source: SourceDefinition) -> dict[str, str]:
     return headers
 
 
+def _source_request_headers(
+    source: SourceDefinition,
+    credential_resolver: SourceCredentialResolver | None,
+) -> dict[str, str]:
+    if source.config.credential_id is None:
+        return _request_headers(source)
+    if credential_resolver is None:
+        raise ValueError("Stored OAuth credential resolution is unavailable for this source.")
+    headers = credential_resolver.resolve(source)
+    if not headers or not any(key.lower() == "authorization" for key in headers):
+        raise ValueError("Stored OAuth credential did not produce an Authorization header.")
+    return headers
+
+
 def ingest_source(
     source: SourceDefinition,
     *,
     client: httpx.Client | None = None,
+    credential_resolver: SourceCredentialResolver | None = None,
 ) -> IngestionResult:
     try:
         if source.source_type == SourceType.API:
-            return _ingest_api(source, client=client)
+            return _ingest_api(
+                source,
+                client=client,
+                request_headers=_source_request_headers(source, credential_resolver),
+            )
         if source.source_type == SourceType.MICROSOFT_EXCEL:
             result = read_microsoft_excel_table(
                 source.location,
-                headers=_request_headers(source),
+                headers=_source_request_headers(source, credential_resolver),
                 timeout_seconds=source.config.request_timeout_seconds,
                 client=client,
             )
@@ -98,7 +118,7 @@ def ingest_source(
         if source.source_type == SourceType.GOOGLE_SHEETS:
             result = read_google_sheets_range(
                 source.location,
-                headers=_request_headers(source),
+                headers=_source_request_headers(source, credential_resolver),
                 timeout_seconds=source.config.request_timeout_seconds,
                 client=client,
             )
@@ -141,12 +161,13 @@ def _ingest_api(
     source: SourceDefinition,
     *,
     client: httpx.Client | None,
+    request_headers: dict[str, str],
 ) -> IngestionResult:
     owns_client = client is None
     active_client = client or httpx.Client(timeout=source.config.request_timeout_seconds)
     start = time.perf_counter()
     try:
-        response = active_client.get(source.location, headers=_request_headers(source))
+        response = active_client.get(source.location, headers=request_headers)
         elapsed_ms = (time.perf_counter() - start) * 1000
         if response.status_code < 200 or response.status_code >= 300:
             return IngestionResult(
