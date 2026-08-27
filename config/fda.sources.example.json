@@ -1,0 +1,36 @@
+{
+  "sources": [
+    {
+      "id": "openfda-faers-drug-events",
+      "name": "openFDA FAERS Drug Adverse Events",
+      "source_type": "api",
+      "location": "https://api.fda.gov/drug/event.json?sort=receivedate:desc&limit=100",
+      "enabled": false,
+      "config": {
+        "monitor_interval_minutes": 1440,
+        "json_record_path": "results",
+        "latest_date_field": "receivedate",
+        "history_window_size": 7,
+        "min_history_observations": 3,
+        "warning_row_change_pct": 0.5,
+        "critical_row_change_pct": 0.9
+      }
+    },
+    {
+      "id": "openfda-maude-device-events",
+      "name": "openFDA MAUDE Device Adverse Events",
+      "source_type": "api",
+      "location": "https://api.fda.gov/device/event.json?sort=date_received:desc&limit=100",
+      "enabled": false,
+      "config": {
+        "monitor_interval_minutes": 1440,
+        "json_record_path": "results",
+        "latest_date_field": "date_received",
+        "history_window_size": 7,
+        "min_history_observations": 3,
+        "warning_row_change_pct": 0.5,
+        "critical_row_change_pct": 0.9
+      }
+    }
+  ]
+}
