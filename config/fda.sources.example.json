@@ -11,9 +11,7 @@
         "json_record_path": "results",
         "latest_date_field": "receivedate",
         "history_window_size": 7,
-        "min_history_observations": 3,
-        "warning_row_change_pct": 0.5,
-        "critical_row_change_pct": 0.9
+        "min_history_observations": 3
       }
     },
     {
@@ -27,9 +25,7 @@
         "json_record_path": "results",
         "latest_date_field": "date_received",
         "history_window_size": 7,
-        "min_history_observations": 3,
-        "warning_row_change_pct": 0.5,
-        "critical_row_change_pct": 0.9
+        "min_history_observations": 3
       }
     }
   ]
