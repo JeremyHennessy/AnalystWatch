@@ -346,11 +346,11 @@ def test_missing_provider_mismatch_and_revoked_reconnect_fail_before_exchange() 
         authorization_store, started = _reconnect_transaction("microsoft", credential_id)
         calls: list[str] = []
 
-        with httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: calls.append(str(request.url)) or httpx.Response(500)
-            )
-        ) as client:
+        def forbidden(request: httpx.Request, captured=calls) -> httpx.Response:
+            captured.append(str(request.url))
+            return httpx.Response(500)
+
+        with httpx.Client(transport=httpx.MockTransport(forbidden)) as client:
             with pytest.raises(OAuthCallbackError):
                 complete_oauth_authorization(
                     authorization_store,
