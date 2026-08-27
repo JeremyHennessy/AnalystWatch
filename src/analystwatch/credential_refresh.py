@@ -8,7 +8,7 @@ from datetime import datetime
 import httpx
 from psycopg.types.json import Jsonb
 
-from .connection_discovery import ConnectionDiscoveryError, ConnectionProvider
+from .connection_discovery import ConnectionDiscoveryError
 from .connection_identity import inspect_connection_identity_with_access_token
 from .credential_crypto import CredentialCryptoError, CredentialKeyring
 from .credential_persistence import PostgresCredentialStore, SQLiteCredentialStore
