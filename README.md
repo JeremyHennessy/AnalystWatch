@@ -6,202 +6,138 @@ AnalystWatch monitors analyst-owned data inputs for silent reliability failures,
 
 The product question is: **can I trust the data feeding this analysis or report today, what changed, what has been happening recently, and what is affected if I cannot?**
 
-## Product v0.29 status
+## Product v0.30 status
 
-Product v0.29 turns the encrypted credential foundation from v0.28 into the first real Microsoft/Google OAuth connection runtime.
+Product v0.30 completes the first monitored-source cutover onto the encrypted Microsoft/Google OAuth credential foundation introduced in v0.28 and made operational in v0.29.
 
-The release now provides:
+The release adds an explicit optional stored credential binding to Microsoft 365 Excel and Google Sheets source configuration. The same workspace-bound credential resolver is used for source preflight and monitored checks, so onboarding cannot validate through one account path and later monitor through another.
 
-- persistent, atomic OAuth authorization transactions in Memory, SQLite and PostgreSQL;
+v0.30 preserves all previously verified monitoring semantics. It does **not** change detector thresholds, Data Rules, Health classification, baselines, incidents, notifications, reliability scorecards, dependencies or monitoring persistence.
+
+## Stored credential source binding
+
+Microsoft Excel and Google Sheets sources may now set:
+
+```text
+credential_id=<workspace-scoped stored OAuth credential>
+```
+
+A stored credential binding is explicit. AnalystWatch does not silently choose a default OAuth account inside source ingestion.
+
+For a bound source, AnalystWatch:
+
+1. validates that stored OAuth binding is supported for the source type;
+2. resolves the credential only inside the source's bound workspace;
+3. verifies provider identity matches the connector;
+4. rejects revoked credentials;
+5. rejects missing or expired access-token state;
+6. loads the deployment credential keyring;
+7. decrypts the access token only in memory;
+8. supplies the bearer authorization to the existing Microsoft/Google reader;
+9. returns ordinary deterministic preflight or observation evidence.
+
+Credential plaintext is not copied into the source definition, observation record or public output.
+
+## Backward-compatible environment authorization
+
+Existing Microsoft/Google sources that do not set `credential_id` retain the established `request_header_env` authorization path.
+
+A source cannot configure both `credential_id` and `request_header_env`. This prevents ambiguous account ownership.
+
+If a source explicitly binds a stored credential and that credential is missing, provider-mismatched, revoked, expired, undecryptable or unavailable because deployment key configuration is invalid, the source fails closed. AnalystWatch does **not** fall back to an environment-backed account.
+
+Generic REST API sources remain on the existing request-header contract in v0.30; stored OAuth credential binding is intentionally limited to the Microsoft Excel and Google Sheets connectors whose provider/account semantics are already verified.
+
+## Shared preflight and monitoring path
+
+`MonitorService` owns the source credential resolver and passes it through the existing ingestion boundary.
+
+The same resolver therefore covers:
+
+- source preflight;
+- onboarding preflight;
+- source update preflight;
+- manual source checks;
+- `check-all`;
+- scheduled `check-due` execution.
+
+No second detector or monitoring state machine was introduced.
+
+## OAuth foundation retained from v0.29
+
+The v0.29 provider OAuth runtime remains the foundation for stored credentials:
+
+- persistent one-time authorization transactions in Memory, SQLite and PostgreSQL;
+- state + PKCE persisted before provider redirect;
 - fixed Microsoft/Google OAuth endpoints, redirect paths and bounded scope sets;
-- authenticated authorization start with state + PKCE persisted before redirect;
-- bounded authorization-code exchange against the fixed provider token endpoint;
-- provider account-identity verification before any credential is accepted;
-- encrypted access/refresh-token persistence behind `CredentialStore`;
-- public callback routes authenticated by one-time state/PKCE rather than the AnalystWatch bearer header;
-- replay, expiry, route-provider and workspace binding at callback consumption;
-- existing Microsoft/Google connection check, identity, lifecycle and resource-browse endpoints that prefer the encrypted OAuth credential when present;
-- legacy environment-backed connection credentials retained only as fallback when no stored OAuth credential exists.
+- bounded authorization-code exchange;
+- provider account-identity verification before credential persistence;
+- AES-256-GCM encrypted access/refresh-token persistence;
+- workspace/provider/credential/account binding;
+- replay/expiry/provider/workspace callback protection;
+- connection check, identity, lifecycle and resource browsing that prefer stored OAuth credentials when present;
+- no silent environment-account fallback when an existing stored OAuth credential is unusable.
 
-v0.29 deliberately does **not** redefine source Health and does not yet switch source preflight/check ingestion from `request_header_env` to stored credential IDs.
+OAuth/credential state remains operational security state and cannot itself emit Healthy / Warning / Critical source classification.
 
-## OAuth authorization transaction store
+## Runtime credential stores
 
-Provider redirects return `state`, not AnalystWatch's internal transaction ID. v0.29 therefore persists authorization transactions with a unique SHA-256 state digest index while never storing the raw state value.
+The v0.30 source resolver reuses the existing v0.29 credential persistence:
 
-The store contract is intentionally narrow:
+- SQLite monitoring runtimes use the existing `.credentials.db` sidecar for the same monitoring database;
+- PostgreSQL monitoring runtimes use the existing `PostgresCredentialStore` on the same managed AnalystWatch DSN;
+- workspace identity remains mandatory in both cases.
 
-```text
-initialize
-create
-get
-consume
-```
+Regression coverage proves source ingestion through both the legacy SQLite sidecar path and the PostgreSQL credential-store path.
 
-There is no generic transaction update operation. A transaction is created once and may only transition to consumed through the atomic consume path.
+## Explicit v0.30 limits
 
-Implementations:
+Product v0.30 does not yet claim:
 
-- Memory: in-process lock plus transaction/state-digest indexes;
-- SQLite: `BEGIN IMMEDIATE` around state lookup, validation and consumed write;
-- PostgreSQL: state row selected `FOR UPDATE` before validation and consumed write.
-
-Concurrency tests require exactly one successful consumer for the same valid callback state. The competing consumer must receive an `already consumed` failure.
-
-Raw SQLite/PostgreSQL tests verify that neither the callback state nor the recovered PKCE verifier plaintext is persisted.
-
-## Provider OAuth configuration
-
-Provider protocol configuration is deployment-controlled rather than caller-controlled.
-
-Runtime configuration uses:
-
-```text
-ANALYSTWATCH_PUBLIC_BASE_URL
-ANALYSTWATCH_MICROSOFT_OAUTH_CLIENT_ID
-ANALYSTWATCH_MICROSOFT_OAUTH_CLIENT_SECRET
-ANALYSTWATCH_GOOGLE_OAUTH_CLIENT_ID
-ANALYSTWATCH_GOOGLE_OAUTH_CLIENT_SECRET
-```
-
-The credential encryption keyring remains:
-
-```text
-ANALYSTWATCH_CREDENTIAL_KEYS_JSON
-ANALYSTWATCH_CREDENTIAL_ACTIVE_KEY_ID
-```
-
-Microsoft uses the fixed `organizations` v2 authorization/token endpoints and a bounded delegated scope set for identity and file access. Google uses fixed authorization/token endpoints and bounded identity, Drive-metadata-readonly and Sheets-readonly scopes.
-
-Redirect URIs are derived only from the validated public base URL and the fixed provider callback paths. Production URLs require HTTPS; loopback HTTP is allowed only for local development. Callers cannot override provider endpoints, redirect paths, scopes or secret environment-variable names.
-
-## Authorization start and callback
-
-Start routes:
-
-```text
-POST /api/oauth/microsoft/start
-POST /api/oauth/google/start
-```
-
-They remain Operator-level mutations under the existing workspace authorization model.
-
-A start request:
-
-1. validates the target credential ID;
-2. refuses to overwrite an existing credential ID;
-3. loads fixed provider configuration and the deployment keyring lazily;
-4. creates state + PKCE material;
-5. persists the encrypted authorization transaction;
-6. only after persistence succeeds, issues a `303` redirect to the fixed provider authorization endpoint.
-
-Callback routes:
-
-```text
-GET /api/oauth/microsoft/callback
-GET /api/oauth/google/callback
-```
-
-A browser returning from Microsoft/Google cannot carry the AnalystWatch signed-bearer header. Those two GET routes are therefore exempt from normal request authentication and are instead authenticated by the persisted one-time state/PKCE transaction, including workspace and provider binding.
-
-Callbacks reject missing/malformed state, code/error ambiguity, expiry, replay and route-provider mismatch. Provider denial consumes the state so the same transaction cannot later be replayed as a successful callback.
-
-Callback HTML is intentionally generic and does not render the authorization code, state value, provider error description, token material or provider account identifiers.
-
-## Token exchange and account binding
-
-The callback exchange path:
-
-1. atomically consumes state and recovers the PKCE verifier;
-2. posts the authorization code only to the fixed provider token endpoint;
-3. validates bounded token response fields;
-4. uses the returned access token in memory to resolve provider account identity;
-5. seals access/refresh tokens with AES-256-GCM associated-data binding;
-6. writes the encrypted `ProviderCredentialRecord` only after identity verification succeeds.
-
-Provider response bodies, access tokens, refresh tokens, authorization codes and client secrets are excluded from bounded public errors.
-
-Ordinary credential replacement still cannot silently switch provider/account identity. Reconnect/account-switch remains an explicit future workflow.
-
-## Existing connection browser now prefers stored OAuth credentials
-
-The existing v0.26/v0.27 connection endpoints are unchanged from the browser's perspective:
-
-- Test connection;
-- Credential status;
-- Verify connected account;
-- Microsoft drive/workbook/table browsing;
-- Google spreadsheet/sheet browsing.
-
-For the default OAuth credential IDs:
-
-```text
-microsoft-primary
-google-primary
-```
-
-those endpoints now prefer the workspace-scoped encrypted credential when it exists. Access-token plaintext is decrypted only in memory for the provider request.
-
-If no stored OAuth credential exists, the existing environment-backed authorization path remains available for compatibility.
-
-If a stored OAuth credential exists but is revoked, expired, provider-mismatched, undecryptable or missing its deployment key, AnalystWatch fails closed. It does **not** silently fall back to a different environment-backed account.
-
-## Explicit v0.29 limits
-
-Product v0.29 does not yet claim:
-
-- a visible Add Source **Connect Microsoft / Connect Google** button; authorization start is currently exposed through the authenticated start routes;
-- source `MonitoringConfig` binding to a stored credential ID;
-- Microsoft/Google source preflight or scheduled checks using stored OAuth credentials;
-- access-token refresh when an encrypted access token expires;
+- automatic refresh-token use when an access token expires;
+- explicit reconnect/account-switch workflow;
 - provider-side revoke;
-- explicit reconnect/account-switch UI/workflow;
-- a real Microsoft or Google OAuth side effect in repository verification;
+- a visible Add Source **Connect Microsoft / Connect Google** control wired directly into stored source binding;
+- generic REST API stored-OAuth binding;
+- a real Microsoft or Google OAuth side effect in repository CI;
 - production KMS/HSM deployment.
 
-Existing monitored Microsoft/Google sources therefore continue to use the established `request_header_env` ingestion contract until the next dedicated cutover milestone.
-
-## Health and static-output boundary
-
-OAuth/credential state is operational security state and cannot emit or modify Healthy / Warning / Critical source classification.
-
-v0.29 does not change:
-
-- source detector thresholds or Data Rules;
-- baselines/reviews;
-- incidents;
-- reliability scorecards;
-- notifications/delivery/reconciliation;
-- dependency/blast-radius semantics;
-- monitoring observation persistence.
-
-GitHub Pages remains read-only monitoring output. It receives no OAuth transaction, credential record, ciphertext, key ID, provider account identity, state/PKCE material or callback controls.
+Until refresh support is implemented, an expired stored access token fails closed and requires reconnect outside the current automated source path.
 
 ## Verification
 
-Verified v0.29 checkpoints include:
+Functional checkpoint:
 
-- atomic authorization-transaction stores `5a61a8a850c852b7f8151b92da5d05d888432aec`: CI #747 — **393 passed, 1 warning**;
-- fixed provider OAuth configuration `37aa50634e064a8540b5dd85bae64eaafdb0789c`: CI #753 — **408 passed, 1 warning**;
-- provider start/exchange/callback/identity-binding feature head `0f39cc0b39d5a4c49ab663e523527aea02d6994f`: CI #799 — **433 passed, 1 warning**;
-- HTTP callback + encrypted credential persistence `0932ea92fa5b5e763eb23e8d5b1f75cf48d8e07d`: CI #803 — **439 passed, 1 warning**;
-- frozen v0.29 feature checkpoint `6dcbe1b56a4d4375f56056d941226b959716aec6`: CI #805 — **445 passed, 1 warning**.
+- `f02e4cd34028f744f448bc37f8361d6bc29d28e6`
+- CI #828: **SUCCESS**
+- Live source smoke #106: **SUCCESS**
+- Ruff: success
+- compile/import: success
+- PostgreSQL 16-backed suite: **451 passed, 1 warning**
 
-Each exact checkpoint passed Ruff, compile/import and the PostgreSQL 16-backed suite. The single warning remains the existing Starlette TestClient/httpx deprecation warning.
+The single warning is the existing Starlette TestClient/httpx deprecation warning.
 
-No real Microsoft/Google OAuth application credentials or tenant authorization were supplied, so no real provider token/account side effect is claimed.
+The PostgreSQL-specific regression proves that a `PostgresStorage` monitoring runtime resolves and uses the existing workspace-bound `PostgresCredentialStore`, while the legacy regression proves the existing SQLite `.credentials.db` sidecar path.
+
+No real Microsoft/Google OAuth application credentials or tenant authorization were supplied, so no real provider token/account side effect is claimed by repository verification.
+
+## Live-source smoke boundary
+
+The live-source smoke workflow is the external/public upstream gate. It now checks enabled generic API sources only. Static local demonstration fixtures remain monitored by the application and covered by deterministic tests, but their intentionally fixed sample dates no longer masquerade as live external-source evidence in that workflow.
+
+This correction was independently isolated and merged before v0.30 after CI and the live-source smoke both passed.
 
 ## What comes next
 
-The next engineering milestone should complete the runtime cutover rather than add another connector:
+The next engineering milestone should finish credential lifecycle operations before adding more connector breadth:
 
-1. add an explicit optional stored-credential binding to Microsoft/Google source configuration;
-2. resolve that credential through the workspace-bound encrypted store in preflight and scheduled checks;
-3. preserve existing environment-header sources as a backward-compatible path;
-4. add refresh-token rotation with atomic encrypted replacement;
-5. add explicit reconnect/account-switch/revoke semantics;
-6. add the small Add Source connect-control bridge once the credential-binding contract is frozen;
-7. run a managed-PostgreSQL pilot with real Microsoft/Google credentials and end-to-end failure drills.
+1. atomic refresh-token rotation with encrypted replacement and preserved provider/account binding;
+2. explicit reconnect and account-switch semantics;
+3. explicit provider revoke where supported;
+4. the small Add Source connect-control bridge once lifecycle behavior is frozen;
+5. managed-PostgreSQL pilot validation with real Microsoft/Google credentials and end-to-end failure drills.
+
+Optional FDA/openFDA examples are being handled separately as conservative disabled example sources rather than being mixed into the OAuth runtime milestone.
 
 AI investigation remains downstream of deterministic evidence and must not redefine Health classification.
 

@@ -158,6 +158,7 @@ class MonitoringConfig(BaseModel):
     numeric_fields: list[str] = Field(default_factory=list)
     data_rules: list[DataRule] = Field(default_factory=list)
     request_header_env: dict[str, str] = Field(default_factory=dict)
+    credential_id: str | None = Field(default=None, min_length=1, max_length=256)
     notification_transitions: list[IncidentTransition] = Field(default_factory=list)
     delivery_retry_minutes: int = Field(default=0, ge=0)
     request_timeout_seconds: float = Field(default=10.0, gt=0)
@@ -213,6 +214,9 @@ class MonitoringConfig(BaseModel):
                 raise ValueError(
                     "request_header_env environment variable names must be non-empty and trimmed"
                 )
+        if self.credential_id is not None:
+            if not self.credential_id or self.credential_id != self.credential_id.strip():
+                raise ValueError("credential_id must be non-empty and trimmed")
         if len(set(self.notification_transitions)) != len(self.notification_transitions):
             raise ValueError("notification_transitions must not contain duplicates")
         return self
@@ -226,6 +230,20 @@ class SourceDefinition(BaseModel):
     location: str = Field(min_length=1)
     enabled: bool = True
     config: MonitoringConfig = Field(default_factory=MonitoringConfig)
+
+    @model_validator(mode="after")
+    def validate_stored_credential_binding(self) -> "SourceDefinition":
+        if self.config.credential_id is None:
+            return self
+        if self.source_type not in {SourceType.MICROSOFT_EXCEL, SourceType.GOOGLE_SHEETS}:
+            raise ValueError(
+                "credential_id is supported only for Microsoft Excel and Google Sheets sources"
+            )
+        if self.config.request_header_env:
+            raise ValueError(
+                "credential_id and request_header_env cannot both configure source authorization"
+            )
+        return self
 
 
 class NumericStats(BaseModel):
