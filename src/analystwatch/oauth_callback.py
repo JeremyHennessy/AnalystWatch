@@ -78,7 +78,8 @@ def complete_oauth_authorization(
         assert existing is not None  # validated before provider exchange
         if identity.subject_id != existing.subject_id:
             raise OAuthCallbackError(
-                "Reconnect resolved a different provider account; explicit account switch is required."
+                "Reconnect resolved a different provider account; "
+                "explicit account switch is required."
             )
 
     scopes = tokens.scopes or (existing.scopes if existing is not None else ())
