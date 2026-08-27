@@ -1,12 +1,14 @@
-from analystwatch.config import load_sources
-from analystwatch.models import SourceType
-
-
 CONFIG_PATH = "config/fda.sources.example.json"
 
 
+def _load_sources():
+    from analystwatch.config import load_sources
+
+    return load_sources(CONFIG_PATH)
+
+
 def test_fda_examples_are_disabled_bounded_public_api_sources() -> None:
-    sources = load_sources(CONFIG_PATH)
+    sources = _load_sources()
     assert [source.id for source in sources] == [
         "openfda-faers-drug-events",
         "openfda-maude-device-events",
@@ -14,7 +16,7 @@ def test_fda_examples_are_disabled_bounded_public_api_sources() -> None:
 
     for source in sources:
         assert source.enabled is False
-        assert source.source_type == SourceType.API
+        assert source.source_type.value == "api"
         assert source.location.startswith("https://api.fda.gov/")
         assert "limit=100" in source.location
         assert "api_key=" not in source.location
@@ -26,7 +28,7 @@ def test_fda_examples_are_disabled_bounded_public_api_sources() -> None:
 
 
 def test_fda_examples_use_endpoint_specific_latest_date_evidence() -> None:
-    sources = {source.id: source for source in load_sources(CONFIG_PATH)}
+    sources = {source.id: source for source in _load_sources()}
 
     faers = sources["openfda-faers-drug-events"]
     assert faers.config.latest_date_field == "receivedate"
