@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from analystwatch.config import load_sources
-from analystwatch.models import HealthStatus
+from analystwatch.models import HealthStatus, SourceType
 from analystwatch.service import MonitorService
 from analystwatch.storage import Storage
 
@@ -20,7 +20,9 @@ def run(config_path: str | Path) -> int:
         service = MonitorService(Storage(Path(workdir) / "smoke.db"))
         service.add_sources(sources)
         for source in sources:
-            if not source.enabled:
+            # This workflow is the external/public upstream gate. Local demo fixtures are
+            # intentionally excluded because their fixed sample dates are not live evidence.
+            if not source.enabled or source.source_type != SourceType.API:
                 continue
             observation = service.check_source(source.id)
             profile = observation.profile
