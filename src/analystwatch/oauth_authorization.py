@@ -24,6 +24,8 @@ DEFAULT_AUTHORIZATION_TTL_MINUTES = 10
 MAX_AUTHORIZATION_TTL_MINUTES = 15
 PKCE_METHOD: Literal["S256"] = "S256"
 OPAQUE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+OAuthAuthorizationOperation = Literal["connect", "reconnect"]
+OAuthAuthorizationAadVersion = Literal[1, 2]
 
 
 class OAuthAuthorizationError(ValueError):
@@ -36,6 +38,8 @@ class OAuthAuthorizationTransaction(BaseModel):
     user_id: str = Field(min_length=1, max_length=256)
     provider: ConnectionProvider
     credential_id: str = Field(min_length=1, max_length=256)
+    operation: OAuthAuthorizationOperation = "connect"
+    aad_version: OAuthAuthorizationAadVersion = 1
     state_sha256_b64: str = Field(min_length=43, max_length=43)
     pkce_verifier: EncryptedCredentialSecret
     created_at: datetime
@@ -69,11 +73,13 @@ class OAuthAuthorizationTransaction(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_order(self) -> OAuthAuthorizationTransaction:
+    def validate_order_and_operation(self) -> OAuthAuthorizationTransaction:
         if self.expires_at <= self.created_at:
             raise ValueError("Authorization transaction expiry must follow creation")
         if self.consumed_at is not None and self.consumed_at < self.created_at:
             raise ValueError("Authorization transaction consumption must not precede creation")
+        if self.aad_version == 1 and self.operation != "connect":
+            raise ValueError("Legacy authorization transactions can represent connect only")
         return self
 
 
@@ -106,6 +112,7 @@ def begin_authorization_transaction(
     credential_id: str,
     now: datetime,
     ttl_minutes: int = DEFAULT_AUTHORIZATION_TTL_MINUTES,
+    operation: OAuthAuthorizationOperation = "connect",
 ) -> OAuthAuthorizationStart:
     _validate_now(now)
     if ttl_minutes < 1 or ttl_minutes > MAX_AUTHORIZATION_TTL_MINUTES:
@@ -122,12 +129,15 @@ def begin_authorization_transaction(
     state = _random_token(32)
     verifier = _random_token(32)
     state_digest = authorization_state_digest(state)
+    aad_version: OAuthAuthorizationAadVersion = 2
     verifier_aad = _authorization_associated_data(
         workspace_id=workspace_id,
         user_id=user_id,
         provider=provider,
         credential_id=credential_id,
         transaction_id=transaction_id,
+        operation=operation,
+        aad_version=aad_version,
     )
     encrypted_verifier = keyring.encrypt(
         verifier.encode("ascii"),
@@ -139,6 +149,8 @@ def begin_authorization_transaction(
         user_id=user_id,
         provider=provider,
         credential_id=credential_id,
+        operation=operation,
+        aad_version=aad_version,
         state_sha256_b64=state_digest,
         pkce_verifier=encrypted_verifier,
         created_at=now,
@@ -179,6 +191,8 @@ def consume_authorization_transaction(
         provider=transaction.provider,
         credential_id=transaction.credential_id,
         transaction_id=transaction.transaction_id,
+        operation=transaction.operation,
+        aad_version=transaction.aad_version,
     )
     try:
         verifier_bytes = keyring.decrypt(transaction.pkce_verifier, associated_data=aad)
@@ -205,6 +219,8 @@ def revalidate_authorization_transaction(
         "user_id": transaction.user_id,
         "provider": transaction.provider,
         "credential_id": transaction.credential_id,
+        "operation": transaction.operation,
+        "aad_version": transaction.aad_version,
         "state_sha256_b64": transaction.state_sha256_b64,
         "pkce_verifier": transaction.pkce_verifier,
         "created_at": transaction.created_at,
@@ -224,6 +240,8 @@ def _authorization_associated_data(
     provider: ConnectionProvider,
     credential_id: str,
     transaction_id: str,
+    operation: OAuthAuthorizationOperation,
+    aad_version: OAuthAuthorizationAadVersion,
 ) -> bytes:
     payload = {
         "credential_id": credential_id,
@@ -231,9 +249,13 @@ def _authorization_associated_data(
         "purpose": "oauth_pkce_verifier",
         "transaction_id": transaction_id,
         "user_id": user_id,
-        "version": 1,
+        "version": aad_version,
         "workspace_id": workspace_id,
     }
+    if aad_version == 2:
+        payload["operation"] = operation
+    elif operation != "connect":  # pragma: no cover - model validation blocks this
+        raise OAuthAuthorizationError("Legacy authorization operation is invalid")
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
