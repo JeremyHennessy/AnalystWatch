@@ -91,11 +91,13 @@ class StoredSourceCredentialResolver:
         now = datetime.now(timezone.utc)
         if record.access_token_expires_at is None:
             raise SourceCredentialResolutionError(
-                "Stored OAuth credential has no verified access-token expiry; reconnect is required."
+                "Stored OAuth credential has no verified access-token expiry; "
+                "reconnect is required."
             )
         if record.access_token_expires_at <= now:
             raise SourceCredentialResolutionError(
-                "Stored OAuth access token has expired; reconnect is required until refresh support is enabled."
+                "Stored OAuth access token has expired; reconnect is required until "
+                "refresh support is enabled."
             )
 
         try:

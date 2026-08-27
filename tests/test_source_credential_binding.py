@@ -195,7 +195,9 @@ def test_missing_and_expired_stored_credentials_fail_closed_without_network(
     def forbidden(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        raise AssertionError(f"Network must not run when credential resolution fails: {request.url}")
+        raise AssertionError(
+            f"Network must not run when credential resolution fails: {request.url}"
+        )
 
     with httpx.Client(transport=httpx.MockTransport(forbidden)) as client:
         missing_observation = service.check_source(missing.id, client=client)
