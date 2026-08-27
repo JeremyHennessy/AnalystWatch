@@ -93,7 +93,7 @@ def create_app(
     storage = runtime.monitoring_store
     service = MonitorService(storage)
 
-    app = FastAPI(title="AnalystWatch", version="0.30.0")
+    app = FastAPI(title="AnalystWatch", version="0.31.0")
     app.state.storage = raw_storage
     app.state.workspace_storage = storage
     app.state.storage_backend = runtime.backend
