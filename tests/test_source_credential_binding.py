@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
 from analystwatch.connection_discovery import ConnectionProvider
-from analystwatch.credential_persistence import SQLiteCredentialStore
+from analystwatch.credential_persistence import PostgresCredentialStore, SQLiteCredentialStore
 from analystwatch.credential_runtime import load_credential_keyring
 from analystwatch.credential_store import MemoryCredentialStore, seal_provider_credential
 from analystwatch.memory_store import MemoryStore
 from analystwatch.models import MonitoringConfig, SourceDefinition, SourceType
+from analystwatch.postgres_storage import PostgresStorage
 from analystwatch.service import MonitorService
 from analystwatch.source_credentials import StoredSourceCredentialResolver
 from analystwatch.storage import Storage
@@ -264,3 +267,45 @@ def test_default_legacy_runtime_resolver_uses_existing_oauth_sidecar(
 
     assert result.ready is True
     assert result.available is True
+
+
+def test_default_postgres_runtime_resolver_uses_existing_credential_store(
+    monkeypatch,
+) -> None:
+    dsn = os.environ.get("ANALYSTWATCH_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("ANALYSTWATCH_TEST_POSTGRES_DSN is not configured")
+
+    _configure_keyring(monkeypatch)
+    workspace_id = f"source-credential-{uuid4().hex[:10]}"
+    monitoring_store = PostgresStorage(dsn, workspace_id)
+    service = MonitorService(monitoring_store)
+    credential_store = PostgresCredentialStore(dsn)
+    credential_store.initialize()
+    now = datetime.now(timezone.utc)
+    credential_store.upsert(
+        seal_provider_credential(
+            load_credential_keyring(),
+            credential_id="google-primary",
+            workspace_id=workspace_id,
+            provider=ConnectionProvider.GOOGLE,
+            subject_id="google-subject",
+            access_token="postgres-token",
+            refresh_token="postgres-refresh",
+            scopes=["scope-a"],
+            access_token_expires_at=now + timedelta(hours=1),
+            now=now,
+        )
+    )
+    source = _google_source().model_copy(update={"workspace_id": workspace_id})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer postgres-token"
+        return httpx.Response(200, json={"values": [["id"], ["1"]]})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = service.preflight_source(source, client=client)
+
+    assert result.ready is True
+    assert result.available is True
+    assert "postgres-token" not in result.model_dump_json()
