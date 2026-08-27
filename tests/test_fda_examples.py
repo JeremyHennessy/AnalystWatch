@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from analystwatch.config import load_sources
 from analystwatch.models import SourceType
 
