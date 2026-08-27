@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from analystwatch.config import load_sources
 from analystwatch.models import SourceType
@@ -20,11 +19,9 @@ def test_fda_examples_are_disabled_bounded_public_api_sources() -> None:
     for source in sources:
         assert source.enabled is False
         assert source.source_type == SourceType.API
-        parsed = urlsplit(source.location)
-        assert parsed.scheme == "https"
-        assert parsed.netloc == "api.fda.gov"
-        assert "limit=100" in parsed.query
-        assert "api_key=" not in parsed.query
+        assert source.location.startswith("https://api.fda.gov/")
+        assert "limit=100" in source.location
+        assert "api_key=" not in source.location
         assert source.config.json_record_path == "results"
         assert source.config.expected_refresh_minutes is None
         assert source.config.unique_keys == []
